@@ -1,16 +1,20 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { calcPlatformProfit, formatBaht } from '../utils/calculations'
 import { format, startOfMonth, endOfMonth, parseISO, addMonths, subMonths } from 'date-fns'
 import { th } from 'date-fns/locale'
-import { ChevronLeft, ChevronRight, TrendingUp, TrendingDown, ClipboardList, PenLine, Printer } from 'lucide-react'
+import {
+  ChevronLeft, ChevronRight, TrendingUp, TrendingDown,
+  ClipboardList, PenLine, Printer, ChevronDown, ChevronUp,
+  Banknote, CheckCircle2, Clock,
+} from 'lucide-react'
 
 const PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
 
 const PLAT_BADGE = {
   GRAB:        'bg-green-100 text-green-800',
-  LINE:        'bg-green-600 text-white',
+  LINE:        'bg-teal-100 text-teal-800',
   SHOPEE:      'bg-orange-100 text-orange-800',
   'The metro': 'bg-blue-100 text-blue-800',
   TU:          'bg-purple-100 text-purple-800',
@@ -41,90 +45,143 @@ function thaiMonth(monthStr) {
   }
 }
 
+const tsKey = (date, platform) => `${date}|${platform}`
+
 export default function SalesHistoryPage() {
   const navigate = useNavigate()
-  const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'))
-  const [loading, setLoading] = useState(true)
-  const [dayData, setDayData] = useState([])
+  const [month, setMonth]             = useState(format(new Date(), 'yyyy-MM'))
+  const [loading, setLoading]         = useState(true)
+  const [dayData, setDayData]         = useState([])
+  const [transferMap, setTransferMap] = useState({})
+  const [expanded, setExpanded]       = useState(new Set())
+  const [saving, setSaving]           = useState(null)
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true)
-      try {
-        const start = format(startOfMonth(new Date(month + '-01')), 'yyyy-MM-dd')
-        const end   = format(endOfMonth(new Date(month + '-01')), 'yyyy-MM-dd')
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const start = format(startOfMonth(new Date(month + '-01')), 'yyyy-MM-dd')
+      const end   = format(endOfMonth(new Date(month + '-01')), 'yyyy-MM-dd')
 
-        const [ordersRes, costsRes] = await Promise.all([
-          supabase.from('orders').select('id, date, platform').gte('date', start).lte('date', end),
-          supabase.from('platform_costs').select('*').gte('date', start).lte('date', end),
-        ])
+      const [ordersRes, costsRes, transferRes] = await Promise.all([
+        supabase.from('orders').select('id, date, platform').gte('date', start).lte('date', end),
+        supabase.from('platform_costs').select('*').gte('date', start).lte('date', end),
+        supabase.from('transfer_status').select('*').gte('sale_date', start).lte('sale_date', end),
+      ])
 
-        const orders = ordersRes.data ?? []
-        const costs  = costsRes.data ?? []
+      const orders    = ordersRes.data ?? []
+      const costs     = costsRes.data ?? []
+      const transfers = transferRes.data ?? []
 
-        if (orders.length === 0) {
-          setDayData([])
-          setLoading(false)
-          return
+      // Build transfer map
+      const tmap = {}
+      for (const t of transfers) {
+        tmap[tsKey(t.sale_date, t.platform)] = {
+          mat:      t.mat_transferred,
+          profit:   t.profit_transferred,
+          matAt:    t.mat_transferred_at,
+          profitAt: t.profit_transferred_at,
         }
-
-        const { data: items } = await supabase
-          .from('order_items')
-          .select('order_id, quantity, unit_price, unit_gp_cost')
-          .in('order_id', orders.map(o => o.id))
-
-        // Index items by order_id
-        const itemsByOrder = {}
-        for (const item of items ?? []) {
-          if (!itemsByOrder[item.order_id]) itemsByOrder[item.order_id] = []
-          itemsByOrder[item.order_id].push(item)
-        }
-
-        // Group orders and costs by date
-        const byDate = {}
-        for (const order of orders) {
-          if (!byDate[order.date]) byDate[order.date] = { orders: [], costs: [] }
-          byDate[order.date].orders.push(order)
-        }
-        for (const cost of costs) {
-          if (!byDate[cost.date]) byDate[cost.date] = { orders: [], costs: [] }
-          byDate[cost.date].costs.push(cost)
-        }
-
-        // Calculate per-date summary
-        const result = Object.entries(byDate).map(([date, { orders: dayOrders, costs: dayCosts }]) => {
-          let totalSales = 0
-          let totalNetProfit = 0
-          let totalItems = 0
-          const activePlatforms = []
-          const platformSales = {}
-
-          for (const order of dayOrders) {
-            const orderItems = (itemsByOrder[order.id] ?? []).map(i => ({
-              quantity:    i.quantity,
-              unit_price:  i.unit_price,
-              unit_gp_cost: i.unit_gp_cost,
-            }))
-            const cost = dayCosts.find(c => c.platform === order.platform) ?? {}
-            const r = calcPlatformProfit({ items: orderItems, costs: cost })
-            totalSales     += r.sales
-            totalNetProfit += r.netProfit
-            totalItems     += r.itemCount
-            platformSales[order.platform] = r.grossSales
-            if (r.itemCount > 0 || r.sales > 0) activePlatforms.push(order.platform)
-          }
-
-          return { date, totalSales, totalNetProfit, totalItems, activePlatforms, platformSales }
-        }).sort((a, b) => b.date.localeCompare(a.date))
-
-        setDayData(result)
-      } catch (err) {
-        console.error(err)
       }
-      setLoading(false)
+      setTransferMap(tmap)
+
+      if (orders.length === 0) {
+        setDayData([])
+        setLoading(false)
+        return
+      }
+
+      const { data: items } = await supabase
+        .from('order_items')
+        .select('order_id, quantity, unit_price, unit_gp_cost, is_campaign')
+        .in('order_id', orders.map(o => o.id))
+
+      const itemsByOrder = {}
+      for (const item of items ?? []) {
+        if (!itemsByOrder[item.order_id]) itemsByOrder[item.order_id] = []
+        itemsByOrder[item.order_id].push(item)
+      }
+
+      const byDate = {}
+      for (const order of orders) {
+        if (!byDate[order.date]) byDate[order.date] = { orders: [], costs: [] }
+        byDate[order.date].orders.push(order)
+      }
+      for (const cost of costs) {
+        if (!byDate[cost.date]) byDate[cost.date] = { orders: [], costs: [] }
+        byDate[cost.date].costs.push(cost)
+      }
+
+      const result = Object.entries(byDate).map(([date, { orders: dayOrders, costs: dayCosts }]) => {
+        let totalSales = 0, totalNetProfit = 0, totalItems = 0
+        const activePlatforms = []
+        const platformSales   = {}
+        const platformDetail  = {}
+
+        for (const order of dayOrders) {
+          const orderItems = (itemsByOrder[order.id] ?? []).map(i => ({
+            quantity:     i.quantity,
+            unit_price:   i.unit_price,
+            unit_gp_cost: i.unit_gp_cost,
+            is_campaign:  i.is_campaign,
+          }))
+          const cost = dayCosts.find(c => c.platform === order.platform) ?? {}
+          const r = calcPlatformProfit({ items: orderItems, costs: cost })
+
+          totalSales     += r.sales
+          totalNetProfit += r.netProfit
+          totalItems     += r.itemCount
+          platformSales[order.platform]  = r.grossSales
+          platformDetail[order.platform] = {
+            sales:     r.grossSales,
+            matCost:   r.gpCostTotal,
+            netProfit: r.netProfit,
+          }
+          if (r.itemCount > 0 || r.sales > 0) activePlatforms.push(order.platform)
+        }
+
+        return { date, totalSales, totalNetProfit, totalItems, activePlatforms, platformSales, platformDetail }
+      }).sort((a, b) => b.date.localeCompare(a.date))
+
+      setDayData(result)
+    } catch (err) {
+      console.error(err)
     }
-    load()
+    setLoading(false)
   }, [month])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  const toggleExpand = (date) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(date) ? next.delete(date) : next.add(date)
+      return next
+    })
+  }
+
+  const toggleTransfer = async (date, platform, field) => {
+    const key    = tsKey(date, platform)
+    const cur    = transferMap[key] ?? { mat: false, profit: false, matAt: null, profitAt: null }
+    const newVal = field === 'mat' ? !cur.mat : !cur.profit
+    const now    = newVal ? new Date().toISOString() : null
+
+    // Optimistic update
+    setTransferMap(prev => ({
+      ...prev,
+      [key]: { ...cur, [field]: newVal, [`${field}At`]: now },
+    }))
+
+    setSaving(key + field)
+    await supabase.from('transfer_status').upsert({
+      sale_date:             date,
+      platform,
+      mat_transferred:       field === 'mat'    ? newVal      : (cur.mat    ?? false),
+      mat_transferred_at:    field === 'mat'    ? now         : (cur.matAt  ?? null),
+      profit_transferred:    field === 'profit' ? newVal      : (cur.profit ?? false),
+      profit_transferred_at: field === 'profit' ? now         : (cur.profitAt ?? null),
+    }, { onConflict: 'sale_date,platform' })
+    setSaving(null)
+  }
 
   const prevMonth = () => setMonth(m => format(subMonths(new Date(m + '-01'), 1), 'yyyy-MM'))
   const nextMonth = () => {
@@ -153,7 +210,6 @@ export default function SalesHistoryPage() {
       th   { background:#f3f4f6; text-align:left; padding:6px 8px; }
       td   { padding:5px 8px; border-bottom:1px solid #e5e7eb; }
       .sum { font-weight:bold; background:#f9fafb; }
-      @media print { body { padding: 8px; } }
     </style></head><body>
     <h2>☕ Cocoa House — สรุปยอดขายรายเดือน</h2>
     <div class="sub">${thaiMonth(month)} · ${dayData.length} วันที่มีข้อมูล</div>
@@ -177,7 +233,6 @@ export default function SalesHistoryPage() {
 
   const totalSales  = dayData.reduce((s, d) => s + d.totalSales, 0)
   const totalProfit = dayData.reduce((s, d) => s + d.totalNetProfit, 0)
-  const totalItems  = dayData.reduce((s, d) => s + d.totalItems, 0)
   const avgDaily    = dayData.length > 0 ? totalSales / dayData.length : 0
 
   return (
@@ -194,24 +249,21 @@ export default function SalesHistoryPage() {
               <Printer size={14} /> พิมพ์
             </button>
           )}
-        <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl px-1 py-1">
-          <button
-            onClick={prevMonth}
-            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <span className="text-sm font-medium text-gray-700 min-w-[110px] text-center">
-            {thaiMonth(month)}
-          </span>
-          <button
-            onClick={nextMonth}
-            disabled={isCurrentMonth}
-            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 disabled:opacity-30"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
+          <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl px-1 py-1">
+            <button onClick={prevMonth} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500">
+              <ChevronLeft size={16} />
+            </button>
+            <span className="text-sm font-medium text-gray-700 min-w-[110px] text-center">
+              {thaiMonth(month)}
+            </span>
+            <button
+              onClick={nextMonth}
+              disabled={isCurrentMonth}
+              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 disabled:opacity-30"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -219,20 +271,16 @@ export default function SalesHistoryPage() {
       {!loading && dayData.length > 0 && (
         <div className="grid grid-cols-4 gap-2">
           {[
-            { label: 'วันที่มีข้อมูล', value: `${dayData.length} วัน`, sub: null },
-            { label: 'ยอดขายรวม',      value: formatBaht(totalSales),  sub: null },
+            { label: 'วันที่มีข้อมูล', value: `${dayData.length} วัน` },
+            { label: 'ยอดขายรวม',      value: formatBaht(totalSales) },
             { label: 'กำไรสุทธิ',      value: formatBaht(totalProfit), profit: true },
-            { label: 'เฉลี่ย/วัน',     value: formatBaht(avgDaily),    sub: null },
+            { label: 'เฉลี่ย/วัน',     value: formatBaht(avgDaily) },
           ].map(({ label, value, profit }) => (
             <div key={label} className="card text-center py-3">
               <p className="text-xs text-gray-500 mb-1">{label}</p>
               <p className={`text-base font-bold leading-tight ${
-                profit
-                  ? totalProfit >= 0 ? 'text-green-700' : 'text-red-600'
-                  : 'text-gray-900'
-              }`}>
-                {value}
-              </p>
+                profit ? (totalProfit >= 0 ? 'text-green-700' : 'text-red-600') : 'text-gray-900'
+              }`}>{value}</p>
             </div>
           ))}
         </div>
@@ -252,10 +300,7 @@ export default function SalesHistoryPage() {
           <ClipboardList size={36} className="mx-auto text-gray-300 mb-3" />
           <p className="text-gray-500 font-medium">ยังไม่มีข้อมูลในเดือนนี้</p>
           <p className="text-sm text-gray-400 mt-1">กรอกยอดขายได้ที่หน้า "กรอกยอดขาย"</p>
-          <button
-            onClick={() => navigate('/sales')}
-            className="btn-primary mt-4 mx-auto"
-          >
+          <button onClick={() => navigate('/sales')} className="btn-primary mt-4 mx-auto">
             ไปกรอกยอดขาย
           </button>
         </div>
@@ -263,26 +308,28 @@ export default function SalesHistoryPage() {
 
       {/* Day list */}
       {!loading && dayData.map(day => {
-        const dt = thaiDate(day.date)
+        const dt             = thaiDate(day.date)
         const profitPositive = day.totalNetProfit >= 0
-        const profitPct = day.totalSales > 0
-          ? (day.totalNetProfit / day.totalSales * 100).toFixed(1)
-          : '0.0'
+        const profitPct      = day.totalSales > 0
+          ? (day.totalNetProfit / day.totalSales * 100).toFixed(1) : '0.0'
+        const isExpanded  = expanded.has(day.date)
+        const activePlats = PLATFORMS.filter(p => day.activePlatforms.includes(p))
+
+        // Transfer summary badges
+        const allMatDone     = activePlats.length > 0 && activePlats.every(p => transferMap[tsKey(day.date, p)]?.mat)
+        const allProfitDone  = activePlats.length > 0 && activePlats.every(p => transferMap[tsKey(day.date, p)]?.profit)
+        const someMatDone    = activePlats.some(p => transferMap[tsKey(day.date, p)]?.mat)
+        const someProfitDone = activePlats.some(p => transferMap[tsKey(day.date, p)]?.profit)
 
         return (
-          <div
-            key={day.date}
-            onClick={() => navigate(`/sales?date=${day.date}`)}
-            className="card cursor-pointer hover:border-cocoa-300 hover:shadow-sm transition-all group"
-          >
-            <div className="flex items-start gap-3">
+          <div key={day.date} className="card overflow-hidden">
+            {/* ── Day summary row (click to expand) ── */}
+            <div className="flex items-start gap-3 cursor-pointer" onClick={() => toggleExpand(day.date)}>
               {/* Date block */}
               <div className={`shrink-0 w-12 text-center rounded-lg py-1.5 ${
                 dt.isWeekend ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50 border border-gray-200'
               }`}>
-                <p className={`text-xs ${dt.isWeekend ? 'text-amber-600' : 'text-gray-400'}`}>
-                  {dt.dayOfWeek}
-                </p>
+                <p className={`text-xs ${dt.isWeekend ? 'text-amber-600' : 'text-gray-400'}`}>{dt.dayOfWeek}</p>
                 <p className={`text-lg font-bold leading-tight ${dt.isWeekend ? 'text-amber-700' : 'text-gray-800'}`}>
                   {day.date.slice(8)}
                 </p>
@@ -292,36 +339,44 @@ export default function SalesHistoryPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <div className="flex flex-wrap gap-1">
-                    {PLATFORMS.filter(p => day.activePlatforms.includes(p)).map(p => (
-                      <span key={p} className={`text-xs px-2 py-0.5 rounded-full font-medium ${PLAT_BADGE[p]}`}>
-                        {p}
-                      </span>
+                    {activePlats.map(p => (
+                      <span key={p} className={`text-xs px-2 py-0.5 rounded-full font-medium ${PLAT_BADGE[p]}`}>{p}</span>
                     ))}
-                    {day.activePlatforms.length === 0 && (
-                      <span className="text-xs text-gray-400">ไม่มีรายการขาย</span>
-                    )}
+                    {activePlats.length === 0 && <span className="text-xs text-gray-400">ไม่มีรายการขาย</span>}
                   </div>
-                  <PenLine size={14} className="text-gray-300 group-hover:text-cocoa-500 shrink-0 transition-colors" />
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Transfer status mini-badges */}
+                    {activePlats.length > 0 && (
+                      <>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5 ${
+                          allMatDone ? 'bg-green-100 text-green-700'
+                          : someMatDone ? 'bg-amber-100 text-amber-700'
+                          : 'bg-gray-100 text-gray-400'
+                        }`}>
+                          {allMatDone ? <CheckCircle2 size={10} /> : <Clock size={10} />} Mat
+                        </span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5 ${
+                          allProfitDone ? 'bg-green-100 text-green-700'
+                          : someProfitDone ? 'bg-amber-100 text-amber-700'
+                          : 'bg-gray-100 text-gray-400'
+                        }`}>
+                          {allProfitDone ? <CheckCircle2 size={10} /> : <Clock size={10} />} กำไร
+                        </span>
+                      </>
+                    )}
+                    {isExpanded ? <ChevronUp size={14} className="text-gray-400 ml-0.5" /> : <ChevronDown size={14} className="text-gray-400 ml-0.5" />}
+                  </div>
                 </div>
 
                 <div className="flex items-end justify-between gap-2">
                   <div className="space-y-0.5">
-                    <p className="text-lg font-bold text-gray-900 leading-tight">
-                      {formatBaht(day.totalSales)}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {day.totalItems} รายการ
-                    </p>
+                    <p className="text-lg font-bold text-gray-900 leading-tight">{formatBaht(day.totalSales)}</p>
+                    <p className="text-xs text-gray-500">{day.totalItems} รายการ</p>
                   </div>
-
                   <div className="text-right">
-                    <div className={`flex items-center gap-1 justify-end text-sm font-semibold ${
-                      profitPositive ? 'text-green-700' : 'text-red-600'
-                    }`}>
-                      {profitPositive
-                        ? <TrendingUp size={14} />
-                        : <TrendingDown size={14} />
-                      }
+                    <div className={`flex items-center gap-1 justify-end text-sm font-semibold ${profitPositive ? 'text-green-700' : 'text-red-600'}`}>
+                      {profitPositive ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
                       {formatBaht(day.totalNetProfit)}
                     </div>
                     <p className={`text-xs mt-0.5 ${profitPositive ? 'text-green-600' : 'text-red-500'}`}>
@@ -336,22 +391,87 @@ export default function SalesHistoryPage() {
                     {PLATFORMS.filter(p => (day.platformSales[p] ?? 0) > 0).map(p => {
                       const pct = (day.platformSales[p] / day.totalSales * 100).toFixed(1)
                       const colors = {
-                        GRAB: 'bg-green-400', LINE: 'bg-green-600',
+                        GRAB: 'bg-green-400', LINE: 'bg-teal-500',
                         SHOPEE: 'bg-orange-400', 'The metro': 'bg-blue-400', TU: 'bg-purple-400',
                       }
                       return (
-                        <div
-                          key={p}
-                          title={`${p}: ${pct}%`}
-                          className={`${colors[p]} rounded-full`}
-                          style={{ width: `${pct}%` }}
-                        />
+                        <div key={p} title={`${p}: ${pct}%`}
+                          className={`${colors[p]} rounded-full`} style={{ width: `${pct}%` }} />
                       )
                     })}
                   </div>
                 )}
               </div>
             </div>
+
+            {/* ── Expanded: per-platform transfer status ── */}
+            {isExpanded && activePlats.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-1">
+                  <Banknote size={12} /> สถานะการโอนเงินแยกบัญชี
+                </p>
+
+                {activePlats.map(p => {
+                  const key    = tsKey(day.date, p)
+                  const ts     = transferMap[key] ?? {}
+                  const detail = day.platformDetail[p] ?? {}
+
+                  return (
+                    <div key={p} className="bg-gray-50 rounded-xl p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${PLAT_BADGE[p]}`}>{p}</span>
+                        <span className="text-xs text-gray-400">ยอดขาย {formatBaht(detail.sales ?? 0)}</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* Mat Cost button */}
+                        <button
+                          onClick={() => toggleTransfer(day.date, p, 'mat')}
+                          disabled={saving === key + 'mat'}
+                          className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
+                            ts.mat
+                              ? 'bg-green-50 border-green-300'
+                              : 'bg-white border-gray-200 hover:border-cocoa-300'
+                          } ${saving === key + 'mat' ? 'opacity-50' : ''}`}
+                        >
+                          <span className="text-[11px] text-gray-400 font-medium">💰 Mat Cost</span>
+                          <span className="text-sm font-bold text-gray-800">{formatBaht(detail.matCost ?? 0)}</span>
+                          <span className={`text-[11px] flex items-center gap-1 font-semibold ${ts.mat ? 'text-green-600' : 'text-gray-400'}`}>
+                            {ts.mat ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
+                          </span>
+                        </button>
+
+                        {/* Net Profit button */}
+                        <button
+                          onClick={() => toggleTransfer(day.date, p, 'profit')}
+                          disabled={saving === key + 'profit'}
+                          className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
+                            ts.profit
+                              ? 'bg-green-50 border-green-300'
+                              : 'bg-white border-gray-200 hover:border-cocoa-300'
+                          } ${saving === key + 'profit' ? 'opacity-50' : ''}`}
+                        >
+                          <span className="text-[11px] text-gray-400 font-medium">📈 กำไรสุทธิ</span>
+                          <span className={`text-sm font-bold ${(detail.netProfit ?? 0) >= 0 ? 'text-gray-800' : 'text-red-600'}`}>
+                            {formatBaht(detail.netProfit ?? 0)}
+                          </span>
+                          <span className={`text-[11px] flex items-center gap-1 font-semibold ${ts.profit ? 'text-green-600' : 'text-gray-400'}`}>
+                            {ts.profit ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                <button
+                  onClick={e => { e.stopPropagation(); navigate(`/sales?date=${day.date}`) }}
+                  className="w-full flex items-center justify-center gap-1.5 text-xs text-gray-400 hover:text-cocoa-600 py-1.5 transition-colors"
+                >
+                  <PenLine size={11} /> แก้ไขข้อมูลวันนี้
+                </button>
+              </div>
+            )}
           </div>
         )
       })}
