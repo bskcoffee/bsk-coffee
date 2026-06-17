@@ -1,7 +1,8 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { supabase } from '../lib/supabase'
 
 const ALL_NAV = [
   { to: '/',         iconName: 'LayoutDashboard', label: 'Dashboard',           end: true,  adminOnly: false },
@@ -17,39 +18,51 @@ const ALL_NAV = [
 const ICON_MAP = { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users }
 const STORAGE_KEY = 'cocoa-nav-order'
 
-function loadOrder() {
+function applyOrder(order) {
+  if (!order || !Array.isArray(order)) return ALL_NAV
+  const defaultTos = new Set(ALL_NAV.map(n => n.to))
+  if (!order.every(to => defaultTos.has(to))) return ALL_NAV
+  const ordered = order.map(to => ALL_NAV.find(n => n.to === to)).filter(Boolean)
+  // append any new items not yet in saved order
+  const orderedSet = new Set(ordered.map(n => n.to))
+  const rest = ALL_NAV.filter(n => !orderedSet.has(n.to))
+  return [...ordered, ...rest]
+}
+
+function loadLocalOrder() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
-    if (!saved) return null
-    const order = JSON.parse(saved)
-    const defaultTos = new Set(ALL_NAV.map(n => n.to))
-    if (!order.every(to => defaultTos.has(to))) return null
-    return order
-  } catch {
-    return null
-  }
-}
-
-function saveOrder(items) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items.map(n => n.to)))
-  } catch {}
-}
-
-function buildItems() {
-  const order = loadOrder()
-  if (!order) return ALL_NAV
-  return order.map(to => ALL_NAV.find(n => n.to === to)).filter(Boolean)
+    return saved ? JSON.parse(saved) : null
+  } catch { return null }
 }
 
 export default function Sidebar() {
   const { signOut, role } = useAuth()
-  const [items, setItems] = useState(buildItems)
+  const [items, setItems] = useState(() => applyOrder(loadLocalOrder()))
   const dragIdx   = useRef(null)
   const overIdx   = useRef(null)
   const [dragging, setDragging] = useState(false)
   const [dragOver, setDragOver] = useState(null)
   const [showSignOutModal, setShowSignOutModal] = useState(false)
+
+  // Fetch nav order from Supabase on mount — syncs across all devices
+  useEffect(() => {
+    supabase
+      .from('settings')
+      .select('value')
+      .eq('key', 'nav_order')
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.value) {
+          try {
+            const order = JSON.parse(data.value)
+            setItems(applyOrder(order))
+            // cache locally for next fast render
+            localStorage.setItem(STORAGE_KEY, data.value)
+          } catch {}
+        }
+      })
+  }, [])
 
   // Only show admin-only items when role is confirmed admin
   const visibleItems = items.filter(item => !item.adminOnly || role === 'admin')
@@ -69,7 +82,7 @@ export default function Sidebar() {
     }
   }
 
-  const handleDrop = (e, idx) => {
+  const handleDrop = async (e, idx) => {
     e.preventDefault()
     const from = dragIdx.current
     const to   = idx
@@ -78,7 +91,15 @@ export default function Sidebar() {
     const [moved]   = reordered.splice(from, 1)
     reordered.splice(to, 0, moved)
     setItems(reordered)
-    saveOrder(reordered)
+
+    const orderJson = JSON.stringify(reordered.map(n => n.to))
+    // 1. Save locally (instant)
+    try { localStorage.setItem(STORAGE_KEY, orderJson) } catch {}
+    // 2. Save to Supabase (syncs to all devices)
+    await supabase
+      .from('settings')
+      .upsert({ key: 'nav_order', value: orderJson }, { onConflict: 'key' })
+
     dragIdx.current = null
     overIdx.current = null
     setDragging(false)
@@ -139,7 +160,7 @@ export default function Sidebar() {
                   } ${isOver && dragIdx.current !== idx ? 'bg-cocoa-700' : ''}`
                 }
               >
-                <GripVertical size={14} className="shrink-0 text-cocoa-500 group-hover:text-cocoa-300 transition-colors" />
+                <GripVertical size={14} className="shrink-0 text-cocoa-500 group-hover:text-cocoa-300 transition-colors" aria-hidden="true" />
                 <Icon size={16} className="shrink-0" />
                 <span className="truncate">{label}</span>
               </NavLink>
