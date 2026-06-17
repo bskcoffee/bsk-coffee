@@ -1,0 +1,32 @@
+{
+  "name": "Cocoa House — ระบบจัดการยอดขาย",
+  "short_name": "Cocoa House",
+  "description": "ระบบบันทึกและวิเคราะห์ยอดขายสำหรับร้าน Cocoa House",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fdf8f5",
+  "theme_color": "#a13911",
+  "orientation": "portrait-primary",
+  "lang": "th",
+  "icons": [
+    {
+      "src": "/cocoa.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "กรอกยอดขาย",
+      "short_name": "กรอกยอด",
+      "url": "/sales",
+      "description": "บันทึกยอดขายวันนี้"
+    },
+    {
+      "name": "Dashboard",
+      "url": "/",
+      "description": "ดูสรุปยอดขาย"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Environment variables — ห้าม commit ขึ้น Git เด็ดขาด
+.env
+.env.local
+.env.production
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
