@@ -194,18 +194,18 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
 
   // ─── Cost Breakdown config (categories + item labels, persisted) ──────────
+  function mergeCostConfig(parsed) {
+    const savedIds = parsed.items.map(i => i.id)
+    const newItems = DEFAULT_COST_CONFIG.items.filter(i => !savedIds.includes(i.id))
+      .map(i => ({ ...i, catId: parsed.categories[0]?.id ?? 'cat-1' }))
+    if (newItems.length) parsed.items = [...parsed.items, ...newItems]
+    return parsed
+  }
+
   const [costConfig, setCostConfig] = useState(() => {
     try {
       const saved = localStorage.getItem('dashboard-cost-config')
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        // merge: add any new default items missing from saved config
-        const savedIds = parsed.items.map(i => i.id)
-        const newItems = DEFAULT_COST_CONFIG.items.filter(i => !savedIds.includes(i.id))
-          .map(i => ({ ...i, catId: parsed.categories[0]?.id ?? 'cat-1' }))
-        if (newItems.length) parsed.items = [...parsed.items, ...newItems]
-        return parsed
-      }
+      if (saved) return mergeCostConfig(JSON.parse(saved))
     } catch {}
     return DEFAULT_COST_CONFIG
   })
@@ -216,7 +216,9 @@ export default function DashboardPage() {
   const saveCostConfig = (updater) => {
     setCostConfig(prev => {
       const next = typeof updater === 'function' ? updater(prev) : updater
-      localStorage.setItem('dashboard-cost-config', JSON.stringify(next))
+      const json = JSON.stringify(next)
+      localStorage.setItem('dashboard-cost-config', json)
+      setSetting('dash_cost_config', json) // sync to Supabase
       return next
     })
   }
@@ -261,8 +263,7 @@ export default function DashboardPage() {
       const saved = localStorage.getItem('dashboard-kpi-order')
       if (saved) {
         const parsed = JSON.parse(saved)
-        const merged = [...parsed, ...DEFAULT_KPI_ORDER.filter(s => !parsed.includes(s))]
-        return merged
+        return [...parsed, ...DEFAULT_KPI_ORDER.filter(s => !parsed.includes(s))]
       }
     } catch {}
     return DEFAULT_KPI_ORDER
@@ -279,7 +280,9 @@ export default function DashboardPage() {
       const next = [...prev]
       const fi = next.indexOf(fromId); const ti = next.indexOf(toId)
       next.splice(fi, 1); next.splice(ti, 0, fromId)
-      localStorage.setItem('dashboard-kpi-order', JSON.stringify(next))
+      const json = JSON.stringify(next)
+      localStorage.setItem('dashboard-kpi-order', json)
+      setSetting('dash_kpi_order', json) // sync to Supabase
       return next
     })
     setKpiDragOver(null); kpiDragItem.current = null
@@ -313,13 +316,48 @@ export default function DashboardPage() {
       const ti = next.indexOf(toId)
       next.splice(fi, 1)
       next.splice(ti, 0, fromId)
-      localStorage.setItem('dashboard-section-order', JSON.stringify(next))
+      const json = JSON.stringify(next)
+      localStorage.setItem('dashboard-section-order', json)
+      setSetting('dash_section_order', json) // sync to Supabase
       return next
     })
     setDragOverId(null)
     dragItemId.current = null
   }
   const handleDragEnd = () => { setDragOverId(null); dragItemId.current = null }
+
+  // ─── Load dashboard config from Supabase on mount (sync across devices) ────
+  useEffect(() => {
+    Promise.all([
+      getSetting('dash_cost_config'),
+      getSetting('dash_kpi_order'),
+      getSetting('dash_section_order'),
+    ]).then(([costJson, kpiJson, sectionJson]) => {
+      if (costJson) {
+        try {
+          const parsed = mergeCostConfig(JSON.parse(costJson))
+          setCostConfig(parsed)
+          localStorage.setItem('dashboard-cost-config', costJson)
+        } catch {}
+      }
+      if (kpiJson) {
+        try {
+          const parsed = JSON.parse(kpiJson)
+          const merged = [...parsed, ...DEFAULT_KPI_ORDER.filter(s => !parsed.includes(s))]
+          setKpiOrder(merged)
+          localStorage.setItem('dashboard-kpi-order', kpiJson)
+        } catch {}
+      }
+      if (sectionJson) {
+        try {
+          const parsed = JSON.parse(sectionJson)
+          const merged = [...parsed, ...DEFAULT_SECTION_ORDER.filter(s => !parsed.includes(s))]
+          setSectionOrder(merged)
+          localStorage.setItem('dashboard-section-order', sectionJson)
+        } catch {}
+      }
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Sales Target ─────────────────────────────────────────────
   const [salesTarget, setSalesTarget]     = useState(0)
@@ -1193,7 +1231,6 @@ export default function DashboardPage() {
               }
 
               if (sectionId === 'best-worst') {
-                if (!aggregated.bestDay && !aggregated.worstDay) return null
                 return (
                   <DraggableSection key={sectionId} {...dragProps}>
                     <div className="grid grid-cols-2 gap-3">
@@ -1206,9 +1243,9 @@ export default function DashboardPage() {
                       )}
                       {aggregated.worstDay && (
                         <div className="card bg-red-50 border-red-200">
-                          <p className="text-xs text-red-600 font-medium">วันที่แย่สุด</p>
+                          <p className="text-xs text-red-500 font-medium flex items-center gap-1"><Star size={12} /> วันที่แย่สุด</p>
                           <p className="font-bold text-gray-900">{aggregated.worstDay.date}</p>
-                          <p className="text-red-700 text-sm">{formatBaht(aggregated.worstDay.profit)}</p>
+                          <p className="text-red-600 text-sm">{formatBaht(aggregated.worstDay.profit)}</p>
                         </div>
                       )}
                     </div>
