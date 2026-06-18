@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, ShoppingCart, ClipboardList, BarChart3,
   Settings, UtensilsCrossed, Calculator, Users, LogOut,
-  MoreHorizontal, X,
+  MoreHorizontal, X, FileUp,
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
@@ -17,6 +17,7 @@ const ALL_ITEMS = [
   { to: '/menu',     icon: UtensilsCrossed, label: 'จัดการเมนู',            adminOnly: false },
   { to: '/cost',     icon: Calculator,      label: 'ต้นทุนเมนู',            adminOnly: false },
   { to: '/users',    icon: Users,           label: 'จัดการผู้ใช้',          adminOnly: true  },
+  { to: '/import',   icon: FileUp,          label: 'นำเข้าข้อมูล',          adminOnly: true  },
 ]
 
 const MAIN_TOS   = new Set(['/', '/sales', '/history', '/reports'])
