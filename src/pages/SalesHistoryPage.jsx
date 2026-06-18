@@ -61,15 +61,17 @@ export default function SalesHistoryPage() {
       const end   = format(endOfMonth(new Date(month + '-01')), 'yyyy-MM-dd')
       const today = new Date().toISOString().slice(0, 10)
 
-      // Fetch orders, costs, transfers AND settings for Dashboard-identical calculation
+      // Fetch same data sources as Dashboard for identical calculation
       const [ordersRes, costsRes, transferRes, settingsRes, costSettingsRes, menuCostsRes] = await Promise.all([
         supabase.from('orders').select('id, date, platform').gte('date', start).lte('date', end),
         supabase.from('platform_costs').select('*').gte('date', start).lte('date', end),
         supabase.from('transfer_status').select('*').gte('sale_date', start).lte('sale_date', end),
         supabase.from('settings').select('key, value'),
+        // Identical query to Dashboard: filter by effective_to to exclude expired settings
         supabase.from('cost_settings')
           .select('key, value, effective_from')
           .lte('effective_from', today)
+          .or(`effective_to.is.null,effective_to.gt.${today}`)
           .order('effective_from', { ascending: false }),
         supabase.from('menu_costs').select('*').is('effective_to', null),
       ])
@@ -78,7 +80,7 @@ export default function SalesHistoryPage() {
       const costs     = costsRes.data ?? []
       const transfers = transferRes.data ?? []
 
-      // Platform fees — same as Dashboard
+      // Platform fees — identical fallback logic to Dashboard
       const platConfigRow = (settingsRes.data ?? []).find(r => r.key === 'platform_config')
       let platFees = {}
       if (platConfigRow) {
@@ -86,9 +88,19 @@ export default function SalesHistoryPage() {
           const platConfig = JSON.parse(platConfigRow.value)
           platFees = Object.fromEntries(platConfig.map(p => [p.name, p.fee ?? 0]))
         } catch {}
+      } else {
+        // Fallback: read legacy individual fee keys (same as Dashboard fallback)
+        platFees = { GRAB: 0, LINE: 0, SHOPEE: 0, 'The metro': 0, TU: 0 }
+        for (const row of settingsRes.data ?? []) {
+          if (row.key === 'grab_fee_pct')      platFees.GRAB          = parseFloat(row.value) || 0
+          if (row.key === 'line_fee_pct')      platFees.LINE          = parseFloat(row.value) || 0
+          if (row.key === 'shopee_fee_pct')    platFees.SHOPEE        = parseFloat(row.value) || 0
+          if (row.key === 'the_metro_fee_pct') platFees['The metro']  = parseFloat(row.value) || 0
+          if (row.key === 'tu_fee_pct')        platFees.TU            = parseFloat(row.value) || 0
+        }
       }
 
-      // Cost settings map (latest per key)
+      // Cost settings map (latest per key) — same as Dashboard
       const cs = {}
       for (const row of costSettingsRes.data ?? []) {
         if (!(row.key in cs)) cs[row.key] = Number(row.value)
@@ -159,6 +171,7 @@ export default function SalesHistoryPage() {
           // Mat Cost — recalculated from current menu_costs + cost_settings (same as Dashboard)
           const platMatCost = platItems.reduce((sum, item) => {
             const mc = menuCostMap[item.menu_id]
+            if (!mc) return sum
             const bd = calcMenuCostBreakdown(mc, cs, 0, 0)
             return sum + (item.quantity * (bd?.materialCost ?? 0))
           }, 0)
@@ -168,7 +181,7 @@ export default function SalesHistoryPage() {
           // Labor Cost = laborPct% x sales (same as Dashboard totalLaborCost)
           const platLaborCost = laborPct / 100 * r.sales
 
-          // Net Profit = same formula as Dashboard's newNetProfit
+          // Net Profit — identical formula to Dashboard's newNetProfit
           const netProfit = r.sales
             - r.menuDiscount
             - platMatCost
@@ -182,8 +195,9 @@ export default function SalesHistoryPage() {
           totalSales     += r.sales
           totalNetProfit += netProfit
           totalItems     += r.itemCount
-          platformSales[platform]  = r.grossSales
-          platformDetail[platform] = { sales: r.grossSales, matCost: platMatCost, netProfit }
+          // Use r.sales (not grossSales) to be consistent with Dashboard's pSales
+          platformSales[platform]  = r.sales
+          platformDetail[platform] = { sales: r.sales, matCost: platMatCost, netProfit }
           if (r.itemCount > 0 || r.sales > 0) activePlatforms.push(platform)
         }
 
@@ -254,7 +268,7 @@ export default function SalesHistoryPage() {
     const html = `<html><head><meta charset="UTF-8">
     <style>body{font-family:sans-serif;font-size:12px;padding:24px}h2{margin-bottom:4px}.sub{color:#666;margin-bottom:16px}table{width:100%;border-collapse:collapse}th{background:#f3f4f6;text-align:left;padding:6px 8px}td{padding:5px 8px;border-bottom:1px solid #e5e7eb}.sum{font-weight:bold;background:#f9fafb}</style>
     </head><body>
-    <h2>☕ Cocoa House — สรุปยอดขายรายเดือน</h2>
+    <h2>Cocoa House</h2>
     <div class="sub">${thaiMonth(month)} · ${dayData.length} วันที่มีข้อมูล</div>
     <table>
       <thead><tr><th>วันที่</th><th>Platform</th><th style="text-align:right">ยอดขาย</th><th style="text-align:right">กำไรสุทธิ</th></tr></thead>
@@ -431,7 +445,7 @@ export default function SalesHistoryPage() {
                           className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
                             ts.mat ? 'bg-green-50 border-green-300' : 'bg-white border-gray-200 hover:border-cocoa-300'
                           } ${saving === key + 'mat' ? 'opacity-50' : ''}`}>
-                          <span className="text-[11px] text-gray-400 font-medium">💰 Mat Cost</span>
+                          <span className="text-[11px] text-gray-400 font-medium">Mat Cost</span>
                           <span className="text-sm font-bold text-gray-800">{formatBaht(detail.matCost ?? 0)}</span>
                           <span className={`text-[11px] flex items-center gap-1 font-semibold ${ts.mat ? 'text-green-600' : 'text-gray-400'}`}>
                             {ts.mat ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
@@ -441,7 +455,7 @@ export default function SalesHistoryPage() {
                           className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
                             ts.profit ? 'bg-green-50 border-green-300' : 'bg-white border-gray-200 hover:border-cocoa-300'
                           } ${saving === key + 'profit' ? 'opacity-50' : ''}`}>
-                          <span className="text-[11px] text-gray-400 font-medium">📈 กำไรสุทธิ</span>
+                          <span className="text-[11px] text-gray-400 font-medium">กำไรสุทธิ</span>
                           <span className={`text-sm font-bold ${(detail.netProfit ?? 0) >= 0 ? 'text-gray-800' : 'text-red-600'}`}>
                             {formatBaht(detail.netProfit ?? 0)}
                           </span>
