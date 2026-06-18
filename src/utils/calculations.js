@@ -16,6 +16,10 @@
  *   Profit %      = Profit ÷ Price × 100
  */
 
+// ─── Constants ───────────────────────────────────────────────
+
+export const CAMPAIGN_GP_PCT = 5  // Grab 60/40 campaign flat GP fee %
+
 // ─── 5-Layer Order Profit ────────────────────────────────────
 
 export function calcPlatformProfit({ items = [], costs = {}, platformFeePct = 0 }) {

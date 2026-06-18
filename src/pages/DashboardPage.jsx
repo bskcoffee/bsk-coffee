@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase, getSetting, setSetting } from '../lib/supabase'
 import {
-  calcPlatformProfit, calcDayTotal, calcMenuCostBreakdown, formatBaht, formatPct, changePct
+  calcPlatformProfit, calcDayTotal, calcMenuCostBreakdown, formatBaht, formatPct, changePct,
+  CAMPAIGN_GP_PCT,
 } from '../utils/calculations'
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend
@@ -547,7 +548,7 @@ export default function DashboardPage() {
     for (const plat of platList) {
       const platItems = filteredItems
         .filter(i => i.orders?.platform === plat)
-        .map(i => ({ quantity: i.quantity, unit_price: i.unit_price, unit_gp_cost: i.unit_gp_cost }))
+        .map(i => ({ quantity: i.quantity, unit_price: i.unit_price, unit_gp_cost: i.unit_gp_cost, is_campaign: i.is_campaign }))
       const platCosts = filteredCosts
         .filter(c => c.platform === plat)
         .reduce((acc, c) => ({
@@ -642,11 +643,15 @@ export default function DashboardPage() {
     const totalMarketingFee    = Object.values(platformTotals).reduce((s, p) => s + p.marketingFee,       0)
     const totalDeliveryDiscount= Object.values(platformTotals).reduce((s, p) => s + p.deliveryDiscount,   0)
 
-    // GP Cost = platform fee % × platformSales (commission only, from settings)
+    // GP Cost = (normalSales × platFee%) + (campaignSales × CAMPAIGN_GP_PCT%)
+    // Campaign items (is_campaign=true) use 5% flat rate instead of platform fee
     const totalGpCost = platList.reduce((s, p) => {
+      const pt = platformTotals[p]
+      if (!pt) return s
       const feePct = platFees[p] ?? 0
-      const pSales = platformTotals[p]?.sales ?? 0
-      return s + (pSales * feePct / 100)
+      const normalGp   = (pt.normalSales   ?? pt.sales) * feePct         / 100
+      const campaignGp = (pt.campaignSales ?? 0)        * CAMPAIGN_GP_PCT / 100
+      return s + normalGp + campaignGp
     }, 0)
 
     // Labor Cost = laborPct % × totalSales
@@ -686,7 +691,9 @@ export default function DashboardPage() {
     const platformProfitBeforeMat = {}
     for (const p of platList) {
       const pt = platformTotals[p]
-      const gpCostP = (platFees[p] ?? 0) / 100 * (pt?.sales ?? 0)
+      const feePct = platFees[p] ?? 0
+      const gpCostP = ((pt?.normalSales ?? pt?.sales ?? 0) * feePct         / 100)
+                    + ((pt?.campaignSales ?? 0)            * CAMPAIGN_GP_PCT / 100)
       platformProfitBeforeMat[p] = (pt?.sales ?? 0) - gpCostP
         - (pt?.menuDiscount ?? 0) - (pt?.campaign ?? 0)
         - (pt?.marketingFee ?? 0) - (pt?.deliveryDiscount ?? 0)
@@ -1257,7 +1264,7 @@ export default function DashboardPage() {
                       {aggregated.worstDay && (
                         <div className="card bg-red-50 border-red-200">
                           <p className="text-xs text-red-500 font-medium flex items-center gap-1"><Star size={12} /> วันที่แย่สุด</p>
-                          <p className="font-bold text-gray-900">{aggregated.worstDay.date}</p>
+                                                 <p className="font-bold text-gray-900">{aggregated.worstDay.date}</p>
                           <p className="text-red-600 text-sm">{formatBaht(aggregated.worstDay.profit)}</p>
                         </div>
                       )}

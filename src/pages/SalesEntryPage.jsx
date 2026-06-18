@@ -2,12 +2,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams, useBlocker } from 'react-router-dom'
 import { supabase, getSetting, getCostSettingsForDate } from '../lib/supabase'
 import { saveDraft, loadDraft, clearDraft, isOnline, enqueueSync, getSyncQueue, processSyncQueue, clearSyncQueue } from '../utils/offlineSync'
-import { calcPlatformProfit, calcMenuCostBreakdown, formatBaht } from '../utils/calculations'
+import { calcPlatformProfit, calcMenuCostBreakdown, formatBaht, CAMPAIGN_GP_PCT } from '../utils/calculations'
 import { useToast } from '../contexts/ToastContext'
 import { Plus, Minus, Save, AlertCircle, CheckCircle, WifiOff, ChevronDown, ChevronUp, Pencil, Lock, Search, X, RefreshCw, CloudOff, Trash2, Printer } from 'lucide-react'
 
 const DEFAULT_PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
-const CAMPAIGN_GP_PCT = 5   // Grab 60/40 campaign flat fee %
 const CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun', 'Refill', 'Addon']
 
 // slug key for settings (legacy compat)
