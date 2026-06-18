@@ -333,28 +333,41 @@ export default function DashboardPage() {
       getSetting('dash_kpi_order'),
       getSetting('dash_section_order'),
     ]).then(([costJson, kpiJson, sectionJson]) => {
+      // ── Cost config ──
       if (costJson) {
         try {
           const parsed = mergeCostConfig(JSON.parse(costJson))
           setCostConfig(parsed)
           localStorage.setItem('dashboard-cost-config', costJson)
         } catch {}
+      } else {
+        // No Supabase data yet — migrate local config up so other devices can sync
+        const local = localStorage.getItem('dashboard-cost-config')
+        if (local) setSetting('dash_cost_config', local)
       }
+
+      // ── KPI order ──
       if (kpiJson) {
         try {
           const parsed = JSON.parse(kpiJson)
-          const merged = [...parsed, ...DEFAULT_KPI_ORDER.filter(s => !parsed.includes(s))]
-          setKpiOrder(merged)
+          setKpiOrder([...parsed, ...DEFAULT_KPI_ORDER.filter(s => !parsed.includes(s))])
           localStorage.setItem('dashboard-kpi-order', kpiJson)
         } catch {}
+      } else {
+        const local = localStorage.getItem('dashboard-kpi-order')
+        if (local) setSetting('dash_kpi_order', local)
       }
+
+      // ── Section order ──
       if (sectionJson) {
         try {
           const parsed = JSON.parse(sectionJson)
-          const merged = [...parsed, ...DEFAULT_SECTION_ORDER.filter(s => !parsed.includes(s))]
-          setSectionOrder(merged)
+          setSectionOrder([...parsed, ...DEFAULT_SECTION_ORDER.filter(s => !parsed.includes(s))])
           localStorage.setItem('dashboard-section-order', sectionJson)
         } catch {}
+      } else {
+        const local = localStorage.getItem('dashboard-section-order')
+        if (local) setSetting('dash_section_order', local)
       }
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
