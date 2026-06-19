@@ -6,7 +6,7 @@ const SWEETNESS_LEVELS = [
   { label: '10%',  value: 10  },
   { label: '25%',  value: 25  },
   { label: '50%',  value: 50  },
-  { label: '100%', value: 100 },
+  { label: '100%', sublabel: 'ปกติ', value: 100 },
 ]
 
 const fmt = (n) =>
@@ -24,7 +24,7 @@ const fmt = (n) =>
  *  onConfirm   – (options) => void
  *  onClose     – () => void
  */
-export default function MenuOptionModal({ menu, platform, addons, refills, initial, onConfirm, onClose }) {
+export default function MenuOptionModal({ menu, platform, addons, refills, initial, onConfirm, onClose, confirmLabel }) {
   const basePrice = menu?.prices?.[platform] ?? 0
 
   const [milk,      setMilk]      = useState(initial?.milk      ?? null)    // { id, name, price }
@@ -90,7 +90,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                 {addons.map(addon => (
                   <button
                     key={addon.id}
-                    onClick={() => setMilk({ id: addon.id, name: addon.name, price: addon.price })}
+                    onClick={() => setMilk(prev => prev?.id === addon.id ? null : { id: addon.id, name: addon.name, price: addon.price })}
                     className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95
                       ${milk?.id === addon.id
                         ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700'
@@ -118,13 +118,18 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                 <button
                   key={lvl.value}
                   onClick={() => setSweetness(lvl.value)}
-                  className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all active:scale-95 border-2
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95 border-2 flex flex-col items-center
                     ${sweetness === lvl.value
                       ? 'bg-cocoa-700 text-white border-cocoa-700'
                       : 'bg-white text-gray-600 border-gray-200'
                     }`}
                 >
-                  {lvl.label}
+                  <span>{lvl.label}</span>
+                  {lvl.sublabel && (
+                    <span className={`text-[10px] font-medium mt-0.5 ${sweetness === lvl.value ? 'text-cocoa-200' : 'text-gray-400'}`}>
+                      {lvl.sublabel}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -144,7 +149,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                 {refills.map(r => (
                   <button
                     key={r.id}
-                    onClick={() => setRefill({ id: r.id, name: r.name, price: r.price })}
+                    onClick={() => setRefill(prev => prev?.id === r.id ? null : { id: r.id, name: r.name, price: r.price })}
                     className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95
                       ${refill?.id === r.id
                         ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700'
@@ -190,7 +195,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
             onClick={handleConfirm}
             className="btn-primary w-full py-4 text-base flex items-center justify-between px-5"
           >
-            <span>เพิ่มลงออเดอร์</span>
+            <span>{confirmLabel ?? 'เพิ่มลงออเดอร์'}</span>
             <div className="flex items-center gap-1">
               {totalExtra > 0 && (
                 <span className="text-sm opacity-80">+{fmt(totalExtra)}</span>

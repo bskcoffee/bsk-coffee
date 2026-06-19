@@ -5,8 +5,9 @@ import { th } from 'date-fns/locale'
 import {
   RefreshCw, ChevronDown, ChevronUp, Loader2, X, Plus, Minus,
   CheckCircle2, Clock, Package, Truck, AlertCircle, Edit3, Save,
-  Search, CalendarDays,
+  Search, CalendarDays, Trash2,
 } from 'lucide-react'
+import MenuOptionModal from '../components/MenuOptionModal'
 
 // ── Status config ──────────────────────────────────────────────
 const STATUSES = [
@@ -61,12 +62,18 @@ export default function OrderManagePage() {
   const [refreshing,   setRefreshing]   = useState(false)
   const [expandedId,   setExpandedId]   = useState(null)
   const [editingId,    setEditingId]    = useState(null)
-  const [editItems,    setEditItems]    = useState({})   // { menuId: qty }
+  const [editItems,    setEditItems]    = useState({})      // { menuId: qty }
+  const [editItemMeta, setEditItemMeta] = useState({})   // { menuId: { unit_price, is_campaign, item_options } }
   const [savingId,     setSavingId]     = useState(null)
   const [updatingId,   setUpdatingId]   = useState(null)
   const [filterStatus, setFilterStatus] = useState('all')
   const [searchQ,      setSearchQ]      = useState('')
   const [menuSearch,   setMenuSearch]   = useState('')
+  const [optionTarget, setOptionTarget] = useState(null)  // { menu, order } when modal open
+  const [deleteTarget, setDeleteTarget] = useState(null)  // order to delete
+  const [deleting,     setDeleting]     = useState(false)
+  const [pendingDates, setPendingDates] = useState([])    // วันก่อนๆ ที่ยังมีออเดอร์ค้าง
+  const [alertDismissed, setAlertDismissed] = useState(false)
 
   // ── Load menus (for edit) ────────────────────────────────
   useEffect(() => {
@@ -82,17 +89,72 @@ export default function OrderManagePage() {
     load()
   }, [])
 
+  // ── Check previous days for undelivered orders ───────────
+  useEffect(() => {
+    const check = async () => {
+      const todayDate = today()
+      try {
+        const { data } = await supabase
+          .from('orders')
+          .select('date, status')
+          .lt('date', todayDate)
+          .neq('status', 'delivered')
+        if (data?.length) {
+          // unique dates, sorted desc
+          const dates = [...new Set(data.map(o => o.date))].sort((a, b) => b.localeCompare(a))
+          setPendingDates(dates)
+        } else {
+          setPendingDates([])
+        }
+      } catch {
+        // ถ้า status column ยังไม่มี ข้ามไป
+      }
+    }
+    check()
+  }, [orders]) // re-check เมื่อ orders เปลี่ยน (เช่น หลัง update status)
+
   // ── Load orders ──────────────────────────────────────────
   const loadOrders = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true)
     else setLoading(true)
 
     try {
-      const { data: ordersData } = await supabase
+      const { data: ordersData, error: ordersError } = await supabase
         .from('orders')
-        .select('id, platform, date, status, notes, created_at, updated_at')
+        .select('id, platform, date, status, notes, created_at')
         .eq('date', date)
         .order('created_at', { ascending: false })
+
+      if (ordersError) {
+        // Fallback: status column อาจยังไม่มี (SQL migration ยังไม่ได้รัน)
+        console.warn('orders query error, retrying without status:', ordersError.message)
+        const { data: fallback } = await supabase
+          .from('orders')
+          .select('id, platform, date, notes, created_at')
+          .eq('date', date)
+          .order('created_at', { ascending: false })
+        if (fallback) {
+          // inject default status
+          const withStatus = fallback.map(o => ({ ...o, status: 'preparing' }))
+          // continue with withStatus as ordersData
+          const itemsRes = await supabase
+            .from('order_items')
+            .select('id, order_id, menu_id, quantity, unit_price, is_campaign, item_options, menus(name, image_url)')
+            .in('order_id', withStatus.map(o => o.id))
+          const byOrder2 = {}
+          for (const item of itemsRes.data ?? []) {
+            if (!byOrder2[item.order_id]) byOrder2[item.order_id] = []
+            byOrder2[item.order_id].push(item)
+          }
+          setOrders(withStatus.map(o => ({
+            ...o,
+            items: byOrder2[o.id] ?? [],
+            total: (byOrder2[o.id] ?? []).reduce((s, i) => s + i.quantity * i.unit_price, 0),
+            itemCount: (byOrder2[o.id] ?? []).reduce((s, i) => s + i.quantity, 0),
+          })))
+          return
+        }
+      }
 
       if (!ordersData?.length) {
         setOrders([])
@@ -140,11 +202,19 @@ export default function OrderManagePage() {
 
   // ── Edit order ───────────────────────────────────────────
   const startEdit = (order) => {
-    const initItems = {}
+    const initQty  = {}
+    const initMeta = {}
     for (const item of order.items) {
-      initItems[item.menu_id] = item.quantity
+      initQty[item.menu_id]  = item.quantity
+      // เก็บ options เดิมไว้ครบ — ใช้ตอน save เพื่อไม่ให้ milk/refill/sweetness/note หาย
+      initMeta[item.menu_id] = {
+        unit_price:   item.unit_price,
+        is_campaign:  item.is_campaign ?? false,
+        item_options: item.item_options ?? null,
+      }
     }
-    setEditItems(initItems)
+    setEditItems(initQty)
+    setEditItemMeta(initMeta)
     setEditingId(order.id)
     setMenuSearch('')
   }
@@ -152,26 +222,31 @@ export default function OrderManagePage() {
   const cancelEdit = () => {
     setEditingId(null)
     setEditItems({})
+    setEditItemMeta({})
   }
 
   const saveEdit = async (order) => {
     setSavingId(order.id)
     try {
-      // Delete existing items
       await supabase.from('order_items').delete().eq('order_id', order.id)
 
-      // Insert updated items
       const toInsert = Object.entries(editItems)
         .filter(([, qty]) => qty > 0)
         .map(([menuId, qty]) => {
-          const menu = menus.find(m => m.id === menuId)
-          const price = menu?.menu_prices?.find(p => p.platform === order.platform)?.price ?? 0
+          const meta = editItemMeta[menuId]
+          // ถ้าเป็นรายการเดิม → ใช้ราคาและ options เดิม
+          // ถ้าเป็นรายการใหม่ที่เพิ่ง add → ดึงราคาจาก menu_prices
+          const menu  = menus.find(m => m.id === menuId)
+          const price = meta?.unit_price
+            ?? menu?.menu_prices?.find(p => p.platform === order.platform)?.price
+            ?? 0
           return {
-            order_id: order.id,
-            menu_id: menuId,
-            quantity: qty,
-            unit_price: price,
-            is_campaign: false,
+            order_id:     order.id,
+            menu_id:      menuId,
+            quantity:     qty,
+            unit_price:   price,
+            is_campaign:  meta?.is_campaign ?? false,
+            item_options: meta?.item_options ?? null,  // ← preserve milk/refill/sweetness/note
           }
         })
 
@@ -183,6 +258,20 @@ export default function OrderManagePage() {
       await loadOrders(true)
     } catch (err) { console.error(err) }
     setSavingId(null)
+  }
+
+  // ── Delete order ─────────────────────────────────────────
+  const deleteOrder = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await supabase.from('order_items').delete().eq('order_id', deleteTarget.id)
+      await supabase.from('orders').delete().eq('id', deleteTarget.id)
+      setOrders(prev => prev.filter(o => o.id !== deleteTarget.id))
+      if (expandedId === deleteTarget.id) setExpandedId(null)
+    } catch (err) { console.error(err) }
+    setDeleting(false)
+    setDeleteTarget(null)
   }
 
   // ── Filtered orders ──────────────────────────────────────
@@ -213,9 +302,15 @@ export default function OrderManagePage() {
     orders.filter(o => o.status === 'delivered').reduce((s, o) => s + o.total, 0),
   [orders])
 
+  // ── Addon / Refill menus (for MenuOptionModal) ──────────
+  const ADDON_CATS  = ['Addon', 'addon', 'ADDON']
+  const REFILL_CATS = ['Refill', 'refill', 'REFILL']
+  const addonMenus  = useMemo(() => menus.filter(m => ADDON_CATS.includes(m.category)),  [menus])
+  const refillMenus = useMemo(() => menus.filter(m => REFILL_CATS.includes(m.category)), [menus])
+
   // ── Menu for editing (filtered) ──────────────────────────
   const editableMenus = useMemo(() => {
-    const HIDDEN = ['Addon', 'addon', 'ADDON', 'Refill', 'refill', 'REFILL']
+    const HIDDEN = [...ADDON_CATS, ...REFILL_CATS]
     let list = menus.filter(m => !HIDDEN.includes(m.category))
     if (menuSearch.trim()) {
       const q = menuSearch.toLowerCase()
@@ -223,6 +318,25 @@ export default function OrderManagePage() {
     }
     return list
   }, [menus, menuSearch])
+
+  // ── Handle option confirm from MenuOptionModal ────────────
+  const handleEditOptionConfirm = (opts) => {
+    if (!optionTarget) return
+    const { menu, order } = optionTarget
+    const basePrice = menu.menu_prices?.find(p => p.platform === order.platform)?.price ?? 0
+    const milkPrice   = opts.milk?.price   ?? 0
+    const refillPrice = opts.refill?.price ?? 0
+    setEditItems(prev => ({ ...prev, [menu.id]: 1 }))
+    setEditItemMeta(prev => ({
+      ...prev,
+      [menu.id]: {
+        unit_price:  basePrice + milkPrice + refillPrice,
+        is_campaign: false,
+        item_options: opts,
+      },
+    }))
+    setOptionTarget(null)
+  }
 
   // ══════════════════════════════════════════════════════════
   return (
@@ -251,6 +365,7 @@ export default function OrderManagePage() {
             <button
               onClick={() => loadOrders(true)}
               disabled={refreshing}
+              aria-label="รีเฟรช"
               className="p-2 rounded-lg bg-cocoa-700 hover:bg-cocoa-600 active:bg-cocoa-900 transition-colors"
             >
               <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
@@ -267,12 +382,12 @@ export default function OrderManagePage() {
           ].map(s => (
             <div key={s.key} className="flex-1 bg-cocoa-700/50 rounded-xl p-2 text-center">
               <p className={`text-lg font-bold ${s.color}`}>{counts[s.key] ?? 0}</p>
-              <p className="text-[10px] text-cocoa-400">{s.label}</p>
+              <p className="text-xs text-cocoa-400">{s.label}</p>
             </div>
           ))}
           <div className="flex-1 bg-cocoa-700/50 rounded-xl p-2 text-center">
             <p className="text-lg font-bold text-green-300">{fmt(totalDelivered)}</p>
-            <p className="text-[10px] text-cocoa-400">ยอดส่งแล้ว</p>
+            <p className="text-xs text-cocoa-400">ยอดส่งแล้ว</p>
           </div>
         </div>
       </div>
@@ -316,6 +431,45 @@ export default function OrderManagePage() {
           </div>
         </div>
       </div>
+
+      {/* ── Pending days alert ──────────────────────────── */}
+      {pendingDates.length > 0 && !alertDismissed && (
+        <div className="mx-3 mt-3 shrink-0">
+          <div className="bg-amber-50 border border-amber-300 rounded-2xl px-4 py-3">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle size={18} className="text-amber-500 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-amber-800">มีออเดอร์ค้างจากวันก่อน</p>
+                <p className="text-xs text-amber-600 mt-0.5 mb-2">
+                  ออเดอร์ด้านล่างยังไม่ได้อัปเดตเป็น "ส่งแล้ว"
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {pendingDates.map(d => (
+                    <button
+                      key={d}
+                      onClick={() => setDate(d)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border
+                        ${date === d
+                          ? 'bg-amber-500 text-white border-amber-500'
+                          : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-100'
+                        }`}
+                    >
+                      {format(new Date(d + 'T00:00:00'), 'd MMM yyyy', { locale: th })}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={() => setAlertDismissed(true)}
+                aria-label="ปิดการแจ้งเตือน"
+                className="p-1 rounded-lg hover:bg-amber-100 text-amber-400 shrink-0"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Order list ──────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
@@ -418,6 +572,14 @@ export default function OrderManagePage() {
 
                     {/* Action buttons */}
                     <div className="flex gap-2 pt-1">
+                      {/* Delete button */}
+                      <button
+                        onClick={() => setDeleteTarget(order)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold transition-colors"
+                      >
+                        <Trash2 size={13} /> ลบ
+                      </button>
+
                       {/* Edit button (only if not delivered) */}
                       {order.status !== 'delivered' && (
                         <button
@@ -511,7 +673,16 @@ export default function OrderManagePage() {
                                 {qty || '·'}
                               </span>
                               <button
-                                onClick={() => setEditItems(prev => ({ ...prev, [menu.id]: (prev[menu.id] ?? 0) + 1 }))}
+                                onClick={() => {
+                                  const qty = editItems[menu.id] ?? 0
+                                  if (qty === 0) {
+                                    // เมนูใหม่ — เปิด MenuOptionModal เพื่อเลือกนม/Refill/ความหวาน
+                                    setOptionTarget({ menu, order })
+                                  } else {
+                                    // มีอยู่แล้ว — เพิ่มจำนวนได้เลย
+                                    setEditItems(prev => ({ ...prev, [menu.id]: prev[menu.id] + 1 }))
+                                  }
+                                }}
                                 className="w-7 h-7 rounded-lg bg-cocoa-700 flex items-center justify-center"
                               >
                                 <Plus size={12} className="text-white" />
@@ -548,6 +719,60 @@ export default function OrderManagePage() {
           })
         )}
       </div>
+
+      {/* ── Delete Confirm Popup ─────────────────────────── */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-6">
+          <div className="bg-white rounded-2xl w-full max-w-xs shadow-2xl overflow-hidden">
+            <div className="px-6 pt-6 pb-4 text-center">
+              <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+                <Trash2 size={24} className="text-red-500" />
+              </div>
+              <h3 className="text-base font-bold text-gray-900 mb-1">ยืนยันการลบออเดอร์?</h3>
+              <p className="text-sm text-gray-500">
+                <span className={`font-bold ${PLAT_COLOR[deleteTarget.platform] ? 'text-white' : 'text-gray-700'}`}></span>
+                <span className={`inline-block text-white text-xs font-bold px-2 py-0.5 rounded-lg mr-1
+                  ${PLAT_COLOR[deleteTarget.platform] ?? 'bg-gray-500'}`}>
+                  {deleteTarget.platform}
+                </span>
+                {deleteTarget.itemCount} รายการ · {new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', minimumFractionDigits: 0 }).format(deleteTarget.total)}
+              </p>
+              <p className="text-xs text-red-500 mt-2">การลบไม่สามารถกู้คืนได้</p>
+            </div>
+            <div className="flex flex-col gap-2 px-5 pb-5 pt-2">
+              <button
+                onClick={deleteOrder}
+                disabled={deleting}
+                className="w-full py-3.5 rounded-xl text-sm font-bold bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                ยืนยัน ลบออเดอร์นี้
+              </button>
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="w-full py-3 rounded-xl text-sm font-semibold text-gray-500 hover:bg-gray-100 transition-colors"
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MenuOptionModal (เพิ่มเมนูใหม่ในโหมดแก้ไข) ── */}
+      {optionTarget && (
+        <MenuOptionModal
+          menu={optionTarget.menu}
+          platform={optionTarget.order.platform}
+          addons={addonMenus}
+          refills={refillMenus}
+          initial={null}
+          onConfirm={handleEditOptionConfirm}
+          onClose={() => setOptionTarget(null)}
+          confirmLabel="เพิ่มในรายการ"
+        />
+      )}
     </div>
   )
 }
