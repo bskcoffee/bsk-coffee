@@ -340,7 +340,7 @@ export default function OrderManagePage() {
 
   // ══════════════════════════════════════════════════════════
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
+    <div className="h-full flex flex-col overflow-hidden bg-gray-50">
 
       {/* ── Header ──────────────────────────────────────── */}
       <div className="bg-cocoa-800 text-white px-4 py-3 shrink-0">

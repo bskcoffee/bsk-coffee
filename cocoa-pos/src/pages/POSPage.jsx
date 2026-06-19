@@ -422,7 +422,7 @@ export default function POSPage() {
   )
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
+    <div className="h-full flex flex-col overflow-hidden bg-gray-50">
 
       {/* ── Top Bar ─────────────────────────────────────────── */}
       <div className="bg-cocoa-800 text-white px-4 py-2.5 flex items-center justify-between shrink-0">
@@ -606,7 +606,7 @@ export default function POSPage() {
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto px-2 pb-2">
-              <div className="grid grid-cols-5 gap-2 pt-1">
+              <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 pt-1">
                 {displayMenus.map((menu, idx) => {
                   const qty      = quantities[menu.id] ?? 0
                   const hasQty   = qty > 0
@@ -735,7 +735,7 @@ export default function POSPage() {
         </div>
 
         {/* ══ Panel 3: Order Summary ══════════════════════════ */}
-        <div className="w-72 bg-white border-l border-gray-100 flex flex-col shrink-0">
+        <div className="w-60 md:w-64 lg:w-72 bg-white border-l border-gray-100 flex flex-col shrink-0">
           <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between shrink-0">
             <div>
               <p className="font-bold text-gray-900 text-sm">รายการออเดอร์</p>
