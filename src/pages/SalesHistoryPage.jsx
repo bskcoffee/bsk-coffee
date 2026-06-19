@@ -7,7 +7,7 @@ import { th } from 'date-fns/locale'
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown,
   ClipboardList, PenLine, Printer, ChevronDown, ChevronUp,
-  Banknote, CheckCircle2, Clock,
+  Banknote, CheckCircle2, Clock, Save, X,
 } from 'lucide-react'
 
 const PLAT_BADGE = {
@@ -50,9 +50,10 @@ export default function SalesHistoryPage() {
   const [month, setMonth]             = useState(format(new Date(), 'yyyy-MM'))
   const [loading, setLoading]         = useState(true)
   const [dayData, setDayData]         = useState([])
-  const [transferMap, setTransferMap] = useState({})
-  const [expanded, setExpanded]       = useState(new Set())
-  const [saving, setSaving]           = useState(null)
+  const [transferMap, setTransferMap]     = useState({})
+  const [expanded, setExpanded]           = useState(new Set())
+  const [saving, setSaving]               = useState(null)
+  const [pendingChanges, setPendingChanges] = useState({})
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -222,29 +223,51 @@ export default function SalesHistoryPage() {
     })
   }
 
-  const toggleTransfer = async (date, platform, field, detail = {}) => {
+  // Stage a change locally (no DB write yet)
+  const stageChange = (date, platform, field) => {
+    const key     = tsKey(date, platform)
+    const saved   = transferMap[key] ?? { mat: false, profit: false }
+    const current = pendingChanges[key] ?? { mat: saved.mat, profit: saved.profit }
+    setPendingChanges(prev => ({
+      ...prev,
+      [key]: { ...current, [field]: !current[field] },
+    }))
+  }
+
+  // Confirm and save pending changes to DB
+  const saveChanges = async (date, platform, detail = {}) => {
     const key    = tsKey(date, platform)
     const cur    = transferMap[key] ?? { mat: false, profit: false, matAt: null, profitAt: null, matAmount: 0, profitAmount: 0 }
-    const newVal = field === 'mat' ? !cur.mat : !cur.profit
-    const now    = newVal ? new Date().toISOString() : null
+    const staged = pendingChanges[key] ?? { mat: cur.mat, profit: cur.profit }
+    const matNow    = staged.mat    && !cur.mat    ? new Date().toISOString() : (staged.mat    ? cur.matAt    : null)
+    const profitNow = staged.profit && !cur.profit ? new Date().toISOString() : (staged.profit ? cur.profitAt : null)
 
-    setTransferMap(prev => ({
-      ...prev,
-      [key]: { ...cur, [field]: newVal, [`${field}At`]: now },
-    }))
-
-    setSaving(key + field)
+    setSaving(key)
     await supabase.from('transfer_status').upsert({
       sale_date:             date,
       platform,
-      mat_transferred:       field === 'mat'    ? newVal      : (cur.mat    ?? false),
-      mat_transferred_at:    field === 'mat'    ? now         : (cur.matAt  ?? null),
-      mat_amount:            field === 'mat'    && newVal     ? (detail.matCost    ?? 0) : (cur.matAmount    ?? 0),
-      profit_transferred:    field === 'profit' ? newVal      : (cur.profit ?? false),
-      profit_transferred_at: field === 'profit' ? now         : (cur.profitAt ?? null),
-      profit_amount:         field === 'profit' && newVal     ? (detail.netProfit  ?? 0) : (cur.profitAmount ?? 0),
+      mat_transferred:       staged.mat,
+      mat_transferred_at:    matNow,
+      mat_amount:            staged.mat    ? (detail.matCost   ?? cur.matAmount   ?? 0) : 0,
+      profit_transferred:    staged.profit,
+      profit_transferred_at: profitNow,
+      profit_amount:         staged.profit ? (detail.netProfit ?? cur.profitAmount ?? 0) : 0,
     }, { onConflict: 'sale_date,platform' })
+
+    setTransferMap(prev => ({
+      ...prev,
+      [key]: { ...cur, mat: staged.mat, profit: staged.profit, matAt: matNow, profitAt: profitNow,
+               matAmount: staged.mat ? (detail.matCost ?? cur.matAmount ?? 0) : 0,
+               profitAmount: staged.profit ? (detail.netProfit ?? cur.profitAmount ?? 0) : 0 },
+    }))
+    setPendingChanges(prev => { const n = { ...prev }; delete n[key]; return n })
     setSaving(null)
+  }
+
+  // Cancel pending changes
+  const cancelChanges = (date, platform) => {
+    const key = tsKey(date, platform)
+    setPendingChanges(prev => { const n = { ...prev }; delete n[key]; return n })
   }
 
   const prevMonth = () => setMonth(m => format(subMonths(new Date(m + '-01'), 1), 'yyyy-MM'))
@@ -434,9 +457,15 @@ export default function SalesHistoryPage() {
                   <Banknote size={12} /> สถานะการโอนเงินแยกบัญชี
                 </p>
                 {activePlats.map(p => {
-                  const key    = tsKey(day.date, p)
-                  const ts     = transferMap[key] ?? {}
-                  const detail = day.platformDetail[p] ?? {}
+                  const key        = tsKey(day.date, p)
+                  const ts         = transferMap[key] ?? {}
+                  const detail     = day.platformDetail[p] ?? {}
+                  const pending    = pendingChanges[key]
+                  const hasPending = !!pending
+                  // Display state: use pending if exists, else use saved
+                  const dispMat    = hasPending ? pending.mat    : (ts.mat    ?? false)
+                  const dispProfit = hasPending ? pending.profit : (ts.profit ?? false)
+                  const isSaving   = saving === key
                   return (
                     <div key={p} className="bg-gray-50 rounded-xl p-3 space-y-2">
                       <div className="flex items-center justify-between">
@@ -444,29 +473,55 @@ export default function SalesHistoryPage() {
                         <span className="text-xs text-gray-400">ยอดขาย {formatBaht(detail.sales ?? 0)}</span>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
-                        <button onClick={() => toggleTransfer(day.date, p, 'mat', detail)} disabled={saving === key + 'mat'}
+                        <button onClick={() => stageChange(day.date, p, 'mat')} disabled={isSaving}
                           className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
-                            ts.mat ? 'bg-green-50 border-green-300' : 'bg-white border-gray-200 hover:border-cocoa-300'
-                          } ${saving === key + 'mat' ? 'opacity-50' : ''}`}>
+                            dispMat
+                              ? 'bg-green-50 border-green-300'
+                              : hasPending && !dispMat
+                                ? 'bg-white border-amber-300 ring-1 ring-amber-200'
+                                : 'bg-white border-gray-200 hover:border-cocoa-300'
+                          } ${isSaving ? 'opacity-50' : ''}`}>
                           <span className="text-[11px] text-gray-400 font-medium">Mat Cost</span>
                           <span className="text-sm font-bold text-gray-800">{formatBaht(detail.matCost ?? 0)}</span>
-                          <span className={`text-[11px] flex items-center gap-1 font-semibold ${ts.mat ? 'text-green-600' : 'text-gray-400'}`}>
-                            {ts.mat ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
+                          <span className={`text-[11px] flex items-center gap-1 font-semibold ${dispMat ? 'text-green-600' : 'text-gray-400'}`}>
+                            {dispMat ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
                           </span>
                         </button>
-                        <button onClick={() => toggleTransfer(day.date, p, 'profit', detail)} disabled={saving === key + 'profit'}
+                        <button onClick={() => stageChange(day.date, p, 'profit')} disabled={isSaving}
                           className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
-                            ts.profit ? 'bg-green-50 border-green-300' : 'bg-white border-gray-200 hover:border-cocoa-300'
-                          } ${saving === key + 'profit' ? 'opacity-50' : ''}`}>
+                            dispProfit
+                              ? 'bg-green-50 border-green-300'
+                              : hasPending && !dispProfit
+                                ? 'bg-white border-amber-300 ring-1 ring-amber-200'
+                                : 'bg-white border-gray-200 hover:border-cocoa-300'
+                          } ${isSaving ? 'opacity-50' : ''}`}>
                           <span className="text-[11px] text-gray-400 font-medium">กำไรสุทธิ</span>
                           <span className={`text-sm font-bold ${(detail.netProfit ?? 0) >= 0 ? 'text-gray-800' : 'text-red-600'}`}>
                             {formatBaht(detail.netProfit ?? 0)}
                           </span>
-                          <span className={`text-[11px] flex items-center gap-1 font-semibold ${ts.profit ? 'text-green-600' : 'text-gray-400'}`}>
-                            {ts.profit ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
+                          <span className={`text-[11px] flex items-center gap-1 font-semibold ${dispProfit ? 'text-green-600' : 'text-gray-400'}`}>
+                            {dispProfit ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
                           </span>
                         </button>
                       </div>
+                      {/* Save / Cancel row — แสดงเมื่อมีการเปลี่ยนแปลงที่ยังไม่บันทึก */}
+                      {hasPending && (
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            onClick={() => saveChanges(day.date, p, detail)}
+                            disabled={isSaving}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-cocoa-600 text-white text-xs font-semibold hover:bg-cocoa-700 active:scale-95 transition-all disabled:opacity-50">
+                            {isSaving ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={13} />}
+                            บันทึก
+                          </button>
+                          <button
+                            onClick={() => cancelChanges(day.date, p)}
+                            disabled={isSaving}
+                            className="flex items-center justify-center gap-1 px-3 py-2 rounded-xl bg-gray-100 text-gray-500 text-xs font-medium hover:bg-gray-200 active:scale-95 transition-all disabled:opacity-50">
+                            <X size={13} /> ยกเลิก
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )
                 })}
