@@ -160,6 +160,7 @@ export default function Sidebar() {
   }
 
   return (
+    <>
     <aside className="hidden md:flex flex-col w-56 bg-cocoa-800 text-white shrink-0">
       {/* Logo */}
       <div className="p-5 border-b border-cocoa-700">
@@ -232,32 +233,34 @@ export default function Sidebar() {
         <p className="text-cocoa-400 text-xs text-center">v1.2.0</p>
       </div>
 
-      {/* Passkey modal */}
-      {showPasskey && (
-        <PasskeyModal
-          onConfirm={() => { setShowPasskey(false); window.open(POS_URL, '_blank') }}
-          onClose={() => setShowPasskey(false)}
-        />
-      )}
+    </aside>
 
-      {/* Sign-out confirm modal */}
-      {showSignOutModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-xs w-full shadow-xl space-y-4">
-            <div className="text-center">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                <LogOut size={22} className="text-red-600" />
-              </div>
-              <p className="font-semibold text-gray-900">ออกจากระบบ?</p>
-              <p className="text-sm text-gray-500 mt-1">คุณจะต้องเข้าสู่ระบบใหม่อีกครั้ง</p>
+    {/* Passkey modal — outside aside to avoid event capture */}
+    {showPasskey && (
+      <PasskeyModal
+        onConfirm={() => { setShowPasskey(false); window.open(POS_URL, '_blank') }}
+        onClose={() => setShowPasskey(false)}
+      />
+    )}
+
+    {/* Sign-out confirm modal */}
+    {showSignOutModal && (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl p-6 max-w-xs w-full shadow-xl space-y-4">
+          <div className="text-center">
+            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <LogOut size={22} className="text-red-600" />
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => setShowSignOutModal(false)} className="btn-secondary flex-1">ยกเลิก</button>
-              <button onClick={signOut} className="btn-danger flex-1">ออกจากระบบ</button>
-            </div>
+            <p className="font-semibold text-gray-900">ออกจากระบบ?</p>
+            <p className="text-sm text-gray-500 mt-1">คุณจะต้องเข้าสู่ระบบใหม่อีกครั้ง</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setShowSignOutModal(false)} className="btn-secondary flex-1">ยกเลิก</button>
+            <button onClick={signOut} className="btn-danger flex-1">ออกจากระบบ</button>
           </div>
         </div>
-      )}
-    </aside>
+      </div>
+    )}
+    </>
   )
 }
