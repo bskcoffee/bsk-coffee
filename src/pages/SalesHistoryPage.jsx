@@ -117,6 +117,7 @@ export default function SalesHistoryPage() {
         tmap[tsKey(t.sale_date, t.platform)] = {
           mat: t.mat_transferred, profit: t.profit_transferred,
           matAt: t.mat_transferred_at, profitAt: t.profit_transferred_at,
+          matAmount: t.mat_amount ?? 0, profitAmount: t.profit_amount ?? 0,
         }
       }
       setTransferMap(tmap)
@@ -221,9 +222,9 @@ export default function SalesHistoryPage() {
     })
   }
 
-  const toggleTransfer = async (date, platform, field) => {
+  const toggleTransfer = async (date, platform, field, detail = {}) => {
     const key    = tsKey(date, platform)
-    const cur    = transferMap[key] ?? { mat: false, profit: false, matAt: null, profitAt: null }
+    const cur    = transferMap[key] ?? { mat: false, profit: false, matAt: null, profitAt: null, matAmount: 0, profitAmount: 0 }
     const newVal = field === 'mat' ? !cur.mat : !cur.profit
     const now    = newVal ? new Date().toISOString() : null
 
@@ -238,8 +239,10 @@ export default function SalesHistoryPage() {
       platform,
       mat_transferred:       field === 'mat'    ? newVal      : (cur.mat    ?? false),
       mat_transferred_at:    field === 'mat'    ? now         : (cur.matAt  ?? null),
+      mat_amount:            field === 'mat'    && newVal     ? (detail.matCost    ?? 0) : (cur.matAmount    ?? 0),
       profit_transferred:    field === 'profit' ? newVal      : (cur.profit ?? false),
       profit_transferred_at: field === 'profit' ? now         : (cur.profitAt ?? null),
+      profit_amount:         field === 'profit' && newVal     ? (detail.netProfit  ?? 0) : (cur.profitAmount ?? 0),
     }, { onConflict: 'sale_date,platform' })
     setSaving(null)
   }
@@ -441,7 +444,7 @@ export default function SalesHistoryPage() {
                         <span className="text-xs text-gray-400">ยอดขาย {formatBaht(detail.sales ?? 0)}</span>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
-                        <button onClick={() => toggleTransfer(day.date, p, 'mat')} disabled={saving === key + 'mat'}
+                        <button onClick={() => toggleTransfer(day.date, p, 'mat', detail)} disabled={saving === key + 'mat'}
                           className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
                             ts.mat ? 'bg-green-50 border-green-300' : 'bg-white border-gray-200 hover:border-cocoa-300'
                           } ${saving === key + 'mat' ? 'opacity-50' : ''}`}>
@@ -451,7 +454,7 @@ export default function SalesHistoryPage() {
                             {ts.mat ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
                           </span>
                         </button>
-                        <button onClick={() => toggleTransfer(day.date, p, 'profit')} disabled={saving === key + 'profit'}
+                        <button onClick={() => toggleTransfer(day.date, p, 'profit', detail)} disabled={saving === key + 'profit'}
                           className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
                             ts.profit ? 'bg-green-50 border-green-300' : 'bg-white border-gray-200 hover:border-cocoa-300'
                           } ${saving === key + 'profit' ? 'opacity-50' : ''}`}>
@@ -468,14 +471,18 @@ export default function SalesHistoryPage() {
                   )
                 })}
                 <button onClick={e => { e.stopPropagation(); navigate(`/sales?date=${day.date}`) }}
-                  className="w-full flex items-center justify-center gap-1.5 text-xs text-gray-400 hover:text-cocoa-600 py-1.5 transition-colors">
-                  <PenLine size={11} /> แก้ไขข้อมูลวันนี้
+                  className="w-full py-2 rounded-xl text-xs font-medium text-cocoa-600 bg-cocoa-50 hover:bg-cocoa-100 transition-colors text-center">
+                  + กรอกยอดขายวันนี้
                 </button>
               </div>
             )}
           </div>
         )
       })}
+    </div>
+  )
+}
+)}
     </div>
   )
 }

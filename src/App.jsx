@@ -13,6 +13,7 @@ import SalesHistoryPage from './pages/SalesHistoryPage'
 import SettingsPage from './pages/SettingsPage'
 import UserManagementPage from './pages/UserManagementPage'
 import ImportPage from './pages/ImportPage'
+import CashFlowPage from './pages/CashFlowPage'
 
 // ── Route Guards ─────────────────────────────────────────────────────────────
 
@@ -75,7 +76,8 @@ const router = createBrowserRouter([
       { path: 'reports',  element: <ReportsPage /> },
       { path: 'settings', element: <AdminRoute><SettingsPage /></AdminRoute> },
       { path: 'users',    element: <AdminRoute><UserManagementPage /></AdminRoute> },
-      { path: 'import',   element: <AdminRoute><ImportPage /></AdminRoute> },
+      { path: 'import',    element: <AdminRoute><ImportPage /></AdminRoute> },
+      { path: 'cashflow',  element: <CashFlowPage /> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },
