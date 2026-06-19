@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Noto Sans Thai', system-ui, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  body {
+    @apply bg-gray-100 text-gray-900;
+    overscroll-behavior: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-cocoa-700 hover:bg-cocoa-800 active:bg-cocoa-900 active:scale-95
+           text-white font-semibold rounded-xl transition-all duration-100
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100;
+  }
+  .btn-secondary {
+    @apply bg-white hover:bg-gray-50 active:bg-gray-100 active:scale-95
+           text-gray-700 font-semibold rounded-xl border border-gray-200
+           transition-all duration-100;
+  }
+  .card {
+    @apply bg-white rounded-2xl shadow-sm border border-gray-100;
+  }
+}
+
+/* Safe area */
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 16px); }
+.safe-top    { padding-top: env(safe-area-inset-top, 0px); }

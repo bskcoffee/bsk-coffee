@@ -179,10 +179,11 @@ export default function SalesEntryPage() {
     const check = async () => {
       const { data: order } = await supabase
         .from('orders')
-        .select('id, notes')
+        .select('id, notes, status')
         .eq('date', date)
         .eq('platform', platform)
-        .single()
+        .eq('status', 'delivered')
+        .maybeSingle()
 
       if (order) {
         setExistingWarning(true)
@@ -466,7 +467,7 @@ export default function SalesEntryPage() {
       // Upsert order
       const { data: orderData, error: orderError } = await supabase
         .from('orders')
-        .upsert({ date, platform, notes }, { onConflict: 'date,platform' })
+        .upsert({ date, platform, notes, status: 'delivered' }, { onConflict: 'date,platform' })
         .select()
         .single()
 
@@ -530,7 +531,7 @@ export default function SalesEntryPage() {
         enqueueSync({
           type: 'upsert_full_order',
           data: {
-            order: { date, platform, notes },
+            order: { date, platform, notes, status: 'delivered' },
             items: itemsForQueue,
             costs: { date, platform, ...costs },
           },
