@@ -1,8 +1,51 @@
 import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+
+const PASSKEY = '18879'
+const POS_URL = 'https://cocoa-pos.vercel.app'
+
+function PasskeyModal({ onConfirm, onClose }) {
+  const [val, setVal]     = useState('')
+  const [error, setError] = useState(false)
+
+  const handleSubmit = () => {
+    if (val === PASSKEY) { onConfirm() }
+    else { setError(true); setVal('') }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[80] p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-xs shadow-xl space-y-4">
+        <div className="flex items-center justify-between">
+          <p className="font-bold text-gray-900">ไปที่ Cocoa POS</p>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <div>
+          <label className="text-sm text-gray-600 mb-1.5 block">กรอก Passkey</label>
+          <input
+            type="password"
+            inputMode="numeric"
+            value={val}
+            onChange={e => { setVal(e.target.value); setError(false) }}
+            onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+            autoFocus
+            className={`w-full px-4 py-3 border-2 rounded-xl text-base text-center tracking-widest font-mono outline-none transition-colors
+              ${error ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-cocoa-400'}`}
+            placeholder="● ● ● ● ●"
+          />
+          {error && <p className="text-xs text-red-500 mt-1.5 text-center">Passkey ไม่ถูกต้อง</p>}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600">ยกเลิก</button>
+          <button onClick={handleSubmit} className="flex-1 py-2.5 rounded-xl bg-cocoa-700 text-white text-sm font-bold">เข้าใช้งาน</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 const ALL_NAV = [
   { to: '/',         iconName: 'LayoutDashboard', label: 'Dashboard',           end: true,  adminOnly: false },
@@ -46,6 +89,7 @@ export default function Sidebar() {
   const [dragging, setDragging] = useState(false)
   const [dragOver, setDragOver] = useState(null)
   const [showSignOutModal, setShowSignOutModal] = useState(false)
+  const [showPasskey, setShowPasskey]           = useState(false)
 
   // Fetch nav order from Supabase on mount — syncs across all devices
   useEffect(() => {
@@ -172,6 +216,13 @@ export default function Sidebar() {
       </nav>
 
       <div className="p-3 border-t border-cocoa-700 space-y-2">
+        {/* Go to Cocoa POS */}
+        <button
+          onClick={() => setShowPasskey(true)}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-cocoa-600 hover:bg-cocoa-500 text-white text-sm font-medium transition-colors"
+        >
+          <Tablet size={15} /> Cocoa POS
+        </button>
         <button
           onClick={() => setShowSignOutModal(true)}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
@@ -180,6 +231,14 @@ export default function Sidebar() {
         </button>
         <p className="text-cocoa-400 text-xs text-center">v1.2.0</p>
       </div>
+
+      {/* Passkey modal */}
+      {showPasskey && (
+        <PasskeyModal
+          onConfirm={() => { setShowPasskey(false); window.open(POS_URL, '_blank') }}
+          onClose={() => setShowPasskey(false)}
+        />
+      )}
 
       {/* Sign-out confirm modal */}
       {showSignOutModal && (

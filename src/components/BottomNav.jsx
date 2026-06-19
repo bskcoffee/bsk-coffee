@@ -3,8 +3,11 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, ShoppingCart, ClipboardList, BarChart3,
   Settings, UtensilsCrossed, Calculator, Users, LogOut,
-  MoreHorizontal, X, FileUp, Wallet,
+  MoreHorizontal, X, FileUp, Wallet, Tablet,
 } from 'lucide-react'
+
+const PASSKEY = '18879'
+const POS_URL = 'https://cocoa-pos.vercel.app'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
@@ -37,8 +40,11 @@ export default function BottomNav() {
   const { role, signOut } = useAuth()
   const navigate = useNavigate()
   const [items, setItems]           = useState(ALL_ITEMS)
-  const [sheetOpen, setSheetOpen]   = useState(false)
+  const [sheetOpen, setSheetOpen]       = useState(false)
   const [signOutModal, setSignOutModal] = useState(false)
+  const [showPasskey, setShowPasskey]   = useState(false)
+  const [passkeyVal, setPasskeyVal]     = useState('')
+  const [passkeyError, setPasskeyError] = useState(false)
 
   useEffect(() => {
     supabase
@@ -141,7 +147,15 @@ export default function BottomNav() {
               ))}
             </div>
 
-            <div className="border-t border-gray-100 pt-3">
+            <div className="border-t border-gray-100 pt-3 space-y-1">
+              {/* Go to Cocoa POS */}
+              <button
+                onClick={() => { setSheetOpen(false); setShowPasskey(true) }}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-cocoa-700 hover:bg-cocoa-50 active:bg-cocoa-100 transition-colors"
+              >
+                <Tablet size={20} />
+                <span className="font-medium text-sm">Cocoa POS</span>
+              </button>
               <button
                 onClick={() => { setSheetOpen(false); setSignOutModal(true) }}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-600 hover:bg-red-50 active:bg-red-100 transition-colors"
@@ -149,6 +163,52 @@ export default function BottomNav() {
                 <LogOut size={20} />
                 <span className="font-medium text-sm">ออกจากระบบ</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPasskey && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-xs shadow-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="font-bold text-gray-900">ไปที่ Cocoa POS</p>
+              <button onClick={() => { setShowPasskey(false); setPasskeyVal(''); setPasskeyError(false) }} className="p-1 text-gray-400">
+                <X size={18} />
+              </button>
+            </div>
+            <div>
+              <label className="text-sm text-gray-600 mb-1.5 block">กรอก Passkey</label>
+              <input
+                type="password"
+                inputMode="numeric"
+                value={passkeyVal}
+                onChange={e => { setPasskeyVal(e.target.value); setPasskeyError(false) }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    if (passkeyVal === PASSKEY) { setShowPasskey(false); setPasskeyVal(''); window.open(POS_URL, '_blank') }
+                    else { setPasskeyError(true); setPasskeyVal('') }
+                  }
+                }}
+                autoFocus
+                className={`w-full px-4 py-3 border-2 rounded-xl text-base text-center tracking-widest font-mono outline-none transition-colors
+                  ${passkeyError ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-cocoa-400'}`}
+                placeholder="● ● ● ● ●"
+              />
+              {passkeyError && <p className="text-xs text-red-500 mt-1.5 text-center">Passkey ไม่ถูกต้อง</p>}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setShowPasskey(false); setPasskeyVal(''); setPasskeyError(false) }}
+                className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600"
+              >ยกเลิก</button>
+              <button
+                onClick={() => {
+                  if (passkeyVal === PASSKEY) { setShowPasskey(false); setPasskeyVal(''); window.open(POS_URL, '_blank') }
+                  else { setPasskeyError(true); setPasskeyVal('') }
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-cocoa-700 text-white text-sm font-bold"
+              >เข้าใช้งาน</button>
             </div>
           </div>
         </div>
