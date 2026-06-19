@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, updateMenuPrice } from '../lib/supabase'
 import { formatBaht } from '../utils/calculations'
-import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban } from 'lucide-react'
+import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban, ImagePlus, Loader2 } from 'lucide-react'
 
 const PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
 const CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun', 'Refill', 'Addon']
@@ -19,12 +19,32 @@ function MenuModal({ menu, onClose, onSave }) {
   const [form, setForm] = useState({
     name: menu?.name ?? '',
     category: menu?.category ?? 'Cocoa',
+    image_url: menu?.image_url ?? '',
     prices: {
       GRAB: 0, LINE: 0, SHOPEE: 0, 'The metro': 0, TU: 0,
       ...(menu?.prices ?? {}),
     }
   })
-  const [saving, setSaving] = useState(false)
+  const [saving,        setSaving]        = useState(false)
+  const [uploadingImg,  setUploadingImg]  = useState(false)
+  const imgInputRef = useRef(null)
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingImg(true)
+    try {
+      const ext  = file.name.split('.').pop()
+      const path = `menus/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error: upErr } = await supabase.storage.from('menu-images').upload(path, file, { upsert: true })
+      if (upErr) throw upErr
+      const { data } = supabase.storage.from('menu-images').getPublicUrl(path)
+      setForm(f => ({ ...f, image_url: data.publicUrl }))
+    } catch (err) {
+      alert('อัปโหลดรูปไม่สำเร็จ: ' + err.message)
+    }
+    setUploadingImg(false)
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -34,8 +54,9 @@ function MenuModal({ menu, onClose, onSave }) {
       if (menu?.id) {
         // Update — ไม่แตะ gp_cost (จัดการผ่านหน้าต้นทุนเมนู)
         await supabase.from('menus').update({
-          name:     form.name,
-          category: form.category,
+          name:      form.name,
+          category:  form.category,
+          image_url: form.image_url || null,
         }).eq('id', menu.id)
 
         // Update prices (close old, open new)
@@ -50,7 +71,7 @@ function MenuModal({ menu, onClose, onSave }) {
         // Create new
         const { data: newMenu } = await supabase
           .from('menus')
-          .insert({ name: form.name, category: form.category })
+          .insert({ name: form.name, category: form.category, image_url: form.image_url || null })
           .select()
           .single()
 
@@ -83,6 +104,45 @@ function MenuModal({ menu, onClose, onSave }) {
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
+
+          {/* ── รูปภาพเมนู ── */}
+          <div>
+            <label className="label">รูปภาพเมนู</label>
+            <input ref={imgInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+            {form.image_url ? (
+              <div className="relative w-full rounded-xl overflow-hidden border border-gray-200" style={{ paddingBottom: '56%' }}>
+                <img src={form.image_url} alt="preview" className="absolute inset-0 w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, image_url: '' }))}
+                  className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white rounded-full p-1"
+                >
+                  <X size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => imgInputRef.current?.click()}
+                  className="absolute bottom-2 right-2 bg-black/50 hover:bg-black/70 text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-1"
+                >
+                  <ImagePlus size={13} /> เปลี่ยนรูป
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => imgInputRef.current?.click()}
+                disabled={uploadingImg}
+                className="w-full h-32 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center gap-2 text-gray-400 hover:border-cocoa-300 hover:text-cocoa-500 transition-colors"
+              >
+                {uploadingImg
+                  ? <Loader2 size={24} className="animate-spin" />
+                  : <ImagePlus size={24} />
+                }
+                <span className="text-sm">{uploadingImg ? 'กำลังอัปโหลด...' : 'คลิกเพื่ออัปโหลดรูป'}</span>
+              </button>
+            )}
+          </div>
+
           <div>
             <label className="label">ชื่อเมนู</label>
             <input
@@ -395,6 +455,13 @@ export default function MenuManagementPage() {
                     <div className="pt-1 text-gray-300 hover:text-gray-500 shrink-0">
                       <GripVertical size={18} />
                     </div>
+                    {/* รูปภาพเมนู */}
+                    {menu.image_url ? (
+                      <img src={menu.image_url} alt={menu.name}
+                        className="w-14 h-14 rounded-xl object-cover shrink-0 border border-gray-100" />
+                    ) : (
+                      <div className="w-14 h-14 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center shrink-0 text-2xl">🍫</div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-medium text-gray-900 text-sm">{menu.name}</p>
