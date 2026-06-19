@@ -113,11 +113,11 @@ function AppInner() {
         {/* Go to Cocoa House */}
         <button
           onClick={() => setShowPasskey(true)}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl text-cocoa-300 hover:text-white hover:bg-cocoa-700 transition-all text-sm font-medium"
+          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-cocoa-600 text-white hover:bg-cocoa-500 transition-all text-sm font-semibold border border-cocoa-400"
           title="ไปที่ Cocoa House"
         >
-          <LayoutDashboard size={17} />
-          <span className="hidden sm:inline">Cocoa House</span>
+          <LayoutDashboard size={16} />
+          <span>Cocoa House</span>
         </button>
       </div>
 
