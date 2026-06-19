@@ -482,7 +482,3 @@ export default function SalesHistoryPage() {
     </div>
   )
 }
-)}
-    </div>
-  )
-}
