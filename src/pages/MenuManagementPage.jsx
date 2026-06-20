@@ -29,14 +29,34 @@ function MenuModal({ menu, onClose, onSave }) {
   const [uploadingImg,  setUploadingImg]  = useState(false)
   const imgInputRef = useRef(null)
 
+  const resizeImage = (file, size = 500) => new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width  = size
+      canvas.height = size
+      const ctx = canvas.getContext('2d')
+      // crop center square then draw
+      const s = Math.min(img.width, img.height)
+      const sx = (img.width  - s) / 2
+      const sy = (img.height - s) / 2
+      ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size)
+      URL.revokeObjectURL(url)
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('resize failed')), 'image/jpeg', 0.85)
+    }
+    img.onerror = reject
+    img.src = url
+  })
+
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
     setUploadingImg(true)
     try {
-      const ext  = file.name.split('.').pop()
-      const path = `menus/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-      const { error: upErr } = await supabase.storage.from('menu-images').upload(path, file, { upsert: true })
+      const resized = await resizeImage(file, 500)
+      const path = `menus/${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
+      const { error: upErr } = await supabase.storage.from('menu-images').upload(path, resized, { upsert: true, contentType: 'image/jpeg' })
       if (upErr) throw upErr
       const { data } = supabase.storage.from('menu-images').getPublicUrl(path)
       setForm(f => ({ ...f, image_url: data.publicUrl }))
