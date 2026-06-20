@@ -130,8 +130,8 @@ function MenuModal({ menu, onClose, onSave }) {
             <label className="label">รูปภาพเมนู</label>
             <input ref={imgInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
             {form.image_url ? (
-              <div className="relative w-full rounded-xl overflow-hidden border border-gray-200" style={{ paddingBottom: '56%' }}>
-                <img src={form.image_url} alt="preview" className="absolute inset-0 w-full h-full object-cover" />
+              <div className="relative w-full rounded-xl overflow-hidden border border-gray-200" style={{ paddingBottom: '100%' }}>
+                <img src={form.image_url} alt="preview" className="absolute inset-0 w-full h-full object-contain bg-gray-50" />
                 <button
                   type="button"
                   onClick={() => setForm(f => ({ ...f, image_url: '' }))}
@@ -552,30 +552,4 @@ export default function MenuManagementPage() {
                       </button>
                       <button
                         onClick={() => toggleActive(menu)}
-                        className={`p-2 rounded-lg ${menu.is_active ? 'text-gray-400 hover:bg-gray-100 hover:text-red-500' : 'text-green-500 hover:bg-green-50'}`}
-                        title={menu.is_active ? 'ซ่อน' : 'แสดง'}
-                      >
-                        {menu.is_active ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        ))
-      )}
-
-      {(showAdd || editMenu) && (
-        <MenuModal
-          menu={editMenu}
-          onClose={() => { setShowAdd(false); setEditMenu(null) }}
-          onSave={loadMenus}
-        />
-      )}
-      {historyMenu && (
-        <PriceHistoryModal menu={historyMenu} onClose={() => setHistoryMenu(null)} />
-      )}
-    </div>
-  )
-}
+                        className={`p-2 rounded-lg ${menu.is_active ? 'text-gr
