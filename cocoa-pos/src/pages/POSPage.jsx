@@ -879,21 +879,40 @@ export default function POSPage() {
                     {selectedPlat}
                   </span>
                 </div>
+                {selectedPlat === 'GRAB' && (
+                  <p className="text-[11px] text-amber-600 mb-2">⚡ กดที่รายการเพื่อเปิด/ปิด Campaign 60/40</p>
+                )}
                 <div className="space-y-2">
                   {orderItemsWithPrice.map(item => (
-                    <div key={item.menuId} className="flex items-center justify-between gap-3 border-b border-gray-50 pb-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
-                        <div className="flex gap-1 flex-wrap">
-                          {item.options.milk   && <span className="text-[10px] text-blue-600">{item.options.milk.name}</span>}
-                          {item.options.refill && <span className="text-[10px] text-purple-600">{item.options.refill.name}</span>}
-                          {item.isCampaign && <span className="text-[10px] text-amber-600 font-bold">⚡60/40</span>}
+                    <div key={item.menuId} className={`rounded-xl border overflow-hidden transition-colors
+                      ${item.isCampaign ? 'border-amber-300' : 'border-gray-100'}`}>
+                      <div className="flex items-center justify-between gap-3 px-3 py-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
+                          <div className="flex gap-1 flex-wrap mt-0.5">
+                            {item.options.milk   && <span className="text-[10px] text-blue-600">{item.options.milk.name}</span>}
+                            {item.options.refill && <span className="text-[10px] text-purple-600">{item.options.refill.name}</span>}
+                            {item.isCampaign && <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 rounded">⚡ 60/40</span>}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-xs text-gray-400">{item.qty} × {fmt(item.unitPrice)}</p>
+                          <p className="text-sm font-bold text-gray-900">{fmt(item.subtotal)}</p>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-xs text-gray-400">{item.qty} × {fmt(item.unitPrice)}</p>
-                        <p className="text-sm font-bold text-gray-900">{fmt(item.subtotal)}</p>
-                      </div>
+                      {/* Campaign toggle — GRAB only */}
+                      {selectedPlat === 'GRAB' && (
+                        <button
+                          onClick={() => toggleCampaign(item.menuId)}
+                          className={`w-full py-1.5 text-xs font-bold transition-all border-t
+                            ${item.isCampaign
+                              ? 'bg-amber-400 text-white border-amber-300'
+                              : 'bg-amber-50 text-amber-500 border-amber-100 active:bg-amber-100'
+                            }`}
+                        >
+                          {item.isCampaign ? '⚡ Campaign 60/40 — กดเพื่อยกเลิก' : '+ กำหนดเป็น Campaign 60/40'}
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>

@@ -25,44 +25,95 @@ function MenuModal({ menu, onClose, onSave }) {
       ...(menu?.prices ?? {}),
     }
   })
-  const [saving,        setSaving]        = useState(false)
-  const [uploadingImg,  setUploadingImg]  = useState(false)
+  const [saving,       setSaving]       = useState(false)
+  const [uploadingImg, setUploadingImg] = useState(false)
+  const [pendingUrl,   setPendingUrl]   = useState(null)   // object URL before upload
+  const [pendingFile,  setPendingFile]  = useState(null)   // raw File
+  const [pendingDims,  setPendingDims]  = useState(null)   // { w, h }
+  const [cropPos,      setCropPos]      = useState({ x: 50, y: 50 }) // 0-100%
+
   const imgInputRef = useRef(null)
+  const previewRef  = useRef(null)
+  const dragging    = useRef(false)
+  const lastXY      = useRef({ x: 0, y: 0 })
 
-  const resizeImage = (file, size = 500) => new Promise((resolve, reject) => {
-    const img = new Image()
-    const url = URL.createObjectURL(file)
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width  = size
-      canvas.height = size
-      const ctx = canvas.getContext('2d')
-      // crop center square then draw
-      const s = Math.min(img.width, img.height)
-      const sx = (img.width  - s) / 2
-      const sy = (img.height - s) / 2
-      ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size)
-      URL.revokeObjectURL(url)
-      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('resize failed')), 'image/jpeg', 0.85)
-    }
-    img.onerror = reject
-    img.src = url
-  })
+  // Stop drag on mouse/touch up anywhere
+  useEffect(() => {
+    const up = () => { dragging.current = false }
+    window.addEventListener('mouseup', up)
+    window.addEventListener('touchend', up)
+    return () => { window.removeEventListener('mouseup', up); window.removeEventListener('touchend', up) }
+  }, [])
 
-  const handleImageUpload = async (e) => {
+  // File select → show pending crop preview (no upload yet)
+  const handleFileSelect = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
+    if (pendingUrl) URL.revokeObjectURL(pendingUrl)
+    const url = URL.createObjectURL(file)
+    setPendingFile(file); setPendingUrl(url); setCropPos({ x: 50, y: 50 })
+    const img = new Image()
+    img.onload = () => setPendingDims({ w: img.naturalWidth, h: img.naturalHeight })
+    img.src = url
+  }
+
+  const cancelPending = () => {
+    if (pendingUrl) URL.revokeObjectURL(pendingUrl)
+    setPendingFile(null); setPendingUrl(null); setPendingDims(null)
+    setCropPos({ x: 50, y: 50 })
+    if (imgInputRef.current) imgInputRef.current.value = ''
+  }
+
+  // Drag to reposition crop area
+  const moveCrop = (clientX, clientY) => {
+    if (!dragging.current || !pendingDims || !previewRef.current) return
+    const { w, h } = pendingDims
+    const rect = previewRef.current.getBoundingClientRect()
+    const scale = rect.width / Math.min(w, h)
+    const extraW = Math.max(0, w * scale - rect.width)
+    const extraH = Math.max(0, h * scale - rect.height)
+    const dx = clientX - lastXY.current.x
+    const dy = clientY - lastXY.current.y
+    lastXY.current = { x: clientX, y: clientY }
+    setCropPos(prev => ({
+      x: extraW > 0 ? Math.max(0, Math.min(100, prev.x - (dx / extraW) * 100)) : 50,
+      y: extraH > 0 ? Math.max(0, Math.min(100, prev.y - (dy / extraH) * 100)) : 50,
+    }))
+  }
+
+  const onDragMouseDown  = (e) => { dragging.current = true; lastXY.current = { x: e.clientX, y: e.clientY }; e.preventDefault() }
+  const onDragMouseMove  = (e) => moveCrop(e.clientX, e.clientY)
+  const onDragTouchStart = (e) => { dragging.current = true; const t = e.touches[0]; lastXY.current = { x: t.clientX, y: t.clientY } }
+  const onDragTouchMove  = (e) => { const t = e.touches[0]; moveCrop(t.clientX, t.clientY) }
+
+  // Crop at current cropPos and upload
+  const uploadCropped = async () => {
+    if (!pendingFile || !pendingUrl || !pendingDims) return
     setUploadingImg(true)
     try {
-      const resized = await resizeImage(file, 500)
+      const SIZE = 500
+      const { w, h } = pendingDims
+      const s = Math.min(w, h)
+      const sx = (cropPos.x / 100) * (w - s)
+      const sy = (cropPos.y / 100) * (h - s)
+      const blob = await new Promise((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement('canvas')
+          canvas.width = SIZE; canvas.height = SIZE
+          canvas.getContext('2d').drawImage(img, sx, sy, s, s, 0, 0, SIZE, SIZE)
+          canvas.toBlob(b => b ? resolve(b) : reject(new Error('crop failed')), 'image/jpeg', 0.85)
+        }
+        img.onerror = reject
+        img.src = pendingUrl
+      })
       const path = `menus/${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
-      const { error: upErr } = await supabase.storage.from('menu-images').upload(path, resized, { upsert: true, contentType: 'image/jpeg' })
+      const { error: upErr } = await supabase.storage.from('menu-images').upload(path, blob, { upsert: true, contentType: 'image/jpeg' })
       if (upErr) throw upErr
       const { data } = supabase.storage.from('menu-images').getPublicUrl(path)
       setForm(f => ({ ...f, image_url: data.publicUrl }))
-    } catch (err) {
-      alert('อัปโหลดรูปไม่สำเร็จ: ' + err.message)
-    }
+      cancelPending()
+    } catch (err) { alert('อัปโหลดรูปไม่สำเร็จ: ' + err.message) }
     setUploadingImg(false)
   }
 
@@ -128,37 +179,66 @@ function MenuModal({ menu, onClose, onSave }) {
           {/* ── รูปภาพเมนู ── */}
           <div>
             <label className="label">รูปภาพเมนู</label>
-            <input ref={imgInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-            {form.image_url ? (
-              <div className="relative w-full rounded-xl overflow-hidden border border-gray-200" style={{ paddingBottom: '100%' }}>
-                <img src={form.image_url} alt="preview" className="absolute inset-0 w-full h-full object-contain bg-gray-50" />
-                <button
-                  type="button"
-                  onClick={() => setForm(f => ({ ...f, image_url: '' }))}
-                  className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white rounded-full p-1"
-                >
+            <input ref={imgInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
+
+            {/* 1. รูปที่อัปโหลดแล้ว */}
+            {form.image_url && !pendingUrl ? (
+              <div className="relative w-full aspect-square rounded-xl overflow-hidden border border-gray-200">
+                <img src={form.image_url} alt="preview" className="w-full h-full object-cover" />
+                <button type="button" onClick={() => setForm(f => ({ ...f, image_url: '' }))}
+                  className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white rounded-full p-1">
                   <X size={14} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => imgInputRef.current?.click()}
-                  className="absolute bottom-2 right-2 bg-black/50 hover:bg-black/70 text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-1"
-                >
+                <button type="button" onClick={() => imgInputRef.current?.click()}
+                  className="absolute bottom-2 right-2 bg-black/50 hover:bg-black/70 text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-1">
                   <ImagePlus size={13} /> เปลี่ยนรูป
                 </button>
               </div>
+
+            ) : pendingUrl ? (
+              /* 2. เลือกรูปแล้ว — ลากเพื่อปรับตำแหน่ง crop */
+              <div className="space-y-2">
+                <p className="text-xs text-cocoa-600 font-medium text-center">ลากรูปเพื่อเลือกส่วนที่ต้องการ</p>
+                <div
+                  ref={previewRef}
+                  className="relative w-full aspect-square rounded-xl overflow-hidden border-2 border-cocoa-400 cursor-grab active:cursor-grabbing select-none"
+                  onMouseDown={onDragMouseDown}
+                  onMouseMove={onDragMouseMove}
+                  onTouchStart={onDragTouchStart}
+                  onTouchMove={onDragTouchMove}
+                >
+                  <img
+                    src={pendingUrl} alt="crop preview" draggable={false}
+                    className="w-full h-full pointer-events-none"
+                    style={{ objectFit: 'cover', objectPosition: `${cropPos.x}% ${cropPos.y}%`, userSelect: 'none' }}
+                  />
+                  {/* Grid overlay */}
+                  <div className="absolute inset-0 pointer-events-none" style={{
+                    backgroundImage: 'linear-gradient(rgba(255,255,255,.15) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.15) 1px, transparent 1px)',
+                    backgroundSize: '33.33% 33.33%',
+                  }} />
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={cancelPending}
+                    className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-500 font-medium">
+                    ยกเลิก
+                  </button>
+                  <button type="button" onClick={uploadCropped} disabled={uploadingImg}
+                    className="flex-1 py-2.5 rounded-xl bg-cocoa-700 text-white text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-60">
+                    {uploadingImg
+                      ? <><Loader2 size={14} className="animate-spin" /> กำลังอัปโหลด...</>
+                      : <><ImagePlus size={14} /> ยืนยันอัปโหลด</>
+                    }
+                  </button>
+                </div>
+              </div>
+
             ) : (
-              <button
-                type="button"
-                onClick={() => imgInputRef.current?.click()}
-                disabled={uploadingImg}
-                className="w-full h-32 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center gap-2 text-gray-400 hover:border-cocoa-300 hover:text-cocoa-500 transition-colors"
-              >
-                {uploadingImg
-                  ? <Loader2 size={24} className="animate-spin" />
-                  : <ImagePlus size={24} />
-                }
-                <span className="text-sm">{uploadingImg ? 'กำลังอัปโหลด...' : 'คลิกเพื่ออัปโหลดรูป'}</span>
+              /* 3. ยังไม่มีรูป */
+              <button type="button" onClick={() => imgInputRef.current?.click()}
+                className="w-full h-32 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center gap-2 text-gray-400 hover:border-cocoa-300 hover:text-cocoa-500 transition-colors">
+                <ImagePlus size={24} />
+                <span className="text-sm">คลิกเพื่อเลือกรูป</span>
               </button>
             )}
           </div>
@@ -552,4 +632,30 @@ export default function MenuManagementPage() {
                       </button>
                       <button
                         onClick={() => toggleActive(menu)}
-                        className={`p-2 rounded-lg ${menu.is_active ? 'text-gr
+                        className={`p-2 rounded-lg ${menu.is_active ? 'text-gray-400 hover:bg-gray-100 hover:text-red-500' : 'text-green-500 hover:bg-green-50'}`}
+                        title={menu.is_active ? 'ซ่อน' : 'แสดง'}
+                      >
+                        {menu.is_active ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))
+      )}
+
+      {(showAdd || editMenu) && (
+        <MenuModal
+          menu={editMenu}
+          onClose={() => { setShowAdd(false); setEditMenu(null) }}
+          onSave={loadMenus}
+        />
+      )}
+      {historyMenu && (
+        <PriceHistoryModal menu={historyMenu} onClose={() => setHistoryMenu(null)} />
+      )}
+    </div>
+  )
+}

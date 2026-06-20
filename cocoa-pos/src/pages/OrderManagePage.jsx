@@ -499,12 +499,18 @@ export default function OrderManagePage() {
                 {/* Card header */}
                 <div className="px-4 py-3">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex items-center gap-2 flex-wrap">
                       {/* Platform badge */}
                       <span className={`text-white text-xs font-bold px-2.5 py-1 rounded-lg
                         ${PLAT_COLOR[order.platform] ?? 'bg-gray-500'}`}>
                         {order.platform}
                       </span>
+                      {/* Order number */}
+                      {order.notes && (
+                        <span className="text-xs font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg tracking-wide">
+                          {order.notes}
+                        </span>
+                      )}
                       {/* Status badge */}
                       <span className={`flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border ${st.color}`}>
                         <StatusIcon size={11} />
