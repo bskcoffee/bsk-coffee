@@ -511,6 +511,10 @@ export default function OrderManagePage() {
                           {order.notes}
                         </span>
                       )}
+                      {/* Campaign badge */}
+                      {order.items.some(i => i.is_campaign) && (
+                        <span className="text-[10px] bg-amber-400 text-white font-bold px-2 py-1 rounded-lg">⚡ 60/40</span>
+                      )}
                       {/* Status badge */}
                       <span className={`flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border ${st.color}`}>
                         <StatusIcon size={11} />
