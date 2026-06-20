@@ -555,18 +555,19 @@ export default function OrderManagePage() {
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-900 truncate">{item.menus?.name ?? '?'}</p>
                             {/* Options summary */}
-                            {item.item_options && (
-                              <div className="flex flex-wrap gap-1 mt-0.5">
-                                {item.item_options.milk   && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">{item.item_options.milk.name}</span>}
-                                {item.item_options.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">{item.item_options.refill.name}</span>}
-                                {item.item_options.sweetness != null && item.item_options.sweetness !== 100 && (
-                                  <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{item.item_options.sweetness}%</span>
-                                )}
-                                {item.item_options.note && (
-                                  <span className="text-[9px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded">📝 {item.item_options.note}</span>
-                                )}
-                              </div>
-                            )}
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {item.is_campaign && (
+                                <span className="text-[9px] bg-amber-400 text-white font-bold px-1.5 py-0.5 rounded">⚡ 60/40</span>
+                              )}
+                              {item.item_options?.milk   && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">{item.item_options.milk.name}</span>}
+                              {item.item_options?.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">{item.item_options.refill.name}</span>}
+                              {item.item_options?.sweetness != null && item.item_options.sweetness !== 100 && (
+                                <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{item.item_options.sweetness}%</span>
+                              )}
+                              {item.item_options?.note && (
+                                <span className="text-[9px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded">📝 {item.item_options.note}</span>
+                              )}
+                            </div>
                           </div>
                           <div className="text-right shrink-0">
                             <p className="text-xs text-gray-400">× {item.quantity}</p>
