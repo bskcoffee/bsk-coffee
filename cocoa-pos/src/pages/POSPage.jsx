@@ -337,47 +337,39 @@ export default function POSPage() {
     setSaving(true); setSaveError(null)
     try {
       const date = orderDate
-      const { data: existing } = await supabase.from('orders')
-        .select('id').eq('date', date).eq('platform', selectedPlat).maybeSingle()
+      const notes = orderRef.trim() ? `${PLAT_PREFIX[selectedPlat] ?? ''}${orderRef.trim()}` : null
 
-      let orderId
-      if (existing) {
-        orderId = existing.id
-        const { data: existingItems } = await supabase.from('order_items')
-          .select('menu_id, quantity, unit_price, unit_gp_cost, is_campaign, item_options').eq('order_id', orderId)
-        const merged = {}
-        for (const item of existingItems ?? []) {
-          merged[item.menu_id] = { qty: item.quantity, price: item.unit_price, gpCost: item.unit_gp_cost, isCampaign: item.is_campaign, options: item.item_options ?? {} }
-        }
-        for (const item of orderItemsWithPrice) {
-          if (merged[item.menuId]) merged[item.menuId].qty += item.qty
-          else merged[item.menuId] = { qty: item.qty, price: item.unitPrice, gpCost: item.unitGpCost, isCampaign: item.isCampaign,
-            options: { milk: item.options.milk ?? null, sweetness: item.options.sweetness ?? 100, refill: item.options.refill ?? null, note: item.options.note ?? '' } }
-        }
-        await supabase.from('order_items').delete().eq('order_id', orderId)
-        const { error } = await supabase.from('order_items').insert(
-          Object.entries(merged).map(([menuId, v]) => ({
-            order_id: orderId, menu_id: menuId, quantity: v.qty,
-            unit_price: v.price, unit_gp_cost: v.gpCost, is_campaign: v.isCampaign, item_options: v.options }))
-        )
-        if (error) throw error
-      } else {
-        const { data: newOrder, error: orderErr } = await supabase.from('orders')
-          .insert({ date, platform: selectedPlat, notes: orderRef.trim() ? `${PLAT_PREFIX[selectedPlat] ?? ''}${orderRef.trim()}` : null }).select('id').single()
-        if (orderErr) throw orderErr
-        orderId = newOrder.id
-        const { error } = await supabase.from('order_items').insert(
-          orderItemsWithPrice.map(item => ({
-            order_id: orderId, menu_id: item.menuId, quantity: item.qty,
-            unit_price: item.unitPrice, unit_gp_cost: item.unitGpCost, is_campaign: item.isCampaign,
-            item_options: { milk: item.options.milk ?? null, sweetness: item.options.sweetness ?? 100, refill: item.options.refill ?? null, note: item.options.note ?? '' } }))
-        )
-        if (error) throw error
-      }
+      // สร้าง order ใหม่ทุกครั้ง (ไม่ merge)
+      const { data: newOrder, error: orderErr } = await supabase.from('orders')
+        .insert({ date, platform: selectedPlat, notes, status: 'preparing' })
+        .select('id').single()
+      if (orderErr) throw orderErr
+
+      const { error: itemsErr } = await supabase.from('order_items').insert(
+        orderItemsWithPrice.map(item => ({
+          order_id: newOrder.id,
+          menu_id:  item.menuId,
+          quantity: item.qty,
+          unit_price:    item.unitPrice,
+          unit_gp_cost:  item.unitGpCost,
+          is_campaign:   item.isCampaign,
+          item_options: {
+            milk:      item.options.milk      ?? null,
+            sweetness: item.options.sweetness ?? 100,
+            refill:    item.options.refill    ?? null,
+            note:      item.options.note      ?? '',
+          },
+        }))
+      )
+      if (itemsErr) throw itemsErr
+
       setSavedMsg({ itemCount: totalItems, total: totalAmount, platform: selectedPlat })
       resetOrder(); setShowConfirm(false); setOrderRef(''); setOrderDate(todayStr())
       setTimeout(() => setSavedMsg(null), 6000)
-    } catch (err) { console.error(err); setSaveError('บันทึกไม่สำเร็จ กรุณาลองใหม่') }
+    } catch (err) {
+      console.error('saveOrder error:', err)
+      setSaveError(`บันทึกไม่สำเร็จ: ${err?.message ?? 'กรุณาลองใหม่'}`)
+    }
     setSaving(false)
   }
 
