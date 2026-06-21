@@ -275,7 +275,9 @@ export default function POSPage() {
         const opts = menuOptions[menuId] ?? {}
         const basePrice   = Object.values(menu?.prices ?? {})[0] ?? 0
         const milkPrice   = opts.milk?.price ?? 0
-        const refillPrice = opts.refill?.price ?? 0
+        const refillPrice = Array.isArray(opts.refill)
+          ? opts.refill.reduce((sum, r) => sum + (r.price ?? 0) * (r.qty ?? 1), 0)
+          : (opts.refill?.price ?? 0)
         return { menuId, qty, name: menu?.name ?? '', image_url: menu?.image_url ?? null,
           basePrice, extras: milkPrice + refillPrice, isCampaign: !!campaigns[menuId], options: opts, menu }
       }),
@@ -288,7 +290,9 @@ export default function POSPage() {
     return orderItems.map(item => {
       const basePrice   = item.menu?.prices[selectedPlat] ?? 0
       const milkPrice   = item.options.milk?.prices?.[selectedPlat] ?? item.options.milk?.price ?? 0
-      const refillPrice = item.options.refill?.prices?.[selectedPlat] ?? item.options.refill?.price ?? 0
+      const refillPrice = Array.isArray(item.options.refill)
+        ? item.options.refill.reduce((sum, r) => sum + (r.prices?.[selectedPlat] ?? r.price ?? 0) * (r.qty ?? 1), 0)
+        : (item.options.refill?.prices?.[selectedPlat] ?? item.options.refill?.price ?? 0)
       const unitPrice   = basePrice + milkPrice + refillPrice
       const feePct      = item.isCampaign ? CAMPAIGN_GP_PCT : (platFees[selectedPlat] ?? 0)
       return { ...item, basePrice, extras: milkPrice + refillPrice,
@@ -301,8 +305,17 @@ export default function POSPage() {
   // ── Handlers ─────────────────────────────────────────────
   const increment = (menu) => {
     if (menuEditMode || catEditMode) return
-    if ((quantities[menu.id] ?? 0) === 0) setOptionMenu(menu)
-    else setQuantities(q => ({ ...q, [menu.id]: q[menu.id] + 1 }))
+    if ((quantities[menu.id] ?? 0) === 0) {
+      if (menu.category === 'Bun') {
+        // ขนมปัง ไม่ต้องเลือก add-on ใดๆ — เพิ่มตรงได้เลย
+        setMenuOptions(prev => ({ ...prev, [menu.id]: { milk: null, sweetness: 100, refill: null, note: '', packaging: null } }))
+        setQuantities(q => ({ ...q, [menu.id]: 1 }))
+      } else {
+        setOptionMenu(menu)
+      }
+    } else {
+      setQuantities(q => ({ ...q, [menu.id]: q[menu.id] + 1 }))
+    }
   }
   const decrement = (menuId) => {
     setQuantities(q => {
@@ -674,8 +687,11 @@ export default function POSPage() {
                         </p>
                         {!menuEditMode && hasQty && (opts.milk || opts.refill) && (
                           <div className="flex gap-1 mt-0.5 flex-wrap">
-                            {opts.milk   && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">{opts.milk.name}</span>}
-                            {opts.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">{opts.refill.name}</span>}
+                            {opts.milk && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">{opts.milk.name}</span>}
+                            {Array.isArray(opts.refill)
+                              ? opts.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
+                              : opts.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{opts.refill.name}</span>
+                            }
                             {opts.sweetness != null && opts.sweetness !== 100 && (
                               <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{opts.sweetness}%</span>
                             )}
@@ -759,7 +775,10 @@ export default function POSPage() {
                     <div className="flex flex-wrap gap-1 mt-0.5">
                       {item.options.milk && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">🥛 {item.options.milk.name}</span>}
                       {item.options.packaging === 'พร้อมดื่ม' && <span className="text-[9px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">🧋 พร้อมดื่ม</span>}
-                      {item.options.refill && <span className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">{item.options.refill.name}</span>}
+                      {Array.isArray(item.options.refill)
+                        ? item.options.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
+                        : item.options.refill && <span className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">🔄{item.options.refill.name}</span>
+                      }
                       {item.options.sweetness != null && item.options.sweetness !== 100 && (
                         <span className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">{item.options.sweetness}%</span>
                       )}
@@ -892,8 +911,11 @@ export default function POSPage() {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
                           <div className="flex gap-1 flex-wrap mt-0.5">
-                            {item.options.milk   && <span className="text-[10px] text-blue-600">{item.options.milk.name}</span>}
-                            {item.options.refill && <span className="text-[10px] text-purple-600">{item.options.refill.name}</span>}
+                            {item.options.milk && <span className="text-[10px] text-blue-600">{item.options.milk.name}</span>}
+                            {Array.isArray(item.options.refill)
+                              ? item.options.refill.map(r => <span key={r.id} className="text-[10px] text-purple-600">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
+                              : item.options.refill && <span className="text-[10px] text-purple-600">🔄{item.options.refill.name}</span>
+                            }
                             {item.isCampaign && <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 rounded">⚡ 60/40</span>}
                           </div>
                         </div>

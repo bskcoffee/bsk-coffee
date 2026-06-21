@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, ChevronRight } from 'lucide-react'
+import { X, ChevronRight, Minus, Plus } from 'lucide-react'
 
 const SWEETNESS_LEVELS = [
   { label: '0%',   value: 0   },
@@ -22,35 +22,52 @@ const RequiredBadge = () => (
   <span className="text-[10px] text-red-400 font-semibold bg-red-50 px-1.5 py-0.5 rounded">ต้องระบุ</span>
 )
 
+// Convert initial.refill (old single obj or new array) → { [id]: qty }
+const initRefillQtys = (initial) => {
+  if (!initial?.refill) return {}
+  if (Array.isArray(initial.refill)) return Object.fromEntries(initial.refill.map(r => [r.id, r.qty ?? 1]))
+  return { [initial.refill.id]: 1 }
+}
+
 export default function MenuOptionModal({ menu, platform, addons, refills, initial, onConfirm, onClose, confirmLabel }) {
   const basePrice = menu?.prices?.[platform] ?? 0
 
-  const [milk,      setMilk]      = useState(initial?.milk      ?? null)
-  const [sweetness, setSweetness] = useState(initial?.sweetness  ?? 100)
-  const [refill,    setRefill]    = useState(initial?.refill     ?? null)
-  const [packaging, setPackaging] = useState(initial?.packaging  ?? null)
-  const [note,      setNote]      = useState(initial?.note       ?? '')
+  const [milk,       setMilk]       = useState(initial?.milk      ?? null)
+  const [sweetness,  setSweetness]  = useState(initial?.sweetness  ?? 100)
+  const [refillQtys, setRefillQtys] = useState(() => initRefillQtys(initial))
+  const [packaging,  setPackaging]  = useState(initial?.packaging  ?? null)
+  const [note,       setNote]       = useState(initial?.note       ?? '')
 
   useEffect(() => {
     if (!initial) {
-      setMilk(null); setSweetness(100); setRefill(null); setPackaging(null); setNote('')
+      setMilk(null); setSweetness(100); setRefillQtys({}); setPackaging(null); setNote('')
     } else {
       setMilk(initial.milk ?? null)
       setSweetness(initial.sweetness ?? 100)
-      setRefill(initial.refill ?? null)
+      setRefillQtys(initRefillQtys(initial))
       setPackaging(initial.packaging ?? null)
       setNote(initial.note ?? '')
     }
   }, [menu?.id])
 
-  const totalExtra = (milk?.price ?? 0) + (refill?.price ?? 0)
-  const totalPrice = basePrice + totalExtra
+  const refillTotal = refills.reduce((sum, r) => sum + (r.price ?? 0) * (refillQtys[r.id] ?? 0), 0)
+  const totalExtra  = (milk?.price ?? 0) + refillTotal
+  const totalPrice  = basePrice + totalExtra
 
   const canConfirm = milk !== null && packaging !== null
 
   const handleConfirm = () => {
     if (!canConfirm) return
-    onConfirm({ milk, sweetness, refill, note, packaging })
+    const selectedRefills = refills
+      .filter(r => (refillQtys[r.id] ?? 0) > 0)
+      .map(r => ({ id: r.id, name: r.name, price: r.price, prices: r.prices, qty: refillQtys[r.id] }))
+    onConfirm({
+      milk,
+      sweetness,
+      refill: selectedRefills.length > 0 ? selectedRefills : null,
+      note,
+      packaging,
+    })
   }
 
   if (!menu) return null
@@ -88,10 +105,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                     key={addon.id}
                     onClick={() => setMilk(prev => prev?.id === addon.id ? null : { id: addon.id, name: addon.name, price: addon.price, prices: addon.prices })}
                     className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95
-                      ${milk?.id === addon.id
-                        ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700'
-                        : 'border-gray-200 bg-white text-gray-600'
-                      }`}
+                      ${milk?.id === addon.id ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 bg-white text-gray-600'}`}
                   >
                     <div className="font-bold">{addon.name}</div>
                     <div className="text-xs opacity-60 mt-0.5">{addon.price > 0 ? `+${fmt(addon.price)}` : 'ฟรี'}</div>
@@ -113,10 +127,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                   key={lvl.value}
                   onClick={() => setSweetness(lvl.value)}
                   className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95 border-2 flex flex-col items-center
-                    ${sweetness === lvl.value
-                      ? 'bg-cocoa-700 text-white border-cocoa-700'
-                      : 'bg-white text-gray-600 border-gray-200'
-                    }`}
+                    ${sweetness === lvl.value ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200'}`}
                 >
                   <span>{lvl.label}</span>
                   {lvl.sublabel && (
@@ -129,30 +140,51 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
             </div>
           </section>
 
-          {/* ── 3. Refill (ไม่บังคับ) ─────────────────────── */}
+          {/* ── 3. Refill (ไม่บังคับ) — หลายรายการ + จำนวน ─ */}
           <section>
             <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               🔄 Refill
               <span className="text-[10px] text-gray-400 font-normal bg-gray-100 px-1.5 py-0.5 rounded">ไม่บังคับ</span>
+              {refillTotal > 0 && <span className="ml-auto text-xs text-cocoa-600 font-semibold">+{fmt(refillTotal)}</span>}
             </p>
             {refills.length === 0 ? (
               <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">ยังไม่มีข้อมูล Refill</p>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {refills.map(r => (
-                  <button
-                    key={r.id}
-                    onClick={() => setRefill(prev => prev?.id === r.id ? null : { id: r.id, name: r.name, price: r.price, prices: r.prices })}
-                    className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95
-                      ${refill?.id === r.id
-                        ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700'
-                        : 'border-gray-200 bg-white text-gray-600'
-                      }`}
-                  >
-                    <div className="font-bold">{r.name}</div>
-                    <div className="text-xs opacity-60 mt-0.5">{r.price > 0 ? `+${fmt(r.price)}` : 'ฟรี'}</div>
-                  </button>
-                ))}
+              <div className="space-y-2">
+                {refills.map(r => {
+                  const qty = refillQtys[r.id] ?? 0
+                  return (
+                    <div key={r.id} className={`flex items-center justify-between px-4 py-3 rounded-xl border-2 transition-all
+                      ${qty > 0 ? 'border-cocoa-400 bg-cocoa-50' : 'border-gray-200 bg-white'}`}>
+                      <div>
+                        <p className={`text-sm font-bold ${qty > 0 ? 'text-cocoa-700' : 'text-gray-700'}`}>{r.name}</p>
+                        <p className="text-xs text-gray-400">{r.price > 0 ? `+${fmt(r.price)} / ชิ้น` : 'ฟรี'}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => setRefillQtys(prev => {
+                            const next = (prev[r.id] ?? 0) - 1
+                            if (next <= 0) { const { [r.id]: _, ...rest } = prev; return rest }
+                            return { ...prev, [r.id]: next }
+                          })}
+                          disabled={qty === 0}
+                          className="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center disabled:opacity-20 active:bg-gray-100"
+                        >
+                          <Minus size={13} />
+                        </button>
+                        <span className={`w-6 text-center text-sm font-bold ${qty > 0 ? 'text-cocoa-700' : 'text-gray-300'}`}>
+                          {qty || '·'}
+                        </span>
+                        <button
+                          onClick={() => setRefillQtys(prev => ({ ...prev, [r.id]: (prev[r.id] ?? 0) + 1 }))}
+                          className="w-8 h-8 rounded-lg bg-cocoa-700 flex items-center justify-center active:bg-cocoa-900"
+                        >
+                          <Plus size={13} className="text-white" />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </section>
@@ -168,10 +200,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                   key={opt.value}
                   onClick={() => setPackaging(prev => prev === opt.value ? null : opt.value)}
                   className={`py-4 px-4 rounded-xl border-2 text-left transition-all active:scale-95
-                    ${packaging === opt.value
-                      ? 'border-cocoa-500 bg-cocoa-50'
-                      : 'border-gray-200 bg-white'
-                    }`}
+                    ${packaging === opt.value ? 'border-cocoa-500 bg-cocoa-50' : 'border-gray-200 bg-white'}`}
                 >
                   <div className="text-2xl mb-1">{opt.icon}</div>
                   <div className={`text-sm font-bold ${packaging === opt.value ? 'text-cocoa-700' : 'text-gray-700'}`}>{opt.value}</div>
@@ -213,10 +242,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
             onClick={handleConfirm}
             disabled={!canConfirm}
             className={`w-full py-4 text-base font-bold rounded-xl flex items-center justify-between px-5 transition-all
-              ${canConfirm
-                ? 'bg-cocoa-700 text-white active:bg-cocoa-900'
-                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-              }`}
+              ${canConfirm ? 'bg-cocoa-700 text-white active:bg-cocoa-900' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
           >
             <span>{confirmLabel ?? 'เพิ่มลงออเดอร์'}</span>
             <div className="flex items-center gap-1">
