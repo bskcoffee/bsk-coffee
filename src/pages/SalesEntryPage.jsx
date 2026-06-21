@@ -176,22 +176,22 @@ export default function SalesEntryPage() {
     loadDefaults()
   }, [platform])
 
-  // Check data: POS มี priority เสมอ — ถ้ามี POS orders ให้ใช้ POS
+  // Check data: POS มี priority เสมอ — query posOrders ครั้งเดียว
   useEffect(() => {
     const check = async () => {
-      // Step 1: ตรวจสอบ POS orders ก่อน (notes IS NOT NULL)
-      const { data: posOrders } = await supabase
+      // Query POS orders สำหรับ date+platform นี้ (notes IS NOT NULL = POS order)
+      const { data: posOrdersData } = await supabase
         .from('orders')
         .select('id')
         .eq('date', date)
         .eq('platform', platform)
         .not('notes', 'is', null)
 
-      const hasPOS = (posOrders?.length ?? 0) > 0
+      const hasPOS = (posOrdersData?.length ?? 0) > 0
 
       if (!hasPOS) {
-        // ── ไม่มี POS — โหลด SalesEntry เก่า (manual mode) ────────────
-        const { data: order } = await supabase
+        // ── ไม่มี POS — ลองโหลด SalesEntry เก่า (manual mode) ─────────
+        const { data: oldOrder } = await supabase
           .from('orders')
           .select('id, notes, status')
           .eq('date', date)
@@ -199,18 +199,18 @@ export default function SalesEntryPage() {
           .eq('status', 'delivered')
           .maybeSingle()
 
-        if (order) {
+        if (oldOrder) {
           setExistingWarning(true)
           setPosUnitPrices({})
 
-          const { data: items } = await supabase
+          const { data: oldItems } = await supabase
             .from('order_items')
             .select('menu_id, quantity, is_campaign')
-            .eq('order_id', order.id)
+            .eq('order_id', oldOrder.id)
 
           const loadedQty = {}
           const loadedCampaignQty = {}
-          for (const item of items ?? []) {
+          for (const item of oldItems ?? []) {
             if (item.is_campaign) loadedCampaignQty[item.menu_id] = item.quantity
             else                  loadedQty[item.menu_id]         = item.quantity
           }
@@ -232,96 +232,89 @@ export default function SalesEntryPage() {
             setHasCampaign((pc.campaign_revenue ?? 0) > 0)
           }
 
-          setNotes(order.notes ?? '')
+          setNotes(oldOrder.notes ?? '')
           setOriginalQty(loadedQty)
           setOriginalCampaignQty(loadedCampaignQty)
-          setOriginalNotes(order.notes ?? '')
+          setOriginalNotes(oldOrder.notes ?? '')
           setIsLocked(true)
           return
         }
-      }
 
-      // ── มี POS orders หรือไม่มีอะไรเลย — ใช้ POS data ──────────────
-      {
+        // ── ไม่มีทั้ง POS และ SalesEntry เก่า — clean slate ─────────────
         setIsLocked(false)
+        setExistingWarning(false)
         setNotes('')
         setOriginalQty({})
         setOriginalCampaignQty({})
         setOriginalNotes('')
-
-        // โหลด platform_costs ที่บันทึกไว้ก่อนหน้า (POS mode)
-        const { data: existingCosts } = await supabase
-          .from('platform_costs')
-          .select('*')
-          .eq('date', date)
-          .eq('platform', platform)
-          .maybeSingle()
-
-        if (existingCosts) {
-          setExistingWarning(true)
-          setCosts({
-            menu_discount:     existingCosts.menu_discount     ?? 0,
-            campaign:          existingCosts.campaign          ?? 0,
-            marketing_fee:     existingCosts.marketing_fee     ?? 0,
-            delivery_discount: existingCosts.delivery_discount ?? 0,
-            advertisement:     existingCosts.advertisement     ?? 0,
-          })
-        } else {
-          setExistingWarning(false)
-          setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
-        }
-
-        // ── Auto-import from POS ──────────────────────────────
-        const { data: posOrders } = await supabase
-          .from('orders')
-          .select('id')
-          .eq('date', date)
-          .eq('platform', platform)
-          .not('notes', 'is', null)
-
-        if (posOrders?.length) {
-          const { data: posItems } = await supabase
-            .from('order_items')
-            .select('menu_id, quantity, unit_price, is_campaign')
-            .in('order_id', posOrders.map(o => o.id))
-
-          const autoQty = {}
-          const autoCampaignQty = {}
-          // สำหรับ weighted avg price (รวม addon/milk)
-          const revenueMap = {}
-          const totalQtyMap = {}
-
-          for (const item of posItems ?? []) {
-            const id = item.menu_id
-            if (item.is_campaign) {
-              autoCampaignQty[id] = (autoCampaignQty[id] ?? 0) + item.quantity
-            } else {
-              autoQty[id] = (autoQty[id] ?? 0) + item.quantity
-            }
-            // รวม revenue เพื่อคำนวณ avg unit_price
-            revenueMap[id]   = (revenueMap[id]   ?? 0) + (item.unit_price ?? 0) * item.quantity
-            totalQtyMap[id]  = (totalQtyMap[id]  ?? 0) + item.quantity
-          }
-
-          // weighted avg unit_price per menu (รวมราคา addon ที่แท้จริง)
-          const avgPrices = {}
-          for (const id of Object.keys(totalQtyMap)) {
-            if (totalQtyMap[id] > 0) avgPrices[id] = revenueMap[id] / totalQtyMap[id]
-          }
-
-          setQuantities(autoQty)
-          setCampaignQty(autoCampaignQty)
-          setPosUnitPrices(avgPrices)
-          setHasCampaign(Object.keys(autoCampaignQty).length > 0)
-          // ไม่ reset costs ที่นี่ — โหลดมาจาก existingCosts แล้วด้านบน
-        } else {
-          setQuantities({})
-          setCampaignQty({})
-          setPosUnitPrices({})
-          setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
-          setHasCampaign(false)
-        }
+        setQuantities({})
+        setCampaignQty({})
+        setPosUnitPrices({})
+        setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
+        setHasCampaign(false)
+        return
       }
+
+      // ── มี POS orders — auto-import ────────────────────────────────
+      setIsLocked(false)
+      setNotes('')
+      setOriginalQty({})
+      setOriginalCampaignQty({})
+      setOriginalNotes('')
+
+      // โหลด platform_costs ที่บันทึกไว้ก่อนหน้า (POS mode)
+      const { data: existingCosts } = await supabase
+        .from('platform_costs')
+        .select('*')
+        .eq('date', date)
+        .eq('platform', platform)
+        .maybeSingle()
+
+      if (existingCosts) {
+        setExistingWarning(true)
+        setCosts({
+          menu_discount:     existingCosts.menu_discount     ?? 0,
+          campaign:          existingCosts.campaign          ?? 0,
+          marketing_fee:     existingCosts.marketing_fee     ?? 0,
+          delivery_discount: existingCosts.delivery_discount ?? 0,
+          advertisement:     existingCosts.advertisement     ?? 0,
+        })
+      } else {
+        setExistingWarning(false)
+        setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
+      }
+
+      // ── Auto-import order_items จาก POS ──────────────────────────
+      const { data: posItems } = await supabase
+        .from('order_items')
+        .select('menu_id, quantity, unit_price, is_campaign')
+        .in('order_id', posOrdersData.map(o => o.id))
+
+      const autoQty = {}
+      const autoCampaignQty = {}
+      const revenueMap = {}
+      const totalQtyMap = {}
+
+      for (const item of posItems ?? []) {
+        const id = item.menu_id
+        if (item.is_campaign) {
+          autoCampaignQty[id] = (autoCampaignQty[id] ?? 0) + item.quantity
+        } else {
+          autoQty[id] = (autoQty[id] ?? 0) + item.quantity
+        }
+        revenueMap[id]  = (revenueMap[id]  ?? 0) + (item.unit_price ?? 0) * item.quantity
+        totalQtyMap[id] = (totalQtyMap[id] ?? 0) + item.quantity
+      }
+
+      const avgPrices = {}
+      for (const id of Object.keys(totalQtyMap)) {
+        if (totalQtyMap[id] > 0) avgPrices[id] = revenueMap[id] / totalQtyMap[id]
+      }
+
+      setQuantities(autoQty)
+      setCampaignQty(autoCampaignQty)
+      setPosUnitPrices(avgPrices)
+      setHasCampaign(Object.keys(autoCampaignQty).length > 0)
     }
     check()
   }, [date, platform])
