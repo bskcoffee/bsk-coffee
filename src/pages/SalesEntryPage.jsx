@@ -68,8 +68,8 @@ export default function SalesEntryPage() {
   const [platConfig, setPlatConfig] = useState([])        // [{name, fee}] from platform_config
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showEmptyConfirm, setShowEmptyConfirm] = useState(false)
-  const [importing, setImporting] = useState(false)
-  const [importCount, setImportCount] = useState(0)
+  // posUnitPrices: weighted avg unit_price per menu from POS (includes addons)
+  const [posUnitPrices, setPosUnitPrices] = useState({})
 
   // Load menus + platform_config
   useEffect(() => {
@@ -189,6 +189,7 @@ export default function SalesEntryPage() {
 
       if (order) {
         setExistingWarning(true)
+        setPosUnitPrices({})  // ใช้ราคาจาก menu catalog เมื่อโหลด SalesEntry ที่บันทึกแล้ว
 
         // โหลด order items → split normal / campaign
         const { data: items } = await supabase
@@ -251,22 +252,42 @@ export default function SalesEntryPage() {
         if (posOrders?.length) {
           const { data: posItems } = await supabase
             .from('order_items')
-            .select('menu_id, quantity, is_campaign')
+            .select('menu_id, quantity, unit_price, is_campaign')
             .in('order_id', posOrders.map(o => o.id))
 
           const autoQty = {}
           const autoCampaignQty = {}
+          // สำหรับ weighted avg price (รวม addon/milk)
+          const revenueMap = {}
+          const totalQtyMap = {}
+
           for (const item of posItems ?? []) {
-            if (item.is_campaign) autoCampaignQty[item.menu_id] = (autoCampaignQty[item.menu_id] ?? 0) + item.quantity
-            else                  autoQty[item.menu_id]         = (autoQty[item.menu_id]         ?? 0) + item.quantity
+            const id = item.menu_id
+            if (item.is_campaign) {
+              autoCampaignQty[id] = (autoCampaignQty[id] ?? 0) + item.quantity
+            } else {
+              autoQty[id] = (autoQty[id] ?? 0) + item.quantity
+            }
+            // รวม revenue เพื่อคำนวณ avg unit_price
+            revenueMap[id]   = (revenueMap[id]   ?? 0) + (item.unit_price ?? 0) * item.quantity
+            totalQtyMap[id]  = (totalQtyMap[id]  ?? 0) + item.quantity
           }
+
+          // weighted avg unit_price per menu (รวมราคา addon ที่แท้จริง)
+          const avgPrices = {}
+          for (const id of Object.keys(totalQtyMap)) {
+            if (totalQtyMap[id] > 0) avgPrices[id] = revenueMap[id] / totalQtyMap[id]
+          }
+
           setQuantities(autoQty)
           setCampaignQty(autoCampaignQty)
+          setPosUnitPrices(avgPrices)
           setHasCampaign(Object.keys(autoCampaignQty).length > 0)
           setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
         } else {
           setQuantities({})
           setCampaignQty({})
+          setPosUnitPrices({})
           setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
           setHasCampaign(false)
         }
@@ -465,7 +486,7 @@ export default function SalesEntryPage() {
     .filter(([_, qty]) => qty > 0)
     .map(([menuId, quantity]) => ({
       quantity,
-      unit_price:   currentMenuPrices[menuId]?.price   ?? 0,
+      unit_price:   posUnitPrices[menuId] ?? currentMenuPrices[menuId]?.price   ?? 0,
       unit_gp_cost: currentMenuPrices[menuId]?.gp_cost ?? 0,
       is_campaign:  false,
     }))
@@ -474,7 +495,7 @@ export default function SalesEntryPage() {
     .filter(([_, qty]) => qty > 0)
     .map(([menuId, quantity]) => ({
       quantity,
-      unit_price:   campaignMenuPrices[menuId]?.price   ?? currentMenuPrices[menuId]?.price   ?? 0,
+      unit_price:   posUnitPrices[menuId] ?? campaignMenuPrices[menuId]?.price ?? currentMenuPrices[menuId]?.price ?? 0,
       unit_gp_cost: campaignMenuPrices[menuId]?.gp_cost ?? currentMenuPrices[menuId]?.gp_cost ?? 0,
       is_campaign:  true,
     }))
@@ -561,7 +582,7 @@ export default function SalesEntryPage() {
             order_id:    orderId,
             menu_id:     menuId,
             quantity,
-            unit_price:   currentMenuPrices[menuId]?.price   ?? 0,
+            unit_price:   posUnitPrices[menuId] ?? currentMenuPrices[menuId]?.price   ?? 0,
             unit_gp_cost: currentMenuPrices[menuId]?.gp_cost ?? 0,
             is_campaign:  false,
           })),
@@ -571,7 +592,7 @@ export default function SalesEntryPage() {
             order_id:    orderId,
             menu_id:     menuId,
             quantity,
-            unit_price:   campaignMenuPrices[menuId]?.price   ?? currentMenuPrices[menuId]?.price   ?? 0,
+            unit_price:   posUnitPrices[menuId] ?? campaignMenuPrices[menuId]?.price ?? currentMenuPrices[menuId]?.price ?? 0,
             unit_gp_cost: campaignMenuPrices[menuId]?.gp_cost ?? currentMenuPrices[menuId]?.gp_cost ?? 0,
             is_campaign:  true,
           })),
