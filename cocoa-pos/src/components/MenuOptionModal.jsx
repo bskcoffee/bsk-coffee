@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, ChevronRight, Minus, Plus } from 'lucide-react'
+import { X, ChevronRight } from 'lucide-react'
 
 const SWEETNESS_LEVELS = [
   { label: '0%',   value: 0   },
@@ -9,40 +9,36 @@ const SWEETNESS_LEVELS = [
   { label: '100%', sublabel: 'ปกติ', value: 100 },
 ]
 
+const PACKAGING_OPTIONS = [
+  { value: 'แยกน้ำแข็ง', icon: '🧊', desc: 'น้ำแข็งแยกถุง' },
+  { value: 'พร้อมดื่ม',  icon: '🧋', desc: 'ใส่แก้วพร้อมดื่ม' },
+]
+
 const fmt = (n) =>
   n === 0 ? 'ฟรี'
     : new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', minimumFractionDigits: 0 }).format(n)
 
-/**
- * MenuOptionModal
- * Props:
- *  menu        – { id, name, prices }
- *  platform    – string
- *  addons      – [ { id, name, price } ]  (milk options)
- *  refills     – [ { id, name, price } ]
- *  initial     – { milk, sweetness, refill, note } | null
- *  onConfirm   – (options) => void
- *  onClose     – () => void
- */
+const RequiredBadge = () => (
+  <span className="text-[10px] text-red-400 font-semibold bg-red-50 px-1.5 py-0.5 rounded">ต้องระบุ</span>
+)
+
 export default function MenuOptionModal({ menu, platform, addons, refills, initial, onConfirm, onClose, confirmLabel }) {
   const basePrice = menu?.prices?.[platform] ?? 0
 
-  const [milk,      setMilk]      = useState(initial?.milk      ?? null)    // { id, name, price }
+  const [milk,      setMilk]      = useState(initial?.milk      ?? null)
   const [sweetness, setSweetness] = useState(initial?.sweetness  ?? 100)
-  const [refill,    setRefill]    = useState(initial?.refill     ?? null)    // { id, name, price }
+  const [refill,    setRefill]    = useState(initial?.refill     ?? null)
+  const [packaging, setPackaging] = useState(initial?.packaging  ?? null)
   const [note,      setNote]      = useState(initial?.note       ?? '')
 
-  // Reset when menu changes
   useEffect(() => {
     if (!initial) {
-      setMilk(null)
-      setSweetness(100)
-      setRefill(null)
-      setNote('')
+      setMilk(null); setSweetness(100); setRefill(null); setPackaging(null); setNote('')
     } else {
       setMilk(initial.milk ?? null)
       setSweetness(initial.sweetness ?? 100)
       setRefill(initial.refill ?? null)
+      setPackaging(initial.packaging ?? null)
       setNote(initial.note ?? '')
     }
   }, [menu?.id])
@@ -50,18 +46,19 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
   const totalExtra = (milk?.price ?? 0) + (refill?.price ?? 0)
   const totalPrice = basePrice + totalExtra
 
+  const canConfirm = milk !== null && packaging !== null
+
   const handleConfirm = () => {
-    onConfirm({ milk, sweetness, refill, note })
+    if (!canConfirm) return
+    onConfirm({ milk, sweetness, refill, note, packaging })
   }
 
   if (!menu) return null
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-end z-50" onClick={onClose}>
-      <div
-        className="bg-white rounded-t-3xl w-full max-h-[90vh] flex flex-col"
-        onClick={e => e.stopPropagation()}
-      >
+      <div className="bg-white rounded-t-3xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
           <div>
@@ -76,15 +73,14 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
 
-          {/* ── 1. Milk ────────────────────────────────────── */}
+          {/* ── 1. ชนิดนม (ต้องระบุ) ──────────────────────── */}
           <section>
-            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
-              🥛 ชนิดนม
+            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+              🥛 ชนิดนม <RequiredBadge />
+              {milk && <span className="ml-auto text-xs text-cocoa-600 font-semibold">{milk.name}</span>}
             </p>
             {addons.length === 0 ? (
-              <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">
-                ยังไม่มีข้อมูล Addon — เพิ่มได้ใน Supabase → addons table
-              </p>
+              <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">ยังไม่มีข้อมูล Addon</p>
             ) : (
               <div className="grid grid-cols-2 gap-2">
                 {addons.map(addon => (
@@ -98,19 +94,17 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                       }`}
                   >
                     <div className="font-bold">{addon.name}</div>
-                    <div className="text-xs opacity-60 mt-0.5">
-                      {addon.price > 0 ? `+${fmt(addon.price)}` : 'ฟรี'}
-                    </div>
+                    <div className="text-xs opacity-60 mt-0.5">{addon.price > 0 ? `+${fmt(addon.price)}` : 'ฟรี'}</div>
                   </button>
                 ))}
               </div>
             )}
           </section>
 
-          {/* ── 2. Sweetness ──────────────────────────────── */}
+          {/* ── 2. ความหวาน (ต้องระบุ) ────────────────────── */}
           <section>
-            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
-              🍬 ความหวาน
+            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+              🍬 ความหวาน <RequiredBadge />
               <span className="ml-auto text-cocoa-600 font-bold">{sweetness}%</span>
             </p>
             <div className="flex gap-2">
@@ -135,15 +129,14 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
             </div>
           </section>
 
-          {/* ── 3. Refill ─────────────────────────────────── */}
+          {/* ── 3. Refill (ไม่บังคับ) ─────────────────────── */}
           <section>
-            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5">
+            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               🔄 Refill
+              <span className="text-[10px] text-gray-400 font-normal bg-gray-100 px-1.5 py-0.5 rounded">ไม่บังคับ</span>
             </p>
             {refills.length === 0 ? (
-              <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">
-                ยังไม่มีข้อมูล Refill — เพิ่มได้ใน Supabase → refills table
-              </p>
+              <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">ยังไม่มีข้อมูล Refill</p>
             ) : (
               <div className="grid grid-cols-2 gap-2">
                 {refills.map(r => (
@@ -157,16 +150,38 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                       }`}
                   >
                     <div className="font-bold">{r.name}</div>
-                    <div className="text-xs opacity-60 mt-0.5">
-                      {r.price > 0 ? `+${fmt(r.price)}` : 'ฟรี'}
-                    </div>
+                    <div className="text-xs opacity-60 mt-0.5">{r.price > 0 ? `+${fmt(r.price)}` : 'ฟรี'}</div>
                   </button>
                 ))}
               </div>
             )}
           </section>
 
-          {/* ── 4. Note ───────────────────────────────────── */}
+          {/* ── 4. บรรจุภัณฑ์ (ต้องระบุ) ──────────────────── */}
+          <section>
+            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+              📦 บรรจุภัณฑ์ <RequiredBadge />
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              {PACKAGING_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setPackaging(prev => prev === opt.value ? null : opt.value)}
+                  className={`py-4 px-4 rounded-xl border-2 text-left transition-all active:scale-95
+                    ${packaging === opt.value
+                      ? 'border-cocoa-500 bg-cocoa-50'
+                      : 'border-gray-200 bg-white'
+                    }`}
+                >
+                  <div className="text-2xl mb-1">{opt.icon}</div>
+                  <div className={`text-sm font-bold ${packaging === opt.value ? 'text-cocoa-700' : 'text-gray-700'}`}>{opt.value}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">{opt.desc}</div>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* ── 5. หมายเหตุ ────────────────────────────────── */}
           <section>
             <p className="text-sm font-bold text-gray-700 mb-3">📝 หมายเหตุ</p>
             <textarea
@@ -174,17 +189,20 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
               onChange={e => setNote(e.target.value)}
               placeholder="เช่น ไม่ใส่น้ำแข็ง, เพิ่มหวาน..."
               rows={2}
-              className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl text-sm
-                         focus:outline-none focus:border-cocoa-400 resize-none"
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-cocoa-400 resize-none"
             />
           </section>
 
-          {/* Spacer so confirm button doesn't overlap */}
           <div className="h-4" />
         </div>
 
-        {/* ── Confirm Button ─────────────────────────────── */}
+        {/* ── Confirm Button ──────────────────────────────── */}
         <div className="px-5 pt-3 pb-6 border-t border-gray-100 shrink-0">
+          {!canConfirm && (
+            <p className="text-xs text-red-400 text-center mb-2">
+              กรุณาเลือก{!milk ? 'ชนิดนม' : ''}{!milk && !packaging ? ' และ ' : ''}{!packaging ? 'บรรจุภัณฑ์' : ''}
+            </p>
+          )}
           {totalExtra > 0 && (
             <div className="flex justify-between text-sm mb-2 text-gray-500">
               <span>ราคาเมนู + Addon/Refill</span>
@@ -193,13 +211,16 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
           )}
           <button
             onClick={handleConfirm}
-            className="btn-primary w-full py-4 text-base flex items-center justify-between px-5"
+            disabled={!canConfirm}
+            className={`w-full py-4 text-base font-bold rounded-xl flex items-center justify-between px-5 transition-all
+              ${canConfirm
+                ? 'bg-cocoa-700 text-white active:bg-cocoa-900'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              }`}
           >
             <span>{confirmLabel ?? 'เพิ่มลงออเดอร์'}</span>
             <div className="flex items-center gap-1">
-              {totalExtra > 0 && (
-                <span className="text-sm opacity-80">+{fmt(totalExtra)}</span>
-              )}
+              {totalExtra > 0 && <span className="text-sm opacity-80">+{fmt(totalExtra)}</span>}
               <ChevronRight size={20} />
             </div>
           </button>

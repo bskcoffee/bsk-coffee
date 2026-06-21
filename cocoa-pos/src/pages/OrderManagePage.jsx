@@ -563,7 +563,9 @@ export default function OrderManagePage() {
                               {item.is_campaign && (
                                 <span className="text-[9px] bg-amber-400 text-white font-bold px-1.5 py-0.5 rounded">⚡ 60/40</span>
                               )}
-                              {item.item_options?.milk   && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">{item.item_options.milk.name}</span>}
+                              {item.item_options?.milk && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">🥛 {item.item_options.milk.name}</span>}
+                              {item.item_options?.packaging === 'แยกน้ำแข็ง' && <span className="text-[9px] bg-cyan-100 text-cyan-700 font-bold px-1.5 py-0.5 rounded">🧊 แยกน้ำแข็ง</span>}
+                              {item.item_options?.packaging === 'พร้อมดื่ม'  && <span className="text-[9px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">🧋 พร้อมดื่ม</span>}
                               {item.item_options?.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">{item.item_options.refill.name}</span>}
                               {item.item_options?.sweetness != null && item.item_options.sweetness !== 100 && (
                                 <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{item.item_options.sweetness}%</span>
