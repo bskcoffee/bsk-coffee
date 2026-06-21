@@ -234,12 +234,33 @@ export default function SalesEntryPage() {
         setOriginalNotes(order.notes ?? '')
         setIsLocked(true)
       } else {
-        setExistingWarning(false)
         setIsLocked(false)
         setNotes('')
         setOriginalQty({})
         setOriginalCampaignQty({})
         setOriginalNotes('')
+
+        // โหลด platform_costs ที่บันทึกไว้ก่อนหน้า (POS mode)
+        const { data: existingCosts } = await supabase
+          .from('platform_costs')
+          .select('*')
+          .eq('date', date)
+          .eq('platform', platform)
+          .maybeSingle()
+
+        if (existingCosts) {
+          setExistingWarning(true)
+          setCosts({
+            menu_discount:     existingCosts.menu_discount     ?? 0,
+            campaign:          existingCosts.campaign          ?? 0,
+            marketing_fee:     existingCosts.marketing_fee     ?? 0,
+            delivery_discount: existingCosts.delivery_discount ?? 0,
+            advertisement:     existingCosts.advertisement     ?? 0,
+          })
+        } else {
+          setExistingWarning(false)
+          setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
+        }
 
         // ── Auto-import from POS ──────────────────────────────
         const { data: posOrders } = await supabase
@@ -559,55 +580,62 @@ export default function SalesEntryPage() {
     setSaveStatus('saving')
     saveDraft({ date, platform, quantities, costs, notes })
 
+    const hasPOSData = Object.keys(posUnitPrices).length > 0
+
     try {
-      // Upsert order
-      const { data: orderData, error: orderError } = await supabase
-        .from('orders')
-        .upsert({ date, platform, notes, status: 'delivered' }, { onConflict: 'date,platform' })
-        .select()
-        .single()
+      if (hasPOSData) {
+        // ── POS mode: ข้อมูลออเดอร์มีอยู่แล้วใน POS orders ──────────────
+        // ไม่ต้อง insert order_items ซ้ำ (Dashboard จะ double-count)
+        // บันทึกเฉพาะ platform_costs เท่านั้น
+        const { error: costsError } = await supabase
+          .from('platform_costs')
+          .upsert({ date, platform, ...costs }, { onConflict: 'date,platform' })
+        if (costsError) throw costsError
+      } else {
+        // ── Manual mode: ไม่มี POS data — บันทึกแบบเดิม ─────────────────
+        const { data: orderData, error: orderError } = await supabase
+          .from('orders')
+          .upsert({ date, platform, notes, status: 'delivered' }, { onConflict: 'date,platform' })
+          .select()
+          .single()
+        if (orderError) throw orderError
 
-      if (orderError) throw orderError
+        const orderId = orderData.id
+        await supabase.from('order_items').delete().eq('order_id', orderId)
 
-      const orderId = orderData.id
+        const itemsToInsert = [
+          ...Object.entries(quantities)
+            .filter(([_, qty]) => qty > 0)
+            .map(([menuId, quantity]) => ({
+              order_id:    orderId,
+              menu_id:     menuId,
+              quantity,
+              unit_price:   currentMenuPrices[menuId]?.price   ?? 0,
+              unit_gp_cost: currentMenuPrices[menuId]?.gp_cost ?? 0,
+              is_campaign:  false,
+            })),
+          ...Object.entries(campaignQty)
+            .filter(([_, qty]) => qty > 0)
+            .map(([menuId, quantity]) => ({
+              order_id:    orderId,
+              menu_id:     menuId,
+              quantity,
+              unit_price:   campaignMenuPrices[menuId]?.price ?? currentMenuPrices[menuId]?.price ?? 0,
+              unit_gp_cost: campaignMenuPrices[menuId]?.gp_cost ?? currentMenuPrices[menuId]?.gp_cost ?? 0,
+              is_campaign:  true,
+            })),
+        ]
+        if (itemsToInsert.length > 0) {
+          const { error: itemsError } = await supabase.from('order_items').insert(itemsToInsert)
+          if (itemsError) throw itemsError
+        }
 
-      // Delete existing items for this order
-      await supabase.from('order_items').delete().eq('order_id', orderId)
-
-      // Insert normal + campaign items (campaign carries 5% gp_cost + is_campaign flag)
-      const itemsToInsert = [
-        ...Object.entries(quantities)
-          .filter(([_, qty]) => qty > 0)
-          .map(([menuId, quantity]) => ({
-            order_id:    orderId,
-            menu_id:     menuId,
-            quantity,
-            unit_price:   posUnitPrices[menuId] ?? currentMenuPrices[menuId]?.price   ?? 0,
-            unit_gp_cost: currentMenuPrices[menuId]?.gp_cost ?? 0,
-            is_campaign:  false,
-          })),
-        ...Object.entries(campaignQty)
-          .filter(([_, qty]) => qty > 0)
-          .map(([menuId, quantity]) => ({
-            order_id:    orderId,
-            menu_id:     menuId,
-            quantity,
-            unit_price:   posUnitPrices[menuId] ?? campaignMenuPrices[menuId]?.price ?? currentMenuPrices[menuId]?.price ?? 0,
-            unit_gp_cost: campaignMenuPrices[menuId]?.gp_cost ?? currentMenuPrices[menuId]?.gp_cost ?? 0,
-            is_campaign:  true,
-          })),
-      ]
-
-      if (itemsToInsert.length > 0) {
-        const { error: itemsError } = await supabase.from('order_items').insert(itemsToInsert)
-        if (itemsError) throw itemsError
+        // platform_costs for manual mode
+        const { error: costsError } = await supabase
+          .from('platform_costs')
+          .upsert({ date, platform, ...costs }, { onConflict: 'date,platform' })
+        if (costsError) throw costsError
       }
-
-      // Upsert platform costs
-      const { error: costsError } = await supabase
-        .from('platform_costs')
-        .upsert({ date, platform, ...costs }, { onConflict: 'date,platform' })
-      if (costsError) throw costsError
 
       setSaveStatus('success')
       setIsLocked(true)

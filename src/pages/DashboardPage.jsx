@@ -435,7 +435,7 @@ export default function DashboardPage() {
     const [ordersRes, itemsRes, costsRes, settingsRes, costSettingsRes, menuCostsRes] = await Promise.all([
       supabase.from('orders').select('*').gte('date', s).lte('date', e),
       supabase.from('order_items')
-        .select('*, menus(name, category), orders!inner(date, platform)')
+        .select('*, menus(name, category), orders!inner(date, platform, notes)')
         .gte('orders.date', s).lte('orders.date', e)
         .limit(ITEMS_LIMIT),
       supabase.from('platform_costs').select('*').gte('date', s).lte('date', e),
@@ -447,8 +447,11 @@ export default function DashboardPage() {
         .order('effective_from', { ascending: false }),
       supabase.from('menu_costs').select('*').is('effective_to', null),
     ])
-    const items = itemsRes.data ?? []
-    setItemsTruncated(items.length >= ITEMS_LIMIT)
+    // กรอง order_items ให้เฉพาะ POS orders (notes != null && notes != '')
+    // เพื่อป้องกัน double-count กับ SalesEntry orders (ที่ notes = '' หรือ null)
+    const allItems = itemsRes.data ?? []
+    const items = allItems.filter(i => i.orders?.notes != null && i.orders.notes !== '')
+    setItemsTruncated(allItems.length >= ITEMS_LIMIT)
 
     // Read platform config (dynamic list from settings)
     const platConfigRow = settingsRes.data?.find(r => r.key === 'platform_config')
