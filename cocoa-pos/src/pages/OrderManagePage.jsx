@@ -566,8 +566,8 @@ export default function OrderManagePage() {
                               {item.item_options?.milk && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">🥛 {item.item_options.milk.name}</span>}
                               {item.item_options?.packaging === 'พร้อมดื่ม' && <span className="text-[9px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">🧋 พร้อมดื่ม</span>}
                               {Array.isArray(item.item_options?.refill)
-                                ? item.item_options.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
-                                : item.item_options?.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{item.item_options.refill.name}</span>
+                                ? item.item_options.refill.map(r => <span key={r.id} className="text-xs font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-lg border border-purple-200">🔄 {r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
+                                : item.item_options?.refill && <span className="text-xs font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-lg border border-purple-200">🔄 {item.item_options.refill.name}</span>
                               }
                               {item.item_options?.sweetness != null && (
                                 <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{item.item_options.sweetness}%</span>
