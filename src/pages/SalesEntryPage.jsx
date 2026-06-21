@@ -945,7 +945,7 @@ export default function SalesEntryPage() {
         const BEV_CATS  = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot']
         const summary = { bev: 0, bread: 0, refill: 0, addon: 0 }
         for (const menu of menus) {
-          const qty = quantities[menu.id] ?? 0
+          const qty = (quantities[menu.id] ?? 0) + (campaignQty[menu.id] ?? 0)
           if (!qty) continue
           if (BEV_CATS.includes(menu.category))  summary.bev   += qty
           else if (menu.category === 'Bun')       summary.bread  += qty
