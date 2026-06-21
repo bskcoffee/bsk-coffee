@@ -90,7 +90,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                 {addons.map(addon => (
                   <button
                     key={addon.id}
-                    onClick={() => setMilk(prev => prev?.id === addon.id ? null : { id: addon.id, name: addon.name, price: addon.price })}
+                    onClick={() => setMilk(prev => prev?.id === addon.id ? null : { id: addon.id, name: addon.name, price: addon.price, prices: addon.prices })}
                     className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95
                       ${milk?.id === addon.id
                         ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700'
@@ -149,7 +149,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                 {refills.map(r => (
                   <button
                     key={r.id}
-                    onClick={() => setRefill(prev => prev?.id === r.id ? null : { id: r.id, name: r.name, price: r.price })}
+                    onClick={() => setRefill(prev => prev?.id === r.id ? null : { id: r.id, name: r.name, price: r.price, prices: r.prices })}
                     className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95
                       ${refill?.id === r.id
                         ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700'
