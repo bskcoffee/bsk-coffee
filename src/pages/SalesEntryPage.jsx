@@ -176,64 +176,73 @@ export default function SalesEntryPage() {
     loadDefaults()
   }, [platform])
 
-  // Check if this date+platform already has data — ถ้ามีให้โหลดมาแสดงและล็อค
+  // Check data: POS มี priority เสมอ — ถ้ามี POS orders ให้ใช้ POS
   useEffect(() => {
     const check = async () => {
-      const { data: order } = await supabase
+      // Step 1: ตรวจสอบ POS orders ก่อน (notes IS NOT NULL)
+      const { data: posOrders } = await supabase
         .from('orders')
-        .select('id, notes, status')
+        .select('id')
         .eq('date', date)
         .eq('platform', platform)
-        .eq('status', 'delivered')
-        .maybeSingle()
+        .not('notes', 'is', null)
 
-      if (order) {
-        setExistingWarning(true)
-        setPosUnitPrices({})  // ใช้ราคาจาก menu catalog เมื่อโหลด SalesEntry ที่บันทึกแล้ว
+      const hasPOS = (posOrders?.length ?? 0) > 0
 
-        // โหลด order items → split normal / campaign
-        const { data: items } = await supabase
-          .from('order_items')
-          .select('menu_id, quantity, is_campaign')
-          .eq('order_id', order.id)
-
-        const loadedQty = {}
-        const loadedCampaignQty = {}
-        for (const item of items ?? []) {
-          if (item.is_campaign) loadedCampaignQty[item.menu_id] = item.quantity
-          else                  loadedQty[item.menu_id]         = item.quantity
-        }
-        setQuantities(loadedQty)
-        setCampaignQty(loadedCampaignQty)
-        setHasCampaign(Object.keys(loadedCampaignQty).length > 0)
-
-        // โหลด platform costs
-        const { data: pc } = await supabase
-          .from('platform_costs')
-          .select('*')
+      if (!hasPOS) {
+        // ── ไม่มี POS — โหลด SalesEntry เก่า (manual mode) ────────────
+        const { data: order } = await supabase
+          .from('orders')
+          .select('id, notes, status')
           .eq('date', date)
           .eq('platform', platform)
-          .single()
+          .eq('status', 'delivered')
+          .maybeSingle()
 
-        if (pc) {
-          const cr = pc.campaign_revenue ?? 0
-          setCosts({
-            menu_discount:     pc.menu_discount     ?? 0,
-            campaign:          pc.campaign          ?? 0,
-            marketing_fee:     pc.marketing_fee     ?? 0,
-            delivery_discount: pc.delivery_discount ?? 0,
-            advertisement:     pc.advertisement     ?? 0,
-            campaign_revenue:  cr,
-          })
-          setHasCampaign(cr > 0)
+        if (order) {
+          setExistingWarning(true)
+          setPosUnitPrices({})
+
+          const { data: items } = await supabase
+            .from('order_items')
+            .select('menu_id, quantity, is_campaign')
+            .eq('order_id', order.id)
+
+          const loadedQty = {}
+          const loadedCampaignQty = {}
+          for (const item of items ?? []) {
+            if (item.is_campaign) loadedCampaignQty[item.menu_id] = item.quantity
+            else                  loadedQty[item.menu_id]         = item.quantity
+          }
+          setQuantities(loadedQty)
+          setCampaignQty(loadedCampaignQty)
+          setHasCampaign(Object.keys(loadedCampaignQty).length > 0)
+
+          const { data: pc } = await supabase
+            .from('platform_costs').select('*')
+            .eq('date', date).eq('platform', platform).maybeSingle()
+          if (pc) {
+            setCosts({
+              menu_discount:     pc.menu_discount     ?? 0,
+              campaign:          pc.campaign          ?? 0,
+              marketing_fee:     pc.marketing_fee     ?? 0,
+              delivery_discount: pc.delivery_discount ?? 0,
+              advertisement:     pc.advertisement     ?? 0,
+            })
+            setHasCampaign((pc.campaign_revenue ?? 0) > 0)
+          }
+
+          setNotes(order.notes ?? '')
+          setOriginalQty(loadedQty)
+          setOriginalCampaignQty(loadedCampaignQty)
+          setOriginalNotes(order.notes ?? '')
+          setIsLocked(true)
+          return
         }
+      }
 
-        setNotes(order.notes ?? '')
-        setOriginalQty(loadedQty)
-        setOriginalCampaignQty(loadedCampaignQty)
-        setOriginalNotes(order.notes ?? '')
-        setIsLocked(true)
-      } else {
+      // ── มี POS orders หรือไม่มีอะไรเลย — ใช้ POS data ──────────────
+      {
         setIsLocked(false)
         setNotes('')
         setOriginalQty({})
@@ -304,7 +313,7 @@ export default function SalesEntryPage() {
           setCampaignQty(autoCampaignQty)
           setPosUnitPrices(avgPrices)
           setHasCampaign(Object.keys(autoCampaignQty).length > 0)
-          setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
+          // ไม่ reset costs ที่นี่ — โหลดมาจาก existingCosts แล้วด้านบน
         } else {
           setQuantities({})
           setCampaignQty({})
