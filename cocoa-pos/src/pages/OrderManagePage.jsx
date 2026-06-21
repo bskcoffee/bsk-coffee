@@ -569,7 +569,7 @@ export default function OrderManagePage() {
                                 ? item.item_options.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
                                 : item.item_options?.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{item.item_options.refill.name}</span>
                               }
-                              {item.item_options?.sweetness != null && item.item_options.sweetness !== 100 && (
+                              {item.item_options?.sweetness != null && (
                                 <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{item.item_options.sweetness}%</span>
                               )}
                               {item.item_options?.note && (

@@ -692,7 +692,7 @@ export default function POSPage() {
                               ? opts.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
                               : opts.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{opts.refill.name}</span>
                             }
-                            {opts.sweetness != null && opts.sweetness !== 100 && (
+                            {opts.sweetness != null && (
                               <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{opts.sweetness}%</span>
                             )}
                           </div>
