@@ -70,6 +70,8 @@ export default function SalesEntryPage() {
   const [showEmptyConfirm, setShowEmptyConfirm] = useState(false)
   // posUnitPrices: weighted avg unit_price per menu from POS (includes addons)
   const [posUnitPrices, setPosUnitPrices] = useState({})
+  // posRefillCount: total refill qty from POS item_options
+  const [posRefillCount, setPosRefillCount] = useState(0)
 
   // Load menus + platform_config
   useEffect(() => {
@@ -202,6 +204,7 @@ export default function SalesEntryPage() {
         if (oldOrder) {
           setExistingWarning(true)
           setPosUnitPrices({})
+          setPosRefillCount(0)
 
           const { data: oldItems } = await supabase
             .from('order_items')
@@ -250,6 +253,7 @@ export default function SalesEntryPage() {
         setQuantities({})
         setCampaignQty({})
         setPosUnitPrices({})
+        setPosRefillCount(0)
         setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
         setHasCampaign(false)
         return
@@ -287,13 +291,14 @@ export default function SalesEntryPage() {
       // ── Auto-import order_items จาก POS ──────────────────────────
       const { data: posItems } = await supabase
         .from('order_items')
-        .select('menu_id, quantity, unit_price, is_campaign')
+        .select('menu_id, quantity, unit_price, is_campaign, item_options')
         .in('order_id', posOrdersData.map(o => o.id))
 
       const autoQty = {}
       const autoCampaignQty = {}
       const revenueMap = {}
       const totalQtyMap = {}
+      let totalRefillQty = 0
 
       for (const item of posItems ?? []) {
         const id = item.menu_id
@@ -304,6 +309,14 @@ export default function SalesEntryPage() {
         }
         revenueMap[id]  = (revenueMap[id]  ?? 0) + (item.unit_price ?? 0) * item.quantity
         totalQtyMap[id] = (totalQtyMap[id] ?? 0) + item.quantity
+
+        // นับ refill จาก item_options (array หรือ single object)
+        const refill = item.item_options?.refill
+        if (Array.isArray(refill)) {
+          totalRefillQty += refill.reduce((s, r) => s + (r.qty ?? 1), 0)
+        } else if (refill) {
+          totalRefillQty += refill.qty ?? 1
+        }
       }
 
       const avgPrices = {}
@@ -314,6 +327,7 @@ export default function SalesEntryPage() {
       setQuantities(autoQty)
       setCampaignQty(autoCampaignQty)
       setPosUnitPrices(avgPrices)
+      setPosRefillCount(totalRefillQty)
       setHasCampaign(Object.keys(autoCampaignQty).length > 0)
     }
     check()
@@ -952,10 +966,12 @@ export default function SalesEntryPage() {
           else if (menu.category === 'Refill')    summary.refill += qty
           else if (menu.category === 'Addon')     summary.addon  += qty
         }
+        // รวม refill จาก POS item_options (ถ้ามี)
+        const refillDisplay = posRefillCount > 0 ? posRefillCount : summary.refill
         const boxes = [
           { label: 'Beverage', value: summary.bev,    icon: '🧋', color: 'bg-cocoa-50 border-cocoa-200 text-cocoa-800' },
           { label: 'Bread',    value: summary.bread,  icon: '🍞', color: 'bg-amber-50 border-amber-200 text-amber-800' },
-          { label: 'Refill',   value: summary.refill, icon: '🔁', color: 'bg-blue-50 border-blue-200 text-blue-800' },
+          { label: 'Refill',   value: refillDisplay,  icon: '🔁', color: 'bg-blue-50 border-blue-200 text-blue-800' },
           { label: 'Add-on',   value: summary.addon,  icon: '➕', color: 'bg-purple-50 border-purple-200 text-purple-800' },
         ]
         return (
