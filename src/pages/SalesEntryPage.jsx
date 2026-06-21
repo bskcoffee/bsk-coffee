@@ -4,7 +4,7 @@ import { supabase, getSetting, getCostSettingsForDate } from '../lib/supabase'
 import { saveDraft, loadDraft, clearDraft, isOnline, enqueueSync, getSyncQueue, processSyncQueue, clearSyncQueue } from '../utils/offlineSync'
 import { calcPlatformProfit, calcMenuCostBreakdown, formatBaht, CAMPAIGN_GP_PCT } from '../utils/calculations'
 import { useToast } from '../contexts/ToastContext'
-import { Plus, Minus, Save, AlertCircle, CheckCircle, WifiOff, ChevronDown, ChevronUp, Pencil, Lock, Search, X, RefreshCw, CloudOff, Trash2, Printer } from 'lucide-react'
+import { Plus, Minus, Save, AlertCircle, CheckCircle, WifiOff, ChevronDown, ChevronUp, Pencil, Lock, Search, X, RefreshCw, CloudOff, Trash2, Printer, Download } from 'lucide-react'
 
 const DEFAULT_PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
 const CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun', 'Refill', 'Addon']
@@ -68,6 +68,8 @@ export default function SalesEntryPage() {
   const [platConfig, setPlatConfig] = useState([])        // [{name, fee}] from platform_config
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showEmptyConfirm, setShowEmptyConfirm] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importCount, setImportCount] = useState(0)
 
   // Load menus + platform_config
   useEffect(() => {
@@ -232,15 +234,42 @@ export default function SalesEntryPage() {
         setIsLocked(true)
       } else {
         setExistingWarning(false)
-        setQuantities({})
-        setCampaignQty({})
-        setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
-        setHasCampaign(false)
+        setIsLocked(false)
         setNotes('')
         setOriginalQty({})
         setOriginalCampaignQty({})
         setOriginalNotes('')
-        setIsLocked(false)
+
+        // ── Auto-import from POS ──────────────────────────────
+        const { data: posOrders } = await supabase
+          .from('orders')
+          .select('id')
+          .eq('date', date)
+          .eq('platform', platform)
+          .not('notes', 'is', null)
+
+        if (posOrders?.length) {
+          const { data: posItems } = await supabase
+            .from('order_items')
+            .select('menu_id, quantity, is_campaign')
+            .in('order_id', posOrders.map(o => o.id))
+
+          const autoQty = {}
+          const autoCampaignQty = {}
+          for (const item of posItems ?? []) {
+            if (item.is_campaign) autoCampaignQty[item.menu_id] = (autoCampaignQty[item.menu_id] ?? 0) + item.quantity
+            else                  autoQty[item.menu_id]         = (autoQty[item.menu_id]         ?? 0) + item.quantity
+          }
+          setQuantities(autoQty)
+          setCampaignQty(autoCampaignQty)
+          setHasCampaign(Object.keys(autoCampaignQty).length > 0)
+          setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
+        } else {
+          setQuantities({})
+          setCampaignQty({})
+          setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
+          setHasCampaign(false)
+        }
       }
     }
     check()
@@ -452,6 +481,52 @@ export default function SalesEntryPage() {
 
   const allItems = [...normalItems, ...campaignItems]
   const profit   = calcPlatformProfit({ items: allItems, costs, platformFeePct })
+
+  // ── Import from POS ──────────────────────────────────────────
+  const importFromPOS = async () => {
+    setImporting(true)
+    try {
+      // ดึงออเดอร์ทั้งหมดของวันนี้+platform ที่สร้างจาก POS
+      // (ไม่ใช่ 'delivered' ที่ SalesEntry บันทึก — POS orders มักมี notes เช่น GF-012)
+      const { data: orders } = await supabase
+        .from('orders')
+        .select('id')
+        .eq('date', date)
+        .eq('platform', platform)
+        .not('notes', 'is', null)  // POS orders จะมี notes เสมอ
+
+      if (!orders?.length) {
+        addToast('ไม่พบออเดอร์จาก POS สำหรับวันที่และ Platform นี้', 'error')
+        return
+      }
+
+      const { data: items } = await supabase
+        .from('order_items')
+        .select('menu_id, quantity, is_campaign')
+        .in('order_id', orders.map(o => o.id))
+
+      const newQty = {}
+      const newCampaignQty = {}
+      for (const item of items ?? []) {
+        if (item.is_campaign) {
+          newCampaignQty[item.menu_id] = (newCampaignQty[item.menu_id] ?? 0) + item.quantity
+        } else {
+          newQty[item.menu_id] = (newQty[item.menu_id] ?? 0) + item.quantity
+        }
+      }
+
+      setQuantities(newQty)
+      setCampaignQty(newCampaignQty)
+      setHasCampaign(Object.keys(newCampaignQty).length > 0)
+      const total = Object.values(newQty).reduce((s, v) => s + v, 0) + Object.values(newCampaignQty).reduce((s, v) => s + v, 0)
+      setImportCount(total)
+      addToast(`นำเข้าจาก POS สำเร็จ — ${orders.length} ออเดอร์, ${total} รายการ`, 'success')
+    } catch (err) {
+      console.error(err)
+      addToast('เกิดข้อผิดพลาดในการนำเข้าข้อมูล', 'error')
+    }
+    setImporting(false)
+  }
 
   const handleSave = async (force = false) => {
     // Warn if no items selected
@@ -725,6 +800,7 @@ export default function SalesEntryPage() {
             <span>มีข้อมูลวันนี้ {platform} แล้ว — การบันทึกจะอัปเดตทับข้อมูลเดิม</span>
           </div>
         )}
+
 
         {/* Cost data status */}
         {!hasCostData && !loading && (
