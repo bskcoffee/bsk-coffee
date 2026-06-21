@@ -358,6 +358,7 @@ export default function POSPage() {
             sweetness: item.options.sweetness ?? 100,
             refill:    item.options.refill    ?? null,
             note:      item.options.note      ?? '',
+            packaging: item.options.packaging ?? null,
           },
         }))
       )
@@ -757,8 +758,7 @@ export default function POSPage() {
                     <p className="text-xs font-semibold text-gray-900 leading-tight truncate">{item.name}</p>
                     <div className="flex flex-wrap gap-1 mt-0.5">
                       {item.options.milk && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">🥛 {item.options.milk.name}</span>}
-                      {item.options.packaging === 'แยกน้ำแข็ง' && <span className="text-[9px] bg-cyan-100 text-cyan-700 font-bold px-1.5 py-0.5 rounded">🧊 แยกน้ำแข็ง</span>}
-                      {item.options.packaging === 'พร้อมดื่ม'  && <span className="text-[9px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">🧋 พร้อมดื่ม</span>}
+                      {item.options.packaging === 'พร้อมดื่ม' && <span className="text-[9px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">🧋 พร้อมดื่ม</span>}
                       {item.options.refill && <span className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">{item.options.refill.name}</span>}
                       {item.options.sweetness != null && item.options.sweetness !== 100 && (
                         <span className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">{item.options.sweetness}%</span>
