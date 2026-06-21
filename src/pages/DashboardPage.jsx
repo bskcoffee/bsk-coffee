@@ -117,7 +117,7 @@ function getComparisonRange(range, customStart, customEnd, selectedWeek) {
 }
 
 const DEFAULT_SECTION_ORDER = [
-  'cost-breakdown', 'sales-target', 'alerts', 'chart', 'platform', 'advertisement', 'top-menus', 'best-worst'
+  'category-summary', 'cost-breakdown', 'sales-target', 'alerts', 'chart', 'platform', 'advertisement', 'top-menus', 'best-worst'
 ]
 
 const DEFAULT_KPI_ORDER = ['total-sales', 'mat-cost', 'platform-cost', 'profit-before-mat', 'net-profit', 'days']
@@ -326,6 +326,36 @@ export default function DashboardPage() {
     dragItemId.current = null
   }
   const handleDragEnd = () => { setDragOverId(null); dragItemId.current = null }
+
+  // Drag-and-drop category boxes within category-summary section
+  const DEFAULT_CAT_BOX_ORDER = ['bev', 'bread', 'refill', 'addon']
+  const [catBoxOrder, setCatBoxOrder] = useState(() => {
+    try {
+      const saved = localStorage.getItem('dashboard-cat-box-order')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        return [...parsed, ...DEFAULT_CAT_BOX_ORDER.filter(b => !parsed.includes(b))]
+      }
+    } catch {}
+    return DEFAULT_CAT_BOX_ORDER
+  })
+  const [catBoxDragOver, setCatBoxDragOver] = useState(null)
+  const catBoxDragItem = useRef(null)
+  const handleCatBoxDragStart = (id) => { catBoxDragItem.current = id }
+  const handleCatBoxDragOver  = (id) => { if (id !== catBoxDragItem.current) setCatBoxDragOver(id) }
+  const handleCatBoxDrop      = (toId) => {
+    const fromId = catBoxDragItem.current
+    if (!fromId || fromId === toId) { setCatBoxDragOver(null); return }
+    setCatBoxOrder(prev => {
+      const next = [...prev]
+      const fi = next.indexOf(fromId); const ti = next.indexOf(toId)
+      next.splice(fi, 1); next.splice(ti, 0, fromId)
+      localStorage.setItem('dashboard-cat-box-order', JSON.stringify(next))
+      return next
+    })
+    setCatBoxDragOver(null); catBoxDragItem.current = null
+  }
+  const handleCatBoxDragEnd = () => { setCatBoxDragOver(null); catBoxDragItem.current = null }
 
   // ─── Load dashboard config from Supabase on mount (sync across devices) ────
   useEffect(() => {
@@ -703,6 +733,26 @@ export default function DashboardPage() {
         - (advByPlatform[p] ?? 0)
     }
 
+    // Category summary (Beverage / Bread / Refill / Add-on)
+    const BEV_CATS = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot']
+    const categorySummary = { bev: 0, bread: 0, refill: 0, addon: 0 }
+    for (const item of filteredItems) {
+      const cat = item.menus?.category
+      const qty = item.quantity ?? 0
+      if (BEV_CATS.includes(cat))  categorySummary.bev   += qty
+      else if (cat === 'Bun')      categorySummary.bread  += qty
+      // Refill จาก item_options.refill (array หรือ single)
+      const refill = item.item_options?.refill
+      if (Array.isArray(refill)) {
+        categorySummary.refill += refill.reduce((s, r) => s + (r.qty ?? 1), 0)
+      } else if (refill) {
+        categorySummary.refill += refill.qty ?? 1
+      }
+      // Add-on: milk ที่มีราคา (paid addon)
+      const milk = item.item_options?.milk
+      if (milk && (milk.price ?? 0) > 0) categorySummary.addon += qty
+    }
+
     return {
       chartData, platList, platformTotals, platformProfitBeforeMat,
       totalSales, totalNetProfit, totalGrossProfit, netProfitPct,
@@ -715,7 +765,7 @@ export default function DashboardPage() {
       advByPlatform, totalAdvertisement, advChartData,
       totalGpCostRaw, totalGpCost, totalLaborCost, totalMatCost,
       totalMenuDiscount, totalCampaign, totalMarketingFee, totalDeliveryDiscount, totalAllCosts,
-      platFees,
+      platFees, categorySummary,
     }
   })()
 
@@ -898,6 +948,45 @@ export default function DashboardPage() {
                 id: sectionId, dragOverId,
                 onDragStart: handleDragStart, onDragOver: handleDragOver,
                 onDrop: handleDrop, onDragEnd: handleDragEnd,
+              }
+
+              if (sectionId === 'category-summary') {
+                const catBoxDef = {
+                  bev:    { label: 'Beverage', icon: '🧋', color: 'bg-cocoa-50 border-cocoa-200 text-cocoa-800',   value: aggregated.categorySummary.bev },
+                  bread:  { label: 'Bread',    icon: '🍞', color: 'bg-amber-50 border-amber-200 text-amber-800',   value: aggregated.categorySummary.bread },
+                  refill: { label: 'Refill',   icon: '🔁', color: 'bg-blue-50 border-blue-200 text-blue-800',     value: aggregated.categorySummary.refill },
+                  addon:  { label: 'Add-on',   icon: '➕', color: 'bg-purple-50 border-purple-200 text-purple-800', value: aggregated.categorySummary.addon },
+                }
+                return (
+                  <DraggableSection key={sectionId} {...dragProps}>
+                    <div className="card">
+                      <h2 className="font-semibold text-gray-800 mb-3">📦 สรุปยอดตามประเภท</h2>
+                      <div className="grid grid-cols-4 gap-2">
+                        {catBoxOrder.map(boxId => {
+                          const box = catBoxDef[boxId]
+                          if (!box) return null
+                          const isDragTarget = catBoxDragOver === boxId
+                          return (
+                            <div
+                              key={boxId}
+                              draggable
+                              onDragStart={() => handleCatBoxDragStart(boxId)}
+                              onDragOver={(e) => { e.preventDefault(); handleCatBoxDragOver(boxId) }}
+                              onDrop={(e) => { e.stopPropagation(); handleCatBoxDrop(boxId) }}
+                              onDragEnd={handleCatBoxDragEnd}
+                              className={`rounded-xl border px-3 py-3 text-center cursor-grab active:cursor-grabbing select-none transition-all
+                                ${box.color} ${isDragTarget ? 'opacity-40 ring-2 ring-cocoa-400' : ''}`}
+                            >
+                              <p className="text-lg">{box.icon}</p>
+                              <p className="text-2xl font-bold leading-tight">{box.value}</p>
+                              <p className="text-xs mt-0.5 opacity-70">{box.label}</p>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </DraggableSection>
+                )
               }
 
               if (sectionId === 'cost-breakdown') return (
