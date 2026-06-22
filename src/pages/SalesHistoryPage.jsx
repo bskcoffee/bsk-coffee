@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { calcPlatformProfit, calcMenuCostBreakdown, formatBaht } from '../utils/calculations'
+import { calcPlatformProfit, calcMenuCostBreakdown, formatBaht, CAMPAIGN_GP_PCT } from '../utils/calculations'
 import { format, startOfMonth, endOfMonth, parseISO, addMonths, subMonths } from 'date-fns'
 import { th } from 'date-fns/locale'
 import {
@@ -208,8 +208,9 @@ export default function SalesHistoryPage() {
             return sum + (item.quantity * (bd?.materialCost ?? 0))
           }, 0)
 
-          // GP Cost = platFee% x sales (same as Dashboard totalGpCost)
-          const platGpCost    = (platFees[platform] ?? 0) / 100 * r.sales
+          // GP Cost — identical to Dashboard: normal sales × feePct, campaign sales × CAMPAIGN_GP_PCT (5%)
+          const platGpCost = (r.normalSales   ?? r.sales) * (platFees[platform] ?? 0) / 100
+                           + (r.campaignSales ?? 0)       * CAMPAIGN_GP_PCT           / 100
           // Labor Cost = laborPct% x sales (same as Dashboard totalLaborCost)
           const platLaborCost = laborPct / 100 * r.sales
 
