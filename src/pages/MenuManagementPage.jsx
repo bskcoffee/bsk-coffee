@@ -64,14 +64,23 @@ function MenuModal({ menu, onClose, onSave }) {
     if (imgInputRef.current) imgInputRef.current.value = ''
   }
 
-  // Drag to reposition crop area
+  // Drag to reposition crop area — ใช้ object-fit:cover math จาก container ขนาดจริง
   const moveCrop = (clientX, clientY) => {
     if (!dragging.current || !pendingDims || !previewRef.current) return
     const { w, h } = pendingDims
     const rect = previewRef.current.getBoundingClientRect()
-    const scale = rect.width / Math.min(w, h)
-    const extraW = Math.max(0, w * scale - rect.width)
-    const extraH = Math.max(0, h * scale - rect.height)
+    const CW = rect.width, CH = rect.height
+    // object-fit:cover: scale ตาม dimension ที่ overflow
+    let extraW, extraH
+    if (w / h >= CW / CH) {
+      const scale = CH / h
+      extraW = w * scale - CW
+      extraH = 0
+    } else {
+      const scale = CW / w
+      extraW = 0
+      extraH = h * scale - CH
+    }
     const dx = clientX - lastXY.current.x
     const dy = clientY - lastXY.current.y
     lastXY.current = { x: clientX, y: clientY }
@@ -86,22 +95,28 @@ function MenuModal({ menu, onClose, onSave }) {
   const onDragTouchStart = (e) => { dragging.current = true; const t = e.touches[0]; lastXY.current = { x: t.clientX, y: t.clientY } }
   const onDragTouchMove  = (e) => { const t = e.touches[0]; moveCrop(t.clientX, t.clientY) }
 
-  // Crop at current cropPos and upload
+  // Crop at current cropPos — อัตราส่วน 10:7 (เดียวกับ POS card)
   const uploadCropped = async () => {
     if (!pendingFile || !pendingUrl || !pendingDims) return
     setUploadingImg(true)
     try {
-      const SIZE = 500
+      const CANVAS_W = 700, CANVAS_H = 490  // 10:7 ratio output
+      const RATIO = 10 / 7
       const { w, h } = pendingDims
-      const s = Math.min(w, h)
-      const sx = (cropPos.x / 100) * (w - s)
-      const sy = (cropPos.y / 100) * (h - s)
+      let cropW, cropH, sx, sy
+      if (w / h >= RATIO) {
+        cropH = h; cropW = h * RATIO
+        sy = 0; sx = (cropPos.x / 100) * (w - cropW)
+      } else {
+        cropW = w; cropH = w / RATIO
+        sx = 0; sy = (cropPos.y / 100) * (h - cropH)
+      }
       const blob = await new Promise((resolve, reject) => {
         const img = new Image()
         img.onload = () => {
           const canvas = document.createElement('canvas')
-          canvas.width = SIZE; canvas.height = SIZE
-          canvas.getContext('2d').drawImage(img, sx, sy, s, s, 0, 0, SIZE, SIZE)
+          canvas.width = CANVAS_W; canvas.height = CANVAS_H
+          canvas.getContext('2d').drawImage(img, sx, sy, cropW, cropH, 0, 0, CANVAS_W, CANVAS_H)
           canvas.toBlob(b => b ? resolve(b) : reject(new Error('crop failed')), 'image/jpeg', 0.85)
         }
         img.onerror = reject
@@ -183,14 +198,14 @@ function MenuModal({ menu, onClose, onSave }) {
 
             {/* 1. รูปที่อัปโหลดแล้ว */}
             {form.image_url && !pendingUrl ? (
-              <div className="relative w-full aspect-square rounded-xl overflow-hidden border border-gray-200">
-                <img src={form.image_url} alt="preview" className="w-full h-full object-cover" />
+              <div className="relative w-full rounded-xl overflow-hidden border border-gray-200" style={{ paddingBottom: '70%', position: 'relative' }}>
+                <img src={form.image_url} alt="preview" className="absolute inset-0 w-full h-full object-cover" />
                 <button type="button" onClick={() => setForm(f => ({ ...f, image_url: '' }))}
-                  className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white rounded-full p-1">
+                  className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white rounded-full p-1 z-10">
                   <X size={14} />
                 </button>
                 <button type="button" onClick={() => imgInputRef.current?.click()}
-                  className="absolute bottom-2 right-2 bg-black/50 hover:bg-black/70 text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-1">
+                  className="absolute bottom-2 right-2 bg-black/50 hover:bg-black/70 text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 z-10">
                   <ImagePlus size={13} /> เปลี่ยนรูป
                 </button>
               </div>
@@ -201,7 +216,8 @@ function MenuModal({ menu, onClose, onSave }) {
                 <p className="text-xs text-cocoa-600 font-medium text-center">ลากรูปเพื่อเลือกส่วนที่ต้องการ</p>
                 <div
                   ref={previewRef}
-                  className="relative w-full aspect-square rounded-xl overflow-hidden border-2 border-cocoa-400 cursor-grab active:cursor-grabbing select-none"
+                  className="relative w-full rounded-xl overflow-hidden border-2 border-cocoa-400 cursor-grab active:cursor-grabbing select-none"
+                  style={{ paddingBottom: '70%' }}
                   onMouseDown={onDragMouseDown}
                   onMouseMove={onDragMouseMove}
                   onTouchStart={onDragTouchStart}
@@ -209,7 +225,7 @@ function MenuModal({ menu, onClose, onSave }) {
                 >
                   <img
                     src={pendingUrl} alt="crop preview" draggable={false}
-                    className="w-full h-full pointer-events-none"
+                    className="absolute inset-0 w-full h-full pointer-events-none"
                     style={{ objectFit: 'cover', objectPosition: `${cropPos.x}% ${cropPos.y}%`, userSelect: 'none' }}
                   />
                   {/* Grid overlay */}
@@ -555,13 +571,14 @@ export default function MenuManagementPage() {
                     <div className="pt-1 text-gray-300 hover:text-gray-500 shrink-0">
                       <GripVertical size={18} />
                     </div>
-                    {/* รูปภาพเมนู */}
-                    {menu.image_url ? (
-                      <img src={menu.image_url} alt={menu.name}
-                        className="w-14 h-14 rounded-xl object-cover shrink-0 border border-gray-100" />
-                    ) : (
-                      <div className="w-14 h-14 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center shrink-0 text-2xl">🍫</div>
-                    )}
+                    {/* รูปภาพเมนู — 10:7 เดียวกับ POS card */}
+                    <div className="shrink-0 w-20 rounded-xl overflow-hidden border border-gray-100" style={{ aspectRatio: '10/7' }}>
+                      {menu.image_url ? (
+                        <img src={menu.image_url} alt={menu.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full bg-gray-50 flex items-center justify-center text-2xl">🍫</div>
+                      )}
+                    </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-medium text-gray-900 text-sm">{menu.name}</p>
