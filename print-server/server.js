@@ -77,18 +77,25 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
     switch (field.type) {
       case 'menu_name':  return item.name || ''
       case 'options': {
+        const toStr = (v) => {
+          if (v == null) return ''
+          if (typeof v === 'string') return v
+          if (typeof v === 'number') return String(v)
+          if (typeof v === 'object') return v.name || v.label || v.value || ''
+          return ''
+        }
         const opts = []
-        if (o.milk)             opts.push(o.milk)
-        if (o.sweetness != null)opts.push(`${o.sweetness}%`)
+        if (o.milk)             { const s = toStr(o.milk);  if (s) opts.push(s) }
+        if (o.sweetness != null) opts.push(`${o.sweetness}%`)
         if (o.refill) {
           if (Array.isArray(o.refill) && o.refill.length > 0)
-            opts.push(o.refill.map(r => (typeof r === 'object' ? (r.name || r.label || 'Refill') : String(r))).join(', '))
-          else if (typeof o.refill === 'string' && o.refill)
-            opts.push(o.refill)
-          else if (typeof o.refill !== 'object')
-            opts.push('Refill')
+            opts.push(o.refill.map(toStr).filter(Boolean).join(', ') || 'Refill')
+          else {
+            const s = toStr(o.refill)
+            opts.push(s || 'Refill')
+          }
         }
-        if (o.note)             opts.push(o.note)
+        if (o.note)             { const s = toStr(o.note);  if (s) opts.push(s) }
         return opts.join(' / ')
       }
       case 'order_id':   return `#${orderId}`
