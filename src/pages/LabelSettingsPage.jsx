@@ -8,9 +8,8 @@ import {
 import { supabase } from '../lib/supabase'
 import { useToast } from '../contexts/ToastContext'
 
-// ─── Preview dimensions (5× of 50×30 mm) ─────────────────────────────────────
+// ─── Preview base width (px) — height is computed from label aspect ratio ─────
 const PW = 250
-const PH = 150
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
 const MOCK = {
@@ -145,7 +144,7 @@ if (!document.getElementById('ripple-style')) {
 }
 
 // ─── Label Canvas (drag & drop) ───────────────────────────────────────────────
-function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName }) {
+function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph }) {
   const canvasRef  = useRef(null)
   const draggingId = useRef(null)
   const offset     = useRef({ x: 0, y: 0 })
@@ -155,31 +154,31 @@ function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName }) {
     onSelect(field.id)
     const rect = canvasRef.current.getBoundingClientRect()
     offset.current = {
-      x: e.clientX - rect.left - (field.x / 100) * PW,
-      y: e.clientY - rect.top  - (field.y / 100) * PH,
+      x: e.clientX - rect.left - (field.x / 100) * pw,
+      y: e.clientY - rect.top  - (field.y / 100) * ph,
     }
     draggingId.current = field.id
-  }, [onSelect])
+  }, [onSelect, pw, ph])
 
   useEffect(() => {
     const move = (e) => {
       if (!draggingId.current || !canvasRef.current) return
       const rect = canvasRef.current.getBoundingClientRect()
-      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left - offset.current.x) / PW) * 100))
-      const y = Math.max(0, Math.min(95,  ((e.clientY - rect.top  - offset.current.y) / PH) * 100))
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left - offset.current.x) / pw) * 100))
+      const y = Math.max(0, Math.min(95,  ((e.clientY - rect.top  - offset.current.y) / ph) * 100))
       onMove(draggingId.current, Math.round(x), Math.round(y))
     }
     const up = () => { draggingId.current = null }
     window.addEventListener('mousemove', move)
     window.addEventListener('mouseup', up)
     return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
-  }, [onMove])
+  }, [onMove, pw, ph])
 
   return (
     <div
       ref={canvasRef}
       className="relative bg-white rounded-lg shadow-md select-none mx-auto"
-      style={{ width: PW, height: PH, fontFamily: 'monospace', border: '2px dashed #d1d5db' }}
+      style={{ width: pw, height: ph, fontFamily: 'monospace', border: '2px dashed #d1d5db' }}
       onClick={() => onSelect(null)}
     >
       {layout.map(field => {
@@ -338,6 +337,8 @@ export default function LabelSettingsPage() {
   const [copies,     setCopies]     = useState(1)
   const [printerIp,  setPrinterIp]  = useState('192.168.1.100')
   const [printerPort,setPrinterPort]= useState(3001)
+  const [labelW,     setLabelW]     = useState(50)
+  const [labelH,     setLabelH]     = useState(30)
   const [saveStatus, setSaveStatus] = useState('idle')
   const [testStatus, setTestStatus] = useState('idle')
   const [loading,    setLoading]    = useState(true)
@@ -359,6 +360,8 @@ export default function LabelSettingsPage() {
           if (saved.copies)     setCopies(saved.copies)
           if (saved.printerIp)  setPrinterIp(saved.printerIp)
           if (saved.printerPort)setPrinterPort(saved.printerPort)
+          if (saved.labelW)     setLabelW(saved.labelW)
+          if (saved.labelH)     setLabelH(saved.labelH)
         } catch {}
       }
       if (storeRes.data?.value) setStoreName(storeRes.data.value)
@@ -424,7 +427,7 @@ export default function LabelSettingsPage() {
 
   const handleSave = async (e) => {
     saveRipple.trigger(e); setSaveStatus('saving')
-    const value = JSON.stringify({ layout, copies, printerIp, printerPort })
+    const value = JSON.stringify({ layout, copies, printerIp, printerPort, labelW, labelH })
     const { error } = await supabase.from('settings')
       .upsert({ key: 'label_settings', value }, { onConflict: 'key' })
     if (error) { addToast('บันทึกไม่สำเร็จ: ' + error.message, 'error'); setSaveStatus('idle') }
@@ -449,6 +452,7 @@ export default function LabelSettingsPage() {
 
   const fixedFields  = layout.filter(f => !f.id.startsWith('custom_'))
   const customFields = layout.filter(f =>  f.id.startsWith('custom_'))
+  const previewH     = Math.round(PW * labelH / labelW)
 
   return (
     <div className="max-w-5xl mx-auto space-y-4">
@@ -466,6 +470,32 @@ export default function LabelSettingsPage() {
           {saveStatus === 'idle'   && <Save size={16} />}
           {saveStatus === 'saving' ? 'กำลังบันทึก...' : saveStatus === 'saved' ? 'บันทึกแล้ว!' : 'บันทึก'}
         </button>
+      </div>
+
+      {/* ── Paper size ──────────────────────────────────────────────────────── */}
+      <div className="card space-y-3">
+        <h2 className="font-semibold text-gray-800">📐 ขนาดกระดาษ</h2>
+        <div className="flex flex-wrap gap-2">
+          {[[50,30],[60,40],[75,50],[80,50],[100,150]].map(([w,h]) => (
+            <button key={`${w}x${h}`} onClick={() => { setLabelW(w); setLabelH(h) }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors
+                ${labelW===w && labelH===h ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}>
+              {w}×{h} mm
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="label text-xs">กว้าง (mm)</label>
+            <input type="number" className="input" min="20" max="110" value={labelW}
+              onChange={e => setLabelW(parseInt(e.target.value) || 50)} />
+          </div>
+          <div>
+            <label className="label text-xs">สูง (mm)</label>
+            <input type="number" className="input" min="15" max="200" value={labelH}
+              onChange={e => setLabelH(parseInt(e.target.value) || 30)} />
+          </div>
+        </div>
       </div>
 
       {/* ── Presets ─────────────────────────────────────────────────────────── */}
@@ -607,7 +637,7 @@ export default function LabelSettingsPage() {
         <div className="lg:col-span-3 space-y-4">
           <div className="card space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-gray-800">👁️ Preview — 50×30 mm (แสดง 5×)</h2>
+              <h2 className="font-semibold text-gray-800">👁️ Preview — {labelW}×{labelH} mm</h2>
             </div>
 
             <LabelCanvas
@@ -616,6 +646,8 @@ export default function LabelSettingsPage() {
               onSelect={setSelectedId}
               onMove={handleMove}
               storeName={storeName}
+              pw={PW}
+              ph={previewH}
             />
 
             <p className="text-center text-xs text-gray-400">ลากเพื่อย้ายตำแหน่ง · คลิก field เพื่อแก้ไข</p>

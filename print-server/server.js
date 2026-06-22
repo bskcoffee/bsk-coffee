@@ -27,108 +27,50 @@ function printRaw(buffer) {
   })
 }
 
-// ─── ESC/POS helpers ──────────────────────────────────────────────────────────
-const ESC = '\x1b'
-const GS  = '\x1d'
-const LF  = '\x0a'
+// ─── TSPL constants ───────────────────────────────────────────────────────────
+const LABEL_W_MM = 50
+const LABEL_H_MM = 30
+const DPI        = 203            // dots per inch
+const MM2DOT     = DPI / 25.4    // ~8 dots/mm
+const LABEL_W    = Math.round(LABEL_W_MM * MM2DOT)  // 400 dots
+const LABEL_H    = Math.round(LABEL_H_MM * MM2DOT)  // 240 dots
 
-const CMD = {
-  INIT:        ESC + '@',
-  BOLD_ON:     ESC + 'E\x01',
-  BOLD_OFF:    ESC + 'E\x00',
-  SIZE_BIG:    ESC + '!\x11',   // double-height + emphasized
-  SIZE_MED:    ESC + '!\x01',   // emphasized only
-  SIZE_NORM:   ESC + '!\x00',   // normal
-  ALIGN_LEFT:  ESC + 'a\x00',
-  ALIGN_CENTER:ESC + 'a\x01',
-  ALIGN_RIGHT: ESC + 'a\x02',
-  CUT:         GS  + 'V\x41\x03',  // partial cut
+// Map fontSize (7-20) to TSPL font + multiplier + approx char width (dots)
+function getFontParams(fontSize) {
+  if (fontSize >= 16) return { font: '3', xm: 2, ym: 2, cw: 20 }
+  if (fontSize >= 13) return { font: '3', xm: 1, ym: 1, cw: 10 }
+  if (fontSize >= 10) return { font: '2', xm: 1, ym: 1, cw: 8  }
+  return              { font: '1', xm: 1, ym: 1, cw: 6  }
 }
 
-function alignCmd(textAlign) {
-  if (textAlign === 'left')  return CMD.ALIGN_LEFT
-  if (textAlign === 'right') return CMD.ALIGN_RIGHT
-  return CMD.ALIGN_CENTER
+// Adjust x for alignment
+function alignX(xPct, content, cw, align) {
+  const xDot  = Math.round(xPct / 100 * LABEL_W)
+  const textW = content.length * cw
+  if (align === 'center') return Math.max(0, xDot - Math.round(textW / 2))
+  if (align === 'right')  return Math.max(0, xDot - textW)
+  return xDot
 }
 
-// ─── Build ESC/POS buffer for ONE label ──────────────────────────────────────
-function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, storeName) {
-  const s = {
-    showMenuName:    true,
-    menuNameSize:    'large',
-    showOptions:     true,
-    showOptionMilk:  true,
-    showOptionSweet: true,
-    showOptionRefill:true,
-    showOptionNote:  true,
-    showOrderId:     true,
-    showQty:         true,
-    showIndex:       true,
-    showTime:        true,
-    showStoreName:   false,
-    textAlign:       'center',
-    ...settings,
-  }
-
-  let buf = CMD.INIT + alignCmd(s.textAlign)
-
-  // ── ชื่อเมนู ──
-  if (s.showMenuName) {
-    buf += s.menuNameSize === 'large' ? CMD.SIZE_BIG : CMD.SIZE_MED
-    buf += CMD.BOLD_ON
-    buf += item.name + LF
-    buf += CMD.BOLD_OFF + CMD.SIZE_NORM
-  }
-
-  // ── Options ──
-  const opts = []
-  const o = item.item_options ?? {}
-  if (s.showOptions) {
-    if (s.showOptionMilk   && o.milk)             opts.push(o.milk)
-    if (s.showOptionSweet  && o.sweetness != null) opts.push(`${o.sweetness}%`)
-    if (s.showOptionRefill && o.refill) {
-      // refill อาจเป็น array หรือ object
-      if (Array.isArray(o.refill))        opts.push(o.refill.map(r => r.name ?? r).join(', '))
-      else if (typeof o.refill === 'object') opts.push(o.refill.name ?? 'Refill')
-      else                                opts.push('Refill')
-    }
-    if (s.showOptionNote   && o.note)             opts.push(o.note)
-  }
-  if (opts.length > 0) {
-    buf += CMD.SIZE_NORM + opts.join(' \xb7 ') + LF  // · separator
-  }
-
-  // ── Divider ──
-  buf += CMD.ALIGN_LEFT + '-'.repeat(32) + LF + alignCmd(s.textAlign)
-
-  // ── Bottom row ──
-  const bottomParts = []
-  if (s.showOrderId && orderId)  bottomParts.push(`#${orderId}`)
-  if (s.showQty)                 bottomParts.push(`x${item.qty ?? 1}`)
-  if (s.showTime) {
-    const now = new Date()
-    const t = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`
-    bottomParts.push(t)
-  }
-  if (s.showIndex) bottomParts.push(`${labelIdx}/${totalLabels}`)
-
-  if (bottomParts.length > 0) {
-    buf += CMD.SIZE_NORM + bottomParts.join('  ') + LF
-  }
-
-  // ── Store name ──
-  if (s.showStoreName) {
-    buf += CMD.ALIGN_CENTER + CMD.SIZE_NORM + (storeName || 'Cocoa House') + LF
-  }
-
-  // ── Feed + cut ──
-  buf += LF + LF + CMD.CUT
-
-  return Buffer.from(buf, 'binary')
+// TSPL header for every label
+function tsplHeader() {
+  return [
+    `SIZE ${LABEL_W_MM} mm, ${LABEL_H_MM} mm`,
+    `GAP 2 mm, 0 mm`,
+    `DIRECTION 1`,   // fix upside-down orientation
+    `CLS`,
+  ]
 }
 
-// ─── Build label from new layout format (drag-editor) ────────────────────────
-function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, layout, storeName) {
+// Safe-escape double quotes inside content
+function safe(str) { return String(str).replace(/"/g, "'") }
+
+// ─── Build TSPL label from new layout (drag-editor) ──────────────────────────
+function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, layout, storeName, labelWmm, labelHmm) {
+  const wMM = labelWmm || LABEL_W_MM
+  const hMM = labelHmm || LABEL_H_MM
+  const wDot = Math.round(wMM * MM2DOT)
+  const hDot = Math.round(hMM * MM2DOT)
   const o = item.item_options ?? {}
 
   const getContent = (field) => {
@@ -138,9 +80,13 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
         const opts = []
         if (o.milk)             opts.push(o.milk)
         if (o.sweetness != null)opts.push(`${o.sweetness}%`)
-        if (o.refill)           opts.push('Refill')
+        if (o.refill) {
+          if (Array.isArray(o.refill))           opts.push(o.refill.map(r => r.name ?? r).join(', '))
+          else if (typeof o.refill === 'object') opts.push(o.refill.name ?? 'Refill')
+          else                                   opts.push('Refill')
+        }
         if (o.note)             opts.push(o.note)
-        return opts.join(' \xb7 ')
+        return opts.join(' / ')
       }
       case 'order_id':   return `#${orderId}`
       case 'qty':        return `x${item.qty ?? 1}`
@@ -160,72 +106,111 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
     }
   }
 
-  // Sort visible fields by Y — ESC/POS prints line by line
-  const LINE_THRESHOLD = 8  // fields within 8% Y = same print line
-  const visible = layout
-    .filter(f => f.visible)
-    .sort((a, b) => a.y - b.y)
+  const cmds = [
+    `SIZE ${wMM} mm, ${hMM} mm`,
+    `GAP 2 mm, 0 mm`,
+    `DIRECTION 1`,
+    `CLS`,
+  ]
 
-  // Group into print lines
-  const lines = []
-  for (const field of visible) {
-    const last = lines[lines.length - 1]
-    if (!last || Math.abs(field.y - last[0].y) >= LINE_THRESHOLD) {
-      lines.push([field])
-    } else {
-      last.push(field)
-    }
-  }
-
-  let buf = CMD.INIT
-  const LINE_W = 32  // characters per line
-
-  for (const lineFields of lines) {
-    // Divider line
-    if (lineFields.length === 1 && lineFields[0].type === 'divider') {
-      buf += CMD.ALIGN_LEFT + '-'.repeat(LINE_W) + LF
+  for (const field of layout.filter(f => f.visible)) {
+    if (field.type === 'divider') {
+      const y = Math.round(field.y / 100 * hDot)
+      cmds.push(`BAR 0,${y},${wDot},2`)
       continue
     }
 
-    // Filter out dividers mixed with text (edge case)
-    const textFields = lineFields.filter(f => f.type !== 'divider').sort((a, b) => a.x - b.x)
-    if (!textFields.length) continue
+    const content = getContent(field)
+    if (!content) continue
 
-    if (textFields.length === 1) {
-      const f = textFields[0]
-      const content = getContent(f)
-      if (!content) continue
-      buf += alignCmd(f.align)
-      buf += f.bold ? CMD.BOLD_ON : ''
-      buf += f.fontSize >= 14 ? CMD.SIZE_BIG : f.fontSize >= 11 ? CMD.SIZE_MED : CMD.SIZE_NORM
-      buf += content + LF
-      buf += CMD.BOLD_OFF + CMD.SIZE_NORM
-    } else {
-      // Multi-field line: arrange by X position
-      buf += CMD.ALIGN_LEFT + CMD.SIZE_NORM
-      const parts = textFields.map(f => getContent(f)).filter(Boolean)
-      if (parts.length === 2) {
-        const gap = Math.max(1, LINE_W - parts[0].length - parts[1].length)
-        buf += parts[0] + ' '.repeat(gap) + parts[1] + LF
-      } else {
-        buf += parts.join('  ') + LF
-      }
-    }
+    const { font, xm, ym, cw } = getFontParams(field.fontSize)
+    const xBase = Math.round(field.x / 100 * wDot)
+    const y     = Math.round(field.y / 100 * hDot)
+    const textW = content.length * cw
+    let x = xBase
+    if (field.align === 'center') x = Math.max(0, xBase - Math.round(textW / 2))
+    if (field.align === 'right')  x = Math.max(0, xBase - textW)
+
+    cmds.push(`TEXT ${x},${y},"${font}",0,${xm},${ym},"${safe(content)}"`)
   }
 
-  buf += LF + LF + CMD.CUT
-  return Buffer.from(buf, 'binary')
+  cmds.push(`PRINT 1,1`, '')
+  return Buffer.from(cmds.join('\r\n'), 'utf8')
+}
+
+// ─── Build TSPL label from old settings format (fallback) ────────────────────
+function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, storeName) {
+  const s = {
+    showMenuName: true, menuNameSize: 'large',
+    showOptions: true,
+    showOptionMilk: true, showOptionSweet: true,
+    showOptionRefill: true, showOptionNote: true,
+    showOrderId: true, showQty: true,
+    showIndex: true, showTime: true, showStoreName: false,
+    ...settings,
+  }
+  const o = item.item_options ?? {}
+  const cmds = tsplHeader()
+  let y = 10
+
+  // Menu name
+  if (s.showMenuName) {
+    const big = s.menuNameSize === 'large'
+    const { font, xm, ym, cw } = getFontParams(big ? 16 : 13)
+    const x = Math.max(0, Math.round(LABEL_W / 2 - item.name.length * cw / 2))
+    cmds.push(`TEXT ${x},${y},"${font}",0,${xm},${ym},"${safe(item.name)}"`)
+    y += big ? 50 : 30
+  }
+
+  // Options
+  const opts = []
+  if (s.showOptions) {
+    if (s.showOptionMilk   && o.milk)             opts.push(o.milk)
+    if (s.showOptionSweet  && o.sweetness != null) opts.push(`${o.sweetness}%`)
+    if (s.showOptionRefill && o.refill)            opts.push('Refill')
+    if (s.showOptionNote   && o.note)              opts.push(o.note)
+  }
+  if (opts.length > 0) {
+    const content = opts.join(' / ')
+    const x = Math.max(0, Math.round(LABEL_W / 2 - content.length * 8 / 2))
+    cmds.push(`TEXT ${x},${y},"2",0,1,1,"${safe(content)}"`)
+    y += 25
+  }
+
+  // Divider
+  cmds.push(`BAR 0,${y},${LABEL_W},2`)
+  y += 10
+
+  // Bottom row
+  const bottom = []
+  if (s.showOrderId && orderId) bottom.push(`#${orderId}`)
+  if (s.showQty)                bottom.push(`x${item.qty ?? 1}`)
+  if (s.showTime) {
+    const now = new Date()
+    bottom.push(`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`)
+  }
+  if (s.showIndex) bottom.push(`${labelIdx}/${totalLabels}`)
+  if (bottom.length > 0) {
+    cmds.push(`TEXT 5,${y},"2",0,1,1,"${safe(bottom.join('  '))}"`)
+  }
+
+  // Store name
+  if (s.showStoreName) {
+    y += 25
+    const name = storeName || 'Cocoa House'
+    const x = Math.max(0, Math.round(LABEL_W / 2 - name.length * 8 / 2))
+    cmds.push(`TEXT ${x},${y},"2",0,1,1,"${safe(name)}"`)
+  }
+
+  cmds.push(`PRINT 1,1`, '')
+  return Buffer.from(cmds.join('\r\n'), 'utf8')
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-
-// Health check — ใช้ตรวจจาก LabelSettingsPage
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', printer: `${PRINTER_IP}:${PRINTER_PORT}` })
 })
 
-// Main print endpoint
-// Body: { orderId, platform, items[], labelSettings, storeName }
 app.post('/print', async (req, res) => {
   const { orderId, platform, items = [], labelSettings = {}, storeName } = req.body
 
@@ -233,21 +218,18 @@ app.post('/print', async (req, res) => {
     return res.status(400).json({ error: 'No items to print' })
   }
 
-  const copies = parseInt(labelSettings.copies ?? 1)
-
-  // นับ total labels = ผลรวม qty ทุก item
+  const copies      = parseInt(labelSettings.copies ?? 1)
   const totalLabels = items.reduce((s, i) => s + (i.qty ?? 1), 0)
 
   const buffers = []
-  let labelIdx = 1
+  let labelIdx  = 1
 
   for (const item of items) {
     const qty = item.qty ?? 1
     for (let q = 0; q < qty; q++) {
       for (let c = 0; c < copies; c++) {
-        // ใช้ layout format ใหม่ถ้ามี ไม่งั้น fallback เป็น old format
         const buf = labelSettings.layout
-          ? buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName)
+          ? buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
           : buildLabel(item, orderId, platform, labelIdx, totalLabels, labelSettings, storeName)
         buffers.push(buf)
       }
@@ -267,7 +249,7 @@ app.post('/print', async (req, res) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(SERVER_PORT, '0.0.0.0', () => {
-  console.log(`\nCocoa Print Server`)
+  console.log(`\nCocoa Print Server (TSPL mode)`)
   console.log(`  Listening : http://0.0.0.0:${SERVER_PORT}`)
   console.log(`  Printer   : ${PRINTER_IP}:${PRINTER_PORT}`)
   console.log(`\nรอรับ print job จาก Cocoa POS...\n`)
