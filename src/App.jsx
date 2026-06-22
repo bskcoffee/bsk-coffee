@@ -14,6 +14,7 @@ import SettingsPage from './pages/SettingsPage'
 import UserManagementPage from './pages/UserManagementPage'
 import ImportPage from './pages/ImportPage'
 import CashFlowPage from './pages/CashFlowPage'
+import LabelSettingsPage from './pages/LabelSettingsPage'
 
 // ── Route Guards ─────────────────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ const router = createBrowserRouter([
       { path: 'users',    element: <AdminRoute><UserManagementPage /></AdminRoute> },
       { path: 'import',    element: <AdminRoute><ImportPage /></AdminRoute> },
       { path: 'cashflow',  element: <CashFlowPage /> },
+      { path: 'label-settings', element: <AdminRoute><LabelSettingsPage /></AdminRoute> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },

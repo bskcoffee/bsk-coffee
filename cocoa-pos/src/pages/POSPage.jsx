@@ -110,6 +110,7 @@ export default function POSPage() {
   const [orderRef,       setOrderRef]       = useState('')   // หมายเลขออเดอร์ / ชื่อผู้รับ
   const [saving,         setSaving]         = useState(false)
   const [saveError,      setSaveError]      = useState(null)
+  const [printWarning,   setPrintWarning]   = useState(null)
   const [savedMsg,       setSavedMsg]       = useState(null)
   const [showOrders,     setShowOrders]     = useState(false)
   const [todayOrders,    setTodayOrders]    = useState([])
@@ -392,7 +393,7 @@ export default function POSPage() {
     setPendingMenu(null)
   }
 
-  const resetOrder = () => { setLineItems([]); setSaveError(null); setSelectedPlat(null) }
+  const resetOrder = () => { setLineItems([]); setSaveError(null); setPrintWarning(null); setSelectedPlat(null) }
   const openConfirm = () => { setSelectedPlat(null); setSaveError(null); setShowConfirm(true) }
 
   // ── Save order ────────────────────────────────────────────
@@ -431,6 +432,38 @@ export default function POSPage() {
       setSavedMsg({ itemCount: totalItems, total: totalAmount, platform: selectedPlat })
       resetOrder(); setShowConfirm(false); setOrderRef(''); setOrderDate(todayStr())
       setTimeout(() => setSavedMsg(null), 6000)
+
+      // ── Auto-print: ส่งไป print server (fire-and-forget, ไม่ block UX) ──
+      try {
+        const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
+        const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
+        const printServerIp = labelSettings.printerIp ?? '192.168.1.100'
+        const printServerPort = labelSettings.printerPort ?? 3001
+
+        fetch(`http://${printServerIp}:${printServerPort}/print`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderId:  notes ?? newOrder.id,
+            platform: selectedPlat,
+            items: orderItemsWithPrice.map(item => ({
+              name:         item.name,
+              qty:          item.qty,
+              item_options: item.options,
+              isCampaign:   item.isCampaign ?? false,
+            })),
+            labelSettings,
+          }),
+          signal: AbortSignal.timeout(5000),
+        }).catch(err => {
+          console.warn('print-server unreachable:', err.message)
+          setPrintWarning('พิมพ์ฉลากไม่สำเร็จ — ตรวจสอบ print server')
+        })
+      } catch (err) {
+        console.warn('auto-print setup error:', err.message)
+        setPrintWarning('พิมพ์ฉลากไม่สำเร็จ — ตรวจสอบ print server')
+      }
+
     } catch (err) {
       console.error('saveOrder error:', err)
       setSaveError(`บันทึกไม่สำเร็จ: ${err?.message ?? 'กรุณาลองใหม่'}`)
@@ -1054,6 +1087,17 @@ export default function POSPage() {
               {saveError && (
                 <div className="flex items-center gap-2 bg-red-50 text-red-700 rounded-xl px-4 py-2.5 mb-3">
                   <AlertCircle size={16} className="shrink-0" /><p className="text-sm">{saveError}</p>
+                </div>
+              )}
+              {printWarning && (
+                <div className="flex items-center justify-between gap-2 bg-amber-50 text-amber-700 rounded-xl px-4 py-2.5 mb-3">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={16} className="shrink-0" />
+                    <p className="text-sm">{printWarning}</p>
+                  </div>
+                  <button onClick={() => setPrintWarning(null)} className="text-amber-500 hover:text-amber-700">
+                    <X size={14} />
+                  </button>
                 </div>
               )}
               {(() => {
