@@ -71,8 +71,15 @@ function PasskeyModal({ title, onConfirm, onClose }) {
 
 function AppInner() {
   const { session, loading } = useAuth()
-  const [activeTab, setActiveTab]     = useState('pos')
   const [showPasskey, setShowPasskey] = useState(false)
+
+  // Read URL params for deep-link from cocoa-house history page
+  const params      = new URLSearchParams(window.location.search)
+  const initTab     = params.get('tab') ?? 'pos'
+  const initDate    = params.get('date') ?? null
+  const initHighlight = params.get('highlight') ?? null
+
+  const [activeTab, setActiveTab] = useState(initTab)
 
   if (loading) {
     return (
@@ -124,7 +131,7 @@ function AppInner() {
       {/* Page content */}
       <div className="flex-1 overflow-hidden">
         {activeTab === 'pos'    && <POSPage />}
-        {activeTab === 'orders' && <OrderManagePage />}
+        {activeTab === 'orders' && <OrderManagePage initialDate={initDate} highlightRef={initHighlight} />}
       </div>
 
       {/* Passkey Modal */}

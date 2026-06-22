@@ -54,8 +54,8 @@ const today = () => format(new Date(), 'yyyy-MM-dd')
 const fmt   = n => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', minimumFractionDigits: 0 }).format(n)
 
 // ══════════════════════════════════════════════════════════════
-export default function OrderManagePage() {
-  const [date,         setDate]         = useState(today())
+export default function OrderManagePage({ initialDate = null, highlightRef = null }) {
+  const [date,         setDate]         = useState(initialDate ?? today())
   const [orders,       setOrders]       = useState([])
   const [menus,        setMenus]        = useState([])
   const [loading,      setLoading]      = useState(true)
@@ -67,7 +67,7 @@ export default function OrderManagePage() {
   const [savingId,     setSavingId]     = useState(null)
   const [updatingId,   setUpdatingId]   = useState(null)
   const [filterStatus, setFilterStatus] = useState('all')
-  const [searchQ,      setSearchQ]      = useState('')
+  const [searchQ,      setSearchQ]      = useState(highlightRef ?? '')
   const [menuSearch,   setMenuSearch]   = useState('')
   const [optionTarget, setOptionTarget] = useState(null)  // { menu, order } when modal open
   const [deleteTarget, setDeleteTarget] = useState(null)  // order to delete

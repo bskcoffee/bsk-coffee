@@ -64,7 +64,7 @@ export default function SalesHistoryPage() {
 
       // Fetch same data sources as Dashboard for identical calculation
       const [ordersRes, costsRes, transferRes, settingsRes, costSettingsRes, menuCostsRes] = await Promise.all([
-        supabase.from('orders').select('id, date, platform, notes').gte('date', start).lte('date', end),
+        supabase.from('orders').select('id, date, platform, notes, created_at').gte('date', start).lte('date', end),
         supabase.from('platform_costs').select('*').gte('date', start).lte('date', end),
         supabase.from('transfer_status').select('*').gte('sale_date', start).lte('sale_date', end),
         supabase.from('settings').select('key, value'),
@@ -152,12 +152,28 @@ export default function SalesHistoryPage() {
         itemsByOrder[item.order_id].push(item)
       }
 
+      // Per-order amount & item count (for order list display)
+      const orderAmounts = {}
+      for (const [orderId, orderItems] of Object.entries(itemsByOrder)) {
+        orderAmounts[orderId] = {
+          amount: orderItems.reduce((s, i) => s + i.unit_price * i.quantity, 0),
+          itemCount: orderItems.reduce((s, i) => s + i.quantity, 0),
+        }
+      }
+
       // Merge all items per date|platform (handles multiple orders same platform same day)
       const itemsByDatePlat = {}
       for (const order of filteredOrders) {
         const key = tsKey(order.date, order.platform)
         if (!itemsByDatePlat[key]) itemsByDatePlat[key] = []
         itemsByDatePlat[key].push(...(itemsByOrder[order.id] ?? []))
+      }
+
+      // Orders grouped by date for quick lookup
+      const ordersByDate = {}
+      for (const order of filteredOrders) {
+        if (!ordersByDate[order.date]) ordersByDate[order.date] = []
+        ordersByDate[order.date].push(order)
       }
 
       // Build byDate structure
@@ -217,7 +233,20 @@ export default function SalesHistoryPage() {
           if (r.itemCount > 0 || r.sales > 0) activePlatforms.push(platform)
         }
 
-        return { date, totalSales, totalNetProfit, totalItems, activePlatforms, platformSales, platformDetail }
+        // Build POS order list per platform (only orders with notes = POS ref numbers)
+        const platformOrders = {}
+        for (const order of (ordersByDate[date] ?? [])) {
+          if (!order.notes) continue
+          if (!platformOrders[order.platform]) platformOrders[order.platform] = []
+          const oa = orderAmounts[order.id] ?? { amount: 0, itemCount: 0 }
+          const time = order.created_at ? order.created_at.slice(11, 16) : ''
+          platformOrders[order.platform].push({ notes: order.notes, amount: oa.amount, itemCount: oa.itemCount, time })
+        }
+        for (const p of Object.keys(platformOrders)) {
+          platformOrders[p].sort((a, b) => a.time.localeCompare(b.time))
+        }
+
+        return { date, totalSales, totalNetProfit, totalItems, activePlatforms, platformSales, platformDetail, platformOrders }
       }).sort((a, b) => b.date.localeCompare(a.date))
 
       setDayData(result)
@@ -486,6 +515,28 @@ export default function SalesHistoryPage() {
                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${PLAT_BADGE[p] ?? 'bg-gray-100 text-gray-700'}`}>{p}</span>
                         <span className="text-xs text-gray-400">ยอดขาย {formatBaht(detail.sales ?? 0)}</span>
                       </div>
+                      {/* Order numbers from POS — กดเพื่อแก้ไขใน Cocoa POS */}
+                      {(day.platformOrders?.[p] ?? []).length > 0 && (
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">หมายเลขออเดอร์ · กดเพื่อแก้ไข</p>
+                          {day.platformOrders[p].map(o => (
+                            <a
+                              key={o.notes}
+                              href={`https://cocoa-pos.vercel.app?tab=orders&date=${day.date}&highlight=${o.notes}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center justify-between bg-white rounded-lg px-2.5 py-1.5 border border-gray-100 hover:border-cocoa-300 hover:bg-cocoa-50 active:bg-cocoa-100 transition-colors cursor-pointer no-underline"
+                            >
+                              <span className="font-mono text-xs font-bold text-cocoa-700">{o.notes}</span>
+                              <div className="flex items-center gap-2">
+                                {o.time && <span className="text-[11px] text-gray-400">{o.time}น.</span>}
+                                <span className="text-[11px] text-gray-400">{o.itemCount} รายการ</span>
+                                <span className="text-xs font-semibold text-gray-700">{formatBaht(o.amount)}</span>
+                              </div>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       <div className="grid grid-cols-2 gap-2">
                         <button onClick={() => stageChange(day.date, p, 'mat')} disabled={isSaving}
                           className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
