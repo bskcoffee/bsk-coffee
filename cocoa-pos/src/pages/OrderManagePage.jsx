@@ -282,6 +282,7 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
       const q = searchQ.toLowerCase()
       list = list.filter(o =>
         o.platform.toLowerCase().includes(q) ||
+        (o.notes ?? '').toLowerCase().includes(q) ||
         o.items.some(i => i.menus?.name?.toLowerCase().includes(q))
       )
     }
