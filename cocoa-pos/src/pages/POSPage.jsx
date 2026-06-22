@@ -84,10 +84,10 @@ export default function POSPage() {
   const [platFees,     setPlatFees]     = useState({})
   const [loading,      setLoading]      = useState(true)
 
-  // ── Order state ──
-  const [quantities,   setQuantities]   = useState({})
-  const [campaigns,    setCampaigns]    = useState({})
-  const [menuOptions,  setMenuOptions]  = useState({})
+  // ── Order state (line items) ──
+  // lineItems: [{ lineId, menuId, qty, options, isCampaign }]
+  const [lineItems,    setLineItems]    = useState([])
+  const [pendingMenu,  setPendingMenu]  = useState(null) // popup "เพิ่มจำนวน / ตัวเลือกใหม่"
 
   // ── Layout / edit mode ──
   const [catEditMode,  setCatEditMode]  = useState(false)
@@ -266,22 +266,29 @@ export default function POSPage() {
   const addonsForModal  = useMemo(() => addonMenus.map(m => ({ id: m.id, name: m.name, prices: m.prices })), [addonMenus])
   const refillsForModal = useMemo(() => refillMenus.map(m => ({ id: m.id, name: m.name, prices: m.prices })), [refillMenus])
 
+  // ── Line item helpers ─────────────────────────────────────
+  const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+
+  const totalQtyForMenu = (menuId) =>
+    lineItems.filter(l => l.menuId === menuId).reduce((s, l) => s + l.qty, 0)
+
   // ── Order items ───────────────────────────────────────────
   const orderItems = useMemo(() =>
-    Object.entries(quantities)
-      .filter(([, qty]) => qty > 0)
-      .map(([menuId, qty]) => {
-        const menu = menus.find(m => m.id === menuId)
-        const opts = menuOptions[menuId] ?? {}
+    lineItems
+      .filter(l => l.qty > 0)
+      .map(l => {
+        const menu = menus.find(m => m.id === l.menuId)
+        const opts = l.options ?? {}
         const basePrice   = Object.values(menu?.prices ?? {})[0] ?? 0
         const milkPrice   = opts.milk?.price ?? 0
         const refillPrice = Array.isArray(opts.refill)
           ? opts.refill.reduce((sum, r) => sum + (r.price ?? 0) * (r.qty ?? 1), 0)
           : (opts.refill?.price ?? 0)
-        return { menuId, qty, name: menu?.name ?? '', image_url: menu?.image_url ?? null,
-          basePrice, extras: milkPrice + refillPrice, isCampaign: !!campaigns[menuId], options: opts, menu }
+        return { lineId: l.lineId, menuId: l.menuId, qty: l.qty, name: menu?.name ?? '',
+          image_url: menu?.image_url ?? null, basePrice, extras: milkPrice + refillPrice,
+          isCampaign: l.isCampaign, options: opts, menu }
       }),
-  [quantities, menus, menuOptions, campaigns])
+  [lineItems, menus])
 
   const totalItems = orderItems.reduce((s, i) => s + i.qty, 0)
 
@@ -300,48 +307,92 @@ export default function POSPage() {
     })
   }, [orderItems, selectedPlat, platFees])
 
+  // ── Line item mutators ─────────────────────────────────────
+  const incrementLine = (lineId) =>
+    setLineItems(prev => prev.map(l => l.lineId === lineId ? { ...l, qty: l.qty + 1 } : l))
+
+  const decrementLine = (lineId) =>
+    setLineItems(prev =>
+      prev.flatMap(l => l.lineId === lineId
+        ? l.qty > 1 ? [{ ...l, qty: l.qty - 1 }] : []
+        : [l]
+      )
+    )
+
+  const removeLine = (lineId) =>
+    setLineItems(prev => prev.filter(l => l.lineId !== lineId))
+
+  const toggleCampaignLine = (lineId) =>
+    setLineItems(prev => prev.map(l => l.lineId === lineId ? { ...l, isCampaign: !l.isCampaign } : l))
+
   const totalAmount = orderItemsWithPrice.reduce((s, i) => s + (i.subtotal ?? 0), 0)
 
   // ── Handlers ─────────────────────────────────────────────
   const increment = (menu) => {
     if (menuEditMode || catEditMode) return
-    if ((quantities[menu.id] ?? 0) === 0) {
+    const totalQty = totalQtyForMenu(menu.id)
+    if (totalQty === 0) {
       if (menu.category === 'Bun') {
-        // ขนมปัง ไม่ต้องเลือก add-on ใดๆ — เพิ่มตรงได้เลย
-        setMenuOptions(prev => ({ ...prev, [menu.id]: { milk: null, sweetness: 100, refill: null, note: '', packaging: null } }))
-        setQuantities(q => ({ ...q, [menu.id]: 1 }))
+        // ขนมปัง — เพิ่มตรงได้เลย ไม่ต้องเลือก options
+        setLineItems(prev => [...prev, {
+          lineId: genId(), menuId: menu.id, qty: 1,
+          options: { milk: null, sweetness: 100, refill: null, note: '', packaging: null },
+          isCampaign: false,
+        }])
       } else {
-        setOptionMenu(menu)
+        setOptionMenu(menu) // เปิด modal ตัวเลือก
       }
     } else {
-      setQuantities(q => ({ ...q, [menu.id]: q[menu.id] + 1 }))
+      // มีในรายการแล้ว → popup เลือก
+      setPendingMenu(menu)
     }
   }
-  const decrement = (menuId) => {
-    setQuantities(q => {
-      const next = (q[menuId] ?? 0) - 1
-      if (next <= 0) {
-        const { [menuId]: _q, ...rQ } = q
-        setCampaigns(c => { const { [menuId]: _, ...r } = c; return r })
-        setMenuOptions(o => { const { [menuId]: _, ...r } = o; return r })
-        return rQ
+
+  // กดปุ่ม − ในเมนู grid → ลดจากบรรทัดล่าสุดของเมนูนั้น
+  const decrementMenu = (menuId) => {
+    setLineItems(prev => {
+      const next = [...prev]
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].menuId === menuId) {
+          if (next[i].qty > 1) {
+            next[i] = { ...next[i], qty: next[i].qty - 1 }
+          } else {
+            next.splice(i, 1)
+          }
+          return next
+        }
       }
-      return { ...q, [menuId]: next }
+      return next
     })
   }
+
+  // เพิ่มจำนวนในบรรทัดล่าสุด (จาก pendingMenu popup)
+  const addQtyToExisting = () => {
+    if (!pendingMenu) return
+    setLineItems(prev => {
+      const next = [...prev]
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].menuId === pendingMenu.id) {
+          next[i] = { ...next[i], qty: next[i].qty + 1 }
+          return next
+        }
+      }
+      return next
+    })
+    setPendingMenu(null)
+  }
+
   const handleOptionConfirm = (opts) => {
     if (!optionMenu) return
-    setMenuOptions(prev => ({ ...prev, [optionMenu.id]: opts }))
-    setQuantities(prev => ({ ...prev, [optionMenu.id]: (prev[optionMenu.id] ?? 0) + 1 }))
+    setLineItems(prev => [...prev, {
+      lineId: genId(), menuId: optionMenu.id, qty: 1,
+      options: opts, isCampaign: false,
+    }])
     setOptionMenu(null)
+    setPendingMenu(null)
   }
-  const toggleCampaign = (menuId) => setCampaigns(c => ({ ...c, [menuId]: !c[menuId] }))
-  const removeItem = (menuId) => {
-    setQuantities(q => { const { [menuId]: _, ...r } = q; return r })
-    setCampaigns(c => { const { [menuId]: _, ...r } = c; return r })
-    setMenuOptions(o => { const { [menuId]: _, ...r } = o; return r })
-  }
-  const resetOrder  = () => { setQuantities({}); setCampaigns({}); setMenuOptions({}); setSaveError(null); setSelectedPlat(null) }
+
+  const resetOrder = () => { setLineItems([]); setSaveError(null); setSelectedPlat(null) }
   const openConfirm = () => { setSelectedPlat(null); setSaveError(null); setShowConfirm(true) }
 
   // ── Save order ────────────────────────────────────────────
@@ -360,12 +411,12 @@ export default function POSPage() {
 
       const { error: itemsErr } = await supabase.from('order_items').insert(
         orderItemsWithPrice.map(item => ({
-          order_id: newOrder.id,
-          menu_id:  item.menuId,
-          quantity: item.qty,
-          unit_price:    item.unitPrice,
-          unit_gp_cost:  item.unitGpCost,
-          is_campaign:   item.isCampaign,
+          order_id:      newOrder.id,
+          menu_id:       item.menuId,
+          quantity:      item.qty,
+          unit_price:    item.unitPrice    ?? 0,
+          unit_gp_cost:  item.unitGpCost   ?? 0,
+          is_campaign:   item.isCampaign   ?? false,
           item_options: {
             milk:      item.options.milk      ?? null,
             sweetness: item.options.sweetness ?? 100,
@@ -614,9 +665,11 @@ export default function POSPage() {
             <div className="flex-1 overflow-y-auto px-2 pb-2">
               <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 pt-1">
                 {displayMenus.map((menu, idx) => {
-                  const qty      = quantities[menu.id] ?? 0
-                  const hasQty   = qty > 0
-                  const opts     = menuOptions[menu.id] ?? {}
+                  const qty        = totalQtyForMenu(menu.id)
+                  const hasQty     = qty > 0
+                  const menuLines  = lineItems.filter(l => l.menuId === menu.id)
+                  const opts       = menuLines[0]?.options ?? {}        // แสดง options บรรทัดแรก
+                  const multiLine  = menuLines.length > 1               // มีหลาย variant
                   const isDragging = menuEditMode && menuDrag.draggingIdx === idx
 
                   return (
@@ -663,8 +716,15 @@ export default function POSPage() {
                               </div>
                             )}
                             {hasQty && (
-                              <div className="absolute top-1.5 right-1.5 bg-cocoa-700 text-white text-[11px] font-bold rounded-full w-5 h-5 flex items-center justify-center shadow">
-                                {qty}
+                              <div className="absolute top-1.5 right-1.5 flex gap-0.5 items-center">
+                                <div className="bg-cocoa-700 text-white text-[11px] font-bold rounded-full w-5 h-5 flex items-center justify-center shadow">
+                                  {qty}
+                                </div>
+                                {multiLine && (
+                                  <div className="bg-purple-600 text-white text-[9px] font-bold rounded-full px-1 h-4 flex items-center shadow">
+                                    {menuLines.length}v
+                                  </div>
+                                )}
                               </div>
                             )}
                           </button>
@@ -685,15 +745,23 @@ export default function POSPage() {
                           ${menuEditMode ? 'text-amber-700' : 'text-gray-900'}`}>
                           {menu.name}
                         </p>
-                        {!menuEditMode && hasQty && (opts.milk || opts.refill) && (
+                        {!menuEditMode && hasQty && (
                           <div className="flex gap-1 mt-0.5 flex-wrap">
-                            {opts.milk && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">{opts.milk.name}</span>}
-                            {Array.isArray(opts.refill)
-                              ? opts.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
-                              : opts.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{opts.refill.name}</span>
-                            }
-                            {opts.sweetness != null && (
-                              <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{opts.sweetness}%</span>
+                            {multiLine ? (
+                              <span className="text-[9px] bg-purple-50 text-purple-700 px-1 py-0.5 rounded font-bold">
+                                {menuLines.length} ตัวเลือก
+                              </span>
+                            ) : (
+                              <>
+                                {opts.milk && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">{opts.milk.name}</span>}
+                                {Array.isArray(opts.refill)
+                                  ? opts.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
+                                  : opts.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{opts.refill.name}</span>
+                                }
+                                {opts.sweetness != null && opts.sweetness !== 100 && (
+                                  <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{opts.sweetness}%</span>
+                                )}
+                              </>
                             )}
                           </div>
                         )}
@@ -703,7 +771,7 @@ export default function POSPage() {
                       {!menuEditMode && (
                         <>
                           <div className="flex items-center justify-between px-2 pb-2 gap-1">
-                            <button onPointerDown={() => decrement(menu.id)} disabled={!hasQty}
+                            <button onPointerDown={() => decrementMenu(menu.id)} disabled={!hasQty}
                               className="w-8 h-8 rounded-lg bg-gray-100 active:bg-gray-200 disabled:opacity-20 flex items-center justify-center text-gray-600">
                               <Minus size={14} />
                             </button>
@@ -712,15 +780,15 @@ export default function POSPage() {
                               {hasQty ? <Plus size={14} /> : '+ เพิ่ม'}
                             </button>
                           </div>
-                          {hasQty && (
+                          {hasQty && !multiLine && (
                             <div className="px-2 pb-2 -mt-1">
-                              <button onClick={() => toggleCampaign(menu.id)}
+                              <button onClick={() => toggleCampaignLine(menuLines[0].lineId)}
                                 className={`w-full py-1 rounded-lg text-[10px] font-bold transition-all
-                                  ${campaigns[menu.id]
+                                  ${menuLines[0]?.isCampaign
                                     ? 'bg-amber-100 text-amber-700 border border-amber-300'
                                     : 'bg-gray-50 text-gray-400 border border-gray-200'
                                   }`}>
-                                {campaigns[menu.id] ? '⚡ Campaign 60/40' : '60/40'}
+                                {menuLines[0]?.isCampaign ? '⚡ Campaign 60/40' : '60/40'}
                               </button>
                             </div>
                           )}
@@ -764,7 +832,7 @@ export default function POSPage() {
                 <div><p className="text-3xl mb-2">🛒</p><p className="text-sm">ยังไม่มีรายการ<br/>กดเมนูเพื่อเพิ่ม</p></div>
               </div>
             ) : orderItems.map(item => (
-              <div key={item.menuId} className="bg-gray-50 rounded-xl p-2.5">
+              <div key={item.lineId} className="bg-gray-50 rounded-xl p-2.5">
                 <div className="flex items-start gap-2">
                   {item.image_url
                     ? <img src={item.image_url} alt={item.name} className="w-10 h-10 rounded-lg object-cover shrink-0" />
@@ -785,24 +853,27 @@ export default function POSPage() {
                       {item.options.note && <span className="text-[9px] bg-gray-200 text-gray-600 px-1 py-0.5 rounded truncate max-w-[80px]">📝{item.options.note}</span>}
                     </div>
                   </div>
-                  <button onClick={() => removeItem(item.menuId)} className="text-gray-300 hover:text-red-400 p-0.5">
+                  <button onClick={() => removeLine(item.lineId)} className="text-gray-300 hover:text-red-400 p-0.5">
                     <X size={14} />
                   </button>
                 </div>
                 <div className="flex items-center justify-between mt-2">
                   <div className="flex items-center gap-1.5">
-                    <button onClick={() => decrement(item.menuId)}
+                    <button onClick={() => decrementLine(item.lineId)}
                       className="w-6 h-6 rounded-md bg-white border border-gray-200 flex items-center justify-center active:bg-gray-100">
                       <Minus size={11} />
                     </button>
                     <span className="text-sm font-bold text-gray-900 min-w-[1.2rem] text-center">{item.qty}</span>
-                    <button onClick={() => increment(item.menu)}
+                    <button onClick={() => incrementLine(item.lineId)}
                       className="w-6 h-6 rounded-md bg-cocoa-700 flex items-center justify-center active:bg-cocoa-900">
                       <Plus size={11} className="text-white" />
                     </button>
                   </div>
-                  {item.isCampaign && <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">⚡60/40</span>}
-                  <p className="text-xs text-gray-500">× {item.qty}</p>
+                  <button onClick={() => toggleCampaignLine(item.lineId)}
+                    className={`text-[9px] px-1.5 py-0.5 rounded font-bold transition-colors
+                      ${item.isCampaign ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-400'}`}>
+                    {item.isCampaign ? '⚡60/40' : '60/40'}
+                  </button>
                 </div>
               </div>
             ))}
@@ -819,6 +890,37 @@ export default function POSPage() {
         </div>
       </div>
 
+      {/* ══ Pending Menu Popup (เพิ่มจำนวน / ตัวเลือกใหม่) ══ */}
+      {pendingMenu && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setPendingMenu(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-xs shadow-2xl"
+            onClick={e => e.stopPropagation()}>
+            <div className="p-5">
+              <p className="font-bold text-gray-900 text-sm">{pendingMenu.name}</p>
+              <p className="text-xs text-gray-400 mt-0.5 mb-4">มีในรายการแล้ว — เลือกดำเนินการ</p>
+              <div className="space-y-2">
+                <button
+                  onClick={addQtyToExisting}
+                  className="w-full py-3 rounded-xl bg-cocoa-700 text-white font-bold text-sm active:bg-cocoa-900">
+                  + เพิ่มจำนวน (ตัวเลือกเดิม)
+                </button>
+                <button
+                  onClick={() => { setPendingMenu(null); setOptionMenu(pendingMenu) }}
+                  className="w-full py-3 rounded-xl bg-gray-100 text-gray-800 font-bold text-sm active:bg-gray-200">
+                  ✦ ตัวเลือกใหม่ (นมต่างกัน ฯลฯ)
+                </button>
+                <button
+                  onClick={() => setPendingMenu(null)}
+                  className="w-full py-2 text-gray-400 text-sm">
+                  ยกเลิก
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ══ Menu Option Modal ════════════════════════════════ */}
       {optionMenu && (
         <MenuOptionModal
@@ -826,7 +928,7 @@ export default function POSPage() {
           platform={selectedPlat ?? PLATFORMS[0]}
           addons={addonsForModal.map(a => ({ ...a, price: a.prices?.[selectedPlat ?? PLATFORMS[0]] ?? 0 }))}
           refills={refillsForModal.map(r => ({ ...r, price: r.prices?.[selectedPlat ?? PLATFORMS[0]] ?? 0 }))}
-          initial={menuOptions[optionMenu.id] ?? null}
+          initial={null}
           onConfirm={handleOptionConfirm}
           onClose={() => setOptionMenu(null)}
         />
@@ -905,7 +1007,7 @@ export default function POSPage() {
                 )}
                 <div className="space-y-2">
                   {orderItemsWithPrice.map(item => (
-                    <div key={item.menuId} className={`rounded-xl border overflow-hidden transition-colors
+                    <div key={item.lineId} className={`rounded-xl border overflow-hidden transition-colors
                       ${item.isCampaign ? 'border-amber-300' : 'border-gray-100'}`}>
                       <div className="flex items-center justify-between gap-3 px-3 py-2">
                         <div className="flex-1 min-w-0">
@@ -927,7 +1029,7 @@ export default function POSPage() {
                       {/* Campaign toggle — GRAB only */}
                       {selectedPlat === 'GRAB' && (
                         <button
-                          onClick={() => toggleCampaign(item.menuId)}
+                          onClick={() => toggleCampaignLine(item.lineId)}
                           className={`w-full py-1.5 text-xs font-bold transition-all border-t
                             ${item.isCampaign
                               ? 'bg-amber-400 text-white border-amber-300'

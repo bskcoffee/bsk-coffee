@@ -477,10 +477,25 @@ export default function DashboardPage() {
         .order('effective_from', { ascending: false }),
       supabase.from('menu_costs').select('*').is('effective_to', null),
     ])
-    // กรอง order_items ให้เฉพาะ POS orders (notes != null && notes != '')
-    // เพื่อป้องกัน double-count กับ SalesEntry orders (ที่ notes = '' หรือ null)
+    // กรอง order_items — ป้องกัน double-count ระหว่าง POS กับ SalesEntry
+    // กฎ: ถ้าวัน+platform นั้นมี POS data อยู่แล้ว → ใช้เฉพาะ POS (notes != null)
+    //      ถ้าไม่มี POS → ใช้ SalesEntry (notes = null/'') แทน
     const allItems = itemsRes.data ?? []
-    const items = allItems.filter(i => i.orders?.notes != null && i.orders.notes !== '')
+
+    // หา set ของ (date|platform) ที่มี POS orders
+    const posDatePlatSet = new Set()
+    for (const i of allItems) {
+      if (i.orders?.notes != null && i.orders.notes !== '') {
+        posDatePlatSet.add(`${i.orders.date}|${i.orders.platform}`)
+      }
+    }
+
+    const items = allItems.filter(i => {
+      const key = `${i.orders?.date}|${i.orders?.platform}`
+      const isPOS = i.orders?.notes != null && i.orders.notes !== ''
+      if (isPOS) return true                    // POS → รวมเสมอ
+      return !posDatePlatSet.has(key)           // SalesEntry → รวมเฉพาะวันที่ไม่มี POS
+    })
     setItemsTruncated(allItems.length >= ITEMS_LIMIT)
 
     // Read platform config (dynamic list from settings)
@@ -623,14 +638,27 @@ export default function DashboardPage() {
       .sort((a, b) => b.qty - a.qty)
       .slice(0, 5)
 
-    // Best Margin — by gross margin % (profit / sales)
+    // per-menu material cost (บาทต่อหน่วย) จาก menuCostMap
+    const menuMatCostPerUnit = {}
+    for (const id of Object.keys(menuSales)) {
+      const mc = menuCostMap[id]
+      if (!mc) continue
+      const bd = calcMenuCostBreakdown(mc, costSettings, 0, 0)
+      menuMatCostPerUnit[id] = bd?.materialCost ?? 0
+    }
+
+    // Best Margin — GP margin หลังหักค่า platform fee + material cost
     const bestMargins = Object.entries(menuSales)
       .filter(([, s]) => s > 0)
       .map(([id, sales]) => {
-        const profit    = menuProfit[id] ?? 0
-        const marginPct = profit / sales * 100
-        return { id, sales, profit, marginPct, qty: menuQty[id] ?? 0, name: menuNames[id] }
+        const qty        = menuQty[id] ?? 0
+        const platProfit = menuProfit[id] ?? 0            // sales - platform_fee
+        const matCost    = (menuMatCostPerUnit[id] ?? 0) * qty
+        const trueProfit = platProfit - matCost           // หักต้นทุนวัตถุดิบด้วย
+        const marginPct  = sales > 0 ? trueProfit / sales * 100 : 0
+        return { id, sales, profit: trueProfit, marginPct, qty, name: menuNames[id] }
       })
+      .filter(m => m.sales > 0)
       .sort((a, b) => b.marginPct - a.marginPct)
       .slice(0, 5)
 
@@ -1323,7 +1351,7 @@ export default function DashboardPage() {
                         </div>
                       </div>
                       <div className="card">
-                        <h2 className="font-semibold text-gray-800 mb-3">💰 Best Margin</h2>
+                        <h2 className="font-semibold text-gray-800 mb-3">💰 Best Margin <span className="text-[11px] text-gray-400 font-normal">(หลังหักวัตถุดิบ+ค่า platform)</span></h2>
                         <div className="space-y-2.5">
                           {aggregated.bestMargins.map((m, i) => (
                             <div key={m.id} className="flex items-center gap-2.5">
