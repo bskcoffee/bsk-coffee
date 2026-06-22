@@ -596,15 +596,13 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
                         <Trash2 size={13} /> ลบ
                       </button>
 
-                      {/* Edit button (only if not delivered) */}
-                      {order.status !== 'delivered' && (
-                        <button
-                          onClick={() => startEdit(order)}
-                          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold transition-colors"
-                        >
-                          <Edit3 size={13} /> แก้ไขรายการ
-                        </button>
-                      )}
+                      {/* Edit button */}
+                      <button
+                        onClick={() => startEdit(order)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold transition-colors"
+                      >
+                        <Edit3 size={13} /> แก้ไขรายการ
+                      </button>
 
                       {/* Status advance button */}
                       {st.next && (
