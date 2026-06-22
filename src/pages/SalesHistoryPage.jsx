@@ -64,7 +64,7 @@ export default function SalesHistoryPage() {
 
       // Fetch same data sources as Dashboard for identical calculation
       const [ordersRes, costsRes, transferRes, settingsRes, costSettingsRes, menuCostsRes] = await Promise.all([
-        supabase.from('orders').select('id, date, platform').gte('date', start).lte('date', end),
+        supabase.from('orders').select('id, date, platform, notes').gte('date', start).lte('date', end),
         supabase.from('platform_costs').select('*').gte('date', start).lte('date', end),
         supabase.from('transfer_status').select('*').gte('sale_date', start).lte('sale_date', end),
         supabase.from('settings').select('key, value'),
@@ -125,11 +125,25 @@ export default function SalesHistoryPage() {
 
       if (orders.length === 0) { setDayData([]); setLoading(false); return }
 
+      // Smart filter: same logic as Dashboard posDatePlatSet
+      // Use POS orders (notes != null/empty); use SalesEntry only when no POS for that date|platform
+      const posDatePlatSet = new Set()
+      for (const order of orders) {
+        if (order.notes != null && order.notes !== '') {
+          posDatePlatSet.add(tsKey(order.date, order.platform))
+        }
+      }
+      const filteredOrders = orders.filter(order => {
+        const isPOS = order.notes != null && order.notes !== ''
+        if (isPOS) return true
+        return !posDatePlatSet.has(tsKey(order.date, order.platform))
+      })
+
       // Fetch order_items with menu_id for matCost recalculation
       const { data: items } = await supabase
         .from('order_items')
         .select('order_id, menu_id, quantity, unit_price, unit_gp_cost, is_campaign')
-        .in('order_id', orders.map(o => o.id))
+        .in('order_id', filteredOrders.map(o => o.id))
 
       // Group items by order_id
       const itemsByOrder = {}
@@ -140,7 +154,7 @@ export default function SalesHistoryPage() {
 
       // Merge all items per date|platform (handles multiple orders same platform same day)
       const itemsByDatePlat = {}
-      for (const order of orders) {
+      for (const order of filteredOrders) {
         const key = tsKey(order.date, order.platform)
         if (!itemsByDatePlat[key]) itemsByDatePlat[key] = []
         itemsByDatePlat[key].push(...(itemsByOrder[order.id] ?? []))
@@ -148,7 +162,7 @@ export default function SalesHistoryPage() {
 
       // Build byDate structure
       const byDate = {}
-      for (const order of orders) {
+      for (const order of filteredOrders) {
         if (!byDate[order.date]) byDate[order.date] = { platforms: new Set(), costs: [] }
         byDate[order.date].platforms.add(order.platform)
       }
