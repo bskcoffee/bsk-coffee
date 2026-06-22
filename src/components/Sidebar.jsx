@@ -61,7 +61,7 @@ const ALL_NAV = [
   { to: '/cashflow',  iconName: 'Wallet',          label: 'รายรับรายจ่าย',       adminOnly: false },
 ]
 
-const ICON_MAP = { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, FileUp, Wallet }
+const ICON_MAP = { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, FileUp, Wallet, Printer, Tablet }
 const STORAGE_KEY = 'cocoa-nav-order'
 
 function applyOrder(order) {
