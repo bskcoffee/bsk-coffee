@@ -127,6 +127,96 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
   return Buffer.from(buf, 'binary')
 }
 
+// ─── Build label from new layout format (drag-editor) ────────────────────────
+function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, layout, storeName) {
+  const o = item.item_options ?? {}
+
+  const getContent = (field) => {
+    switch (field.type) {
+      case 'menu_name':  return item.name || ''
+      case 'options': {
+        const opts = []
+        if (o.milk)             opts.push(o.milk)
+        if (o.sweetness != null)opts.push(`${o.sweetness}%`)
+        if (o.refill)           opts.push('Refill')
+        if (o.note)             opts.push(o.note)
+        return opts.join(' \xb7 ')
+      }
+      case 'order_id':   return `#${orderId}`
+      case 'qty':        return `x${item.qty ?? 1}`
+      case 'time': {
+        const now = new Date()
+        return `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`
+      }
+      case 'index':      return `${labelIdx}/${totalLabels}`
+      case 'store_name': return storeName || 'Cocoa House'
+      case 'platform':   return platform || ''
+      case 'date': {
+        const now = new Date()
+        return `${now.getDate()}/${now.getMonth()+1}`
+      }
+      case 'custom':     return field.text || ''
+      default:           return ''
+    }
+  }
+
+  // Sort visible fields by Y — ESC/POS prints line by line
+  const LINE_THRESHOLD = 8  // fields within 8% Y = same print line
+  const visible = layout
+    .filter(f => f.visible)
+    .sort((a, b) => a.y - b.y)
+
+  // Group into print lines
+  const lines = []
+  for (const field of visible) {
+    const last = lines[lines.length - 1]
+    if (!last || Math.abs(field.y - last[0].y) >= LINE_THRESHOLD) {
+      lines.push([field])
+    } else {
+      last.push(field)
+    }
+  }
+
+  let buf = CMD.INIT
+  const LINE_W = 32  // characters per line
+
+  for (const lineFields of lines) {
+    // Divider line
+    if (lineFields.length === 1 && lineFields[0].type === 'divider') {
+      buf += CMD.ALIGN_LEFT + '-'.repeat(LINE_W) + LF
+      continue
+    }
+
+    // Filter out dividers mixed with text (edge case)
+    const textFields = lineFields.filter(f => f.type !== 'divider').sort((a, b) => a.x - b.x)
+    if (!textFields.length) continue
+
+    if (textFields.length === 1) {
+      const f = textFields[0]
+      const content = getContent(f)
+      if (!content) continue
+      buf += alignCmd(f.align)
+      buf += f.bold ? CMD.BOLD_ON : ''
+      buf += f.fontSize >= 14 ? CMD.SIZE_BIG : f.fontSize >= 11 ? CMD.SIZE_MED : CMD.SIZE_NORM
+      buf += content + LF
+      buf += CMD.BOLD_OFF + CMD.SIZE_NORM
+    } else {
+      // Multi-field line: arrange by X position
+      buf += CMD.ALIGN_LEFT + CMD.SIZE_NORM
+      const parts = textFields.map(f => getContent(f)).filter(Boolean)
+      if (parts.length === 2) {
+        const gap = Math.max(1, LINE_W - parts[0].length - parts[1].length)
+        buf += parts[0] + ' '.repeat(gap) + parts[1] + LF
+      } else {
+        buf += parts.join('  ') + LF
+      }
+    }
+  }
+
+  buf += LF + LF + CMD.CUT
+  return Buffer.from(buf, 'binary')
+}
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 // Health check — ใช้ตรวจจาก LabelSettingsPage
@@ -155,7 +245,10 @@ app.post('/print', async (req, res) => {
     const qty = item.qty ?? 1
     for (let q = 0; q < qty; q++) {
       for (let c = 0; c < copies; c++) {
-        const buf = buildLabel(item, orderId, platform, labelIdx, totalLabels, labelSettings, storeName)
+        // ใช้ layout format ใหม่ถ้ามี ไม่งั้น fallback เป็น old format
+        const buf = labelSettings.layout
+          ? buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName)
+          : buildLabel(item, orderId, platform, labelIdx, totalLabels, labelSettings, storeName)
         buffers.push(buf)
       }
       labelIdx++

@@ -1,216 +1,351 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Save, Printer, RefreshCw, CheckCircle, Wifi,
   AlignLeft, AlignCenter, AlignRight,
-  Coffee, Hash, Clock, Tag, Layers, Package, SlidersHorizontal,
-  Milk, Percent, RotateCcw, FileText,
+  Coffee, Hash, Clock, Tag, Package, SlidersHorizontal,
+  FileText, Plus, X, Trash2, Calendar, Type,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../contexts/ToastContext'
 
-// ─── Mock data for preview ────────────────────────────────────────────────────
-const MOCK_ITEM = {
+// ─── Preview dimensions (5× of 50×30 mm) ─────────────────────────────────────
+const PW = 250
+const PH = 150
+
+// ─── Mock data ────────────────────────────────────────────────────────────────
+const MOCK = {
   name: 'Cocoa Latte',
-  qty: 1,
-  item_options: { milk: 'นมสด', sweetness: 50, refill: false, note: '' },
-}
-const MOCK_ORDER = { orderId: 'GF-012', platform: 'GRAB', date: new Date().toISOString() }
-
-// ─── Default settings ─────────────────────────────────────────────────────────
-const DEFAULT = {
-  paperWidth: 50, paperHeight: 30,
-  showMenuName: true,  menuNameSize: 'large',
-  showOptions: true,   showOptionMilk: true, showOptionSweet: true,
-  showOptionRefill: true, showOptionNote: true,
-  showOrderId: true,   showQty: true, showIndex: true,
-  showTime: true,      showStoreName: true,
-  textAlign: 'center',
-  printerIp: '192.168.1.100', printerPort: 9100, copies: 1,
+  qty: 2,
+  options: { milk: 'นมสด', sweetness: 50, refill: false, note: '' },
+  orderId: 'GF-012',
+  platform: 'GRAB',
 }
 
-// ─── Template Presets ─────────────────────────────────────────────────────────
+// ─── Default layout (each field has absolute position as % of PW/PH) ─────────
+const DEFAULT_LAYOUT = [
+  { id: 'menu_name', type: 'menu_name', label: 'ชื่อเมนู',  visible: true,  x: 50, y: 10, fontSize: 16, bold: true,  align: 'center' },
+  { id: 'options',   type: 'options',   label: 'Options',    visible: true,  x: 50, y: 38, fontSize: 10, bold: false, align: 'center' },
+  { id: 'divider',   type: 'divider',   label: 'เส้นคั่น',   visible: true,  x: 50, y: 53 },
+  { id: 'order_id',  type: 'order_id',  label: 'Order ID',   visible: true,  x: 10, y: 63, fontSize: 9,  bold: false, align: 'left'   },
+  { id: 'qty',       type: 'qty',       label: 'จำนวน',      visible: true,  x: 42, y: 63, fontSize: 9,  bold: false, align: 'center' },
+  { id: 'time',      type: 'time',      label: 'เวลา',       visible: true,  x: 65, y: 63, fontSize: 9,  bold: false, align: 'center' },
+  { id: 'index',     type: 'index',     label: 'ลำดับ',      visible: true,  x: 90, y: 63, fontSize: 9,  bold: false, align: 'right'  },
+  { id: 'store_name',type: 'store_name',label: 'ชื่อร้าน',   visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+  { id: 'platform',  type: 'platform',  label: 'Platform',   visible: false, x: 50, y: 80, fontSize: 10, bold: true,  align: 'center' },
+  { id: 'date',      type: 'date',      label: 'วันที่',     visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+]
+
+// ─── Presets ──────────────────────────────────────────────────────────────────
 const PRESETS = {
   cup: {
-    label: 'ฉลากแก้ว', desc: 'ชื่อ · options · order', icon: '☕',
-    settings: {
-      showMenuName: true,  menuNameSize: 'large',
-      showOptions: true,   showOptionMilk: true, showOptionSweet: true,
-      showOptionRefill: false, showOptionNote: true,
-      showOrderId: true,   showQty: true, showIndex: true,
-      showTime: true,      showStoreName: false, textAlign: 'center',
-    },
+    label: 'ฉลากแก้ว', icon: '☕',
+    layout: [
+      { id: 'menu_name', type: 'menu_name', label: 'ชื่อเมนู', visible: true,  x: 50, y: 10, fontSize: 16, bold: true,  align: 'center' },
+      { id: 'options',   type: 'options',   label: 'Options',   visible: true,  x: 50, y: 38, fontSize: 10, bold: false, align: 'center' },
+      { id: 'divider',   type: 'divider',   label: 'เส้นคั่น',  visible: true,  x: 50, y: 53 },
+      { id: 'order_id',  type: 'order_id',  label: 'Order ID',  visible: true,  x: 10, y: 63, fontSize: 9,  bold: false, align: 'left'   },
+      { id: 'qty',       type: 'qty',       label: 'จำนวน',     visible: true,  x: 42, y: 63, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'time',      type: 'time',      label: 'เวลา',      visible: true,  x: 65, y: 63, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'index',     type: 'index',     label: 'ลำดับ',     visible: true,  x: 90, y: 63, fontSize: 9,  bold: false, align: 'right'  },
+      { id: 'store_name',type: 'store_name',label: 'ชื่อร้าน',  visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'platform',  type: 'platform',  label: 'Platform',  visible: false, x: 50, y: 80, fontSize: 10, bold: true,  align: 'center' },
+      { id: 'date',      type: 'date',      label: 'วันที่',    visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+    ],
   },
   kitchen: {
-    label: 'Kitchen ticket', desc: 'order · ชื่อ · note', icon: '🍳',
-    settings: {
-      showMenuName: true,  menuNameSize: 'medium',
-      showOptions: false,  showOptionMilk: false, showOptionSweet: false,
-      showOptionRefill: false, showOptionNote: true,
-      showOrderId: true,   showQty: true, showIndex: true,
-      showTime: false,     showStoreName: false, textAlign: 'left',
-    },
+    label: 'Kitchen', icon: '🍳',
+    layout: [
+      { id: 'order_id',  type: 'order_id',  label: 'Order ID',  visible: true,  x: 8,  y: 8,  fontSize: 14, bold: true,  align: 'left'   },
+      { id: 'platform',  type: 'platform',  label: 'Platform',  visible: true,  x: 90, y: 8,  fontSize: 9,  bold: false, align: 'right'  },
+      { id: 'divider',   type: 'divider',   label: 'เส้นคั่น',  visible: true,  x: 50, y: 25 },
+      { id: 'menu_name', type: 'menu_name', label: 'ชื่อเมนู',  visible: true,  x: 8,  y: 32, fontSize: 13, bold: true,  align: 'left'   },
+      { id: 'qty',       type: 'qty',       label: 'จำนวน',     visible: true,  x: 90, y: 32, fontSize: 13, bold: true,  align: 'right'  },
+      { id: 'options',   type: 'options',   label: 'Options',   visible: false, x: 8,  y: 55, fontSize: 9,  bold: false, align: 'left'   },
+      { id: 'index',     type: 'index',     label: 'ลำดับ',     visible: true,  x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'time',      type: 'time',      label: 'เวลา',      visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'store_name',type: 'store_name',label: 'ชื่อร้าน',  visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'date',      type: 'date',      label: 'วันที่',    visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+    ],
   },
   minimal: {
-    label: 'Minimal', desc: 'ชื่อเมนูอย่างเดียว', icon: '✦',
-    settings: {
-      showMenuName: true,  menuNameSize: 'large',
-      showOptions: false,  showOptionMilk: false, showOptionSweet: false,
-      showOptionRefill: false, showOptionNote: false,
-      showOrderId: false,  showQty: false, showIndex: false,
-      showTime: false,     showStoreName: false, textAlign: 'center',
-    },
+    label: 'Minimal', icon: '✦',
+    layout: [
+      { id: 'menu_name', type: 'menu_name', label: 'ชื่อเมนู',  visible: true,  x: 50, y: 28, fontSize: 18, bold: true,  align: 'center' },
+      { id: 'options',   type: 'options',   label: 'Options',   visible: false, x: 50, y: 55, fontSize: 10, bold: false, align: 'center' },
+      { id: 'divider',   type: 'divider',   label: 'เส้นคั่น',  visible: false, x: 50, y: 60 },
+      { id: 'order_id',  type: 'order_id',  label: 'Order ID',  visible: false, x: 10, y: 70, fontSize: 9,  bold: false, align: 'left'   },
+      { id: 'qty',       type: 'qty',       label: 'จำนวน',     visible: false, x: 42, y: 70, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'time',      type: 'time',      label: 'เวลา',      visible: false, x: 65, y: 70, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'index',     type: 'index',     label: 'ลำดับ',     visible: false, x: 90, y: 70, fontSize: 9,  bold: false, align: 'right'  },
+      { id: 'store_name',type: 'store_name',label: 'ชื่อร้าน',  visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'platform',  type: 'platform',  label: 'Platform',  visible: false, x: 50, y: 80, fontSize: 10, bold: true,  align: 'center' },
+      { id: 'date',      type: 'date',      label: 'วันที่',    visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+    ],
   },
 }
 
-// ─── Field chip definitions ───────────────────────────────────────────────────
-const CHIP_COLORS = {
-  content: { on: '#085041', offBg: '#E1F5EE', offText: '#085041' },
-  order:   { on: '#0C447C', offBg: '#E6F1FB', offText: '#0C447C' },
-  meta:    { on: '#633806', offBg: '#FAEEDA', offText: '#633806' },
+// ─── Field icons ──────────────────────────────────────────────────────────────
+const FIELD_ICON = {
+  menu_name:  Coffee,
+  options:    SlidersHorizontal,
+  divider:    Type,
+  order_id:   Hash,
+  qty:        Package,
+  time:       Clock,
+  index:      Tag,
+  store_name: Tag,
+  platform:   Tag,
+  date:       Calendar,
+  custom:     FileText,
 }
 
-function FieldChip({ label, icon: Icon, active, onClick, category }) {
-  const c = CHIP_COLORS[category] ?? CHIP_COLORS.meta
-  return (
-    <button
-      onClick={onClick}
-      style={active
-        ? { background: c.on, color: '#fff', borderColor: c.on }
-        : { background: c.offBg, color: c.offText, borderColor: 'transparent' }
-      }
-      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all active:scale-95"
-    >
-      {Icon && <Icon size={11} />}
-      {label}
-    </button>
-  )
-}
-
-// ─── Mini label preview (used inside preset cards) ────────────────────────────
-function MiniPreview({ settings }) {
-  const s = { ...DEFAULT, ...settings }
-  return (
-    <div
-      className="bg-white border border-dashed border-gray-300 rounded overflow-hidden shrink-0"
-      style={{ width: 80, height: 48, padding: '3px 4px', fontFamily: 'monospace', textAlign: s.textAlign }}
-    >
-      {s.showMenuName && (
-        <div style={{ fontSize: s.menuNameSize === 'large' ? 7 : 6, fontWeight: 'bold', lineHeight: 1.2 }}>
-          Cocoa Latte
-        </div>
-      )}
-      {s.showOptions && (
-        <div style={{ fontSize: 4.5, color: '#666', marginTop: 1 }}>นมสด · 50%</div>
-      )}
-      <div style={{ borderTop: '1px dashed #ccc', margin: '2px 0' }} />
-      <div style={{ fontSize: 4, color: '#888', display: 'flex', justifyContent: 'space-between' }}>
-        {s.showOrderId && <span>#GF-012</span>}
-        {s.showQty     && <span>×1</span>}
-        {s.showTime    && <span>14:30</span>}
-      </div>
-    </div>
-  )
-}
-
-// ─── Full label preview ───────────────────────────────────────────────────────
-function LabelPreview({ s, storeName }) {
-  const opts = []
-  if (s.showOptions) {
-    if (s.showOptionMilk   && MOCK_ITEM.item_options.milk)       opts.push(MOCK_ITEM.item_options.milk)
-    if (s.showOptionSweet  && MOCK_ITEM.item_options.sweetness !== undefined) opts.push(`${MOCK_ITEM.item_options.sweetness}%`)
-    if (s.showOptionRefill && MOCK_ITEM.item_options.refill)     opts.push('รีฟิล')
-    if (s.showOptionNote   && MOCK_ITEM.item_options.note)       opts.push(MOCK_ITEM.item_options.note)
+// ─── Get preview content for each field type ─────────────────────────────────
+function getContent(field, storeName) {
+  const o = MOCK.options
+  switch (field.type) {
+    case 'menu_name': return MOCK.name
+    case 'options': {
+      const opts = []
+      if (o.milk) opts.push(o.milk)
+      if (o.sweetness != null) opts.push(`${o.sweetness}%`)
+      return opts.join(' · ') || '–'
+    }
+    case 'order_id':   return `#${MOCK.orderId}`
+    case 'qty':        return `×${MOCK.qty}`
+    case 'time':       return new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+    case 'index':      return '1/3'
+    case 'store_name': return storeName || 'Cocoa House'
+    case 'platform':   return MOCK.platform
+    case 'date':       return new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+    case 'custom':     return field.text || '(ข้อความ)'
+    default:           return ''
   }
-  const timeStr = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
-  const w = s.paperWidth  * 5
-  const h = s.paperHeight * 5
-
-  const noFieldsVisible = !s.showMenuName && opts.length === 0 && !s.showOrderId
-    && !s.showQty && !s.showIndex && !s.showTime && !s.showStoreName
-
-  if (noFieldsVisible) {
-    return (
-      <div className="flex flex-col items-center gap-3 py-8 text-center">
-        <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center">
-          <Printer size={22} className="text-cocoa-600" />
-        </div>
-        <p className="font-medium text-gray-700">ยังไม่มี field บนฉลาก</p>
-        <p className="text-sm text-gray-400">เปิด field ด้านซ้าย หรือเลือก template</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex flex-col items-center gap-3">
-      <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">
-        Preview — {s.paperWidth}×{s.paperHeight} mm
-      </p>
-      <div
-        className="bg-white border-2 border-dashed border-gray-300 rounded shadow-md flex flex-col justify-between overflow-hidden"
-        style={{ width: w, height: h, padding: '6px 8px', fontFamily: 'monospace', textAlign: s.textAlign ?? 'center' }}
-      >
-        {s.showMenuName && (
-          <div className="font-bold leading-tight" style={{ fontSize: s.menuNameSize === 'large' ? 16 : 13 }}>
-            {MOCK_ITEM.name}
-          </div>
-        )}
-        {opts.length > 0 && (
-          <div className="text-gray-600" style={{ fontSize: 10 }}>{opts.join(' · ')}</div>
-        )}
-        <div style={{ borderTop: '1px dashed #ccc', margin: '2px 0' }} />
-        <div style={{ fontSize: 9, color: '#555', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-          {s.showOrderId   && <span>#{MOCK_ORDER.orderId.slice(-6)}</span>}
-          {s.showQty       && <span>×{MOCK_ITEM.qty}</span>}
-          {s.showTime      && <span>{timeStr}</span>}
-          {s.showIndex     && <span>1/3</span>}
-          {s.showStoreName && <span style={{ width: '100%', textAlign: 'center' }}>{storeName || 'Cocoa House'}</span>}
-        </div>
-      </div>
-      <p className="text-xs text-gray-400">(แสดงขนาด 5× จากจริง)</p>
-    </div>
-  )
 }
 
-// ─── Ripple helper ────────────────────────────────────────────────────────────
+// ─── Ripple ───────────────────────────────────────────────────────────────────
 function useRipple() {
   const ref = useRef(null)
   const trigger = (e) => {
-    const el = ref.current
-    if (!el) return
+    const el = ref.current; if (!el) return
     const rect = el.getBoundingClientRect()
     const size = Math.max(rect.width, rect.height) * 2
-    const x = (e.clientX - rect.left) - size / 2
-    const y = (e.clientY - rect.top)  - size / 2
     const span = document.createElement('span')
     span.style.cssText = `position:absolute;border-radius:50%;background:rgba(255,255,255,.25);
-      width:${size}px;height:${size}px;left:${x}px;top:${y}px;
+      width:${size}px;height:${size}px;
+      left:${(e.clientX - rect.left) - size/2}px;top:${(e.clientY - rect.top) - size/2}px;
       animation:rippleAnim .5s linear forwards;pointer-events:none`
-    el.appendChild(span)
-    setTimeout(() => span.remove(), 500)
+    el.appendChild(span); setTimeout(() => span.remove(), 500)
   }
   return { ref, trigger }
 }
-
-// inject ripple keyframe once
 if (!document.getElementById('ripple-style')) {
-  const st = document.createElement('style')
-  st.id = 'ripple-style'
+  const st = document.createElement('style'); st.id = 'ripple-style'
   st.textContent = '@keyframes rippleAnim{to{transform:scale(4);opacity:0}}'
   document.head.appendChild(st)
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Label Canvas (drag & drop) ───────────────────────────────────────────────
+function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName }) {
+  const canvasRef  = useRef(null)
+  const draggingId = useRef(null)
+  const offset     = useRef({ x: 0, y: 0 })
+
+  const startDrag = useCallback((e, field) => {
+    e.stopPropagation(); e.preventDefault()
+    onSelect(field.id)
+    const rect = canvasRef.current.getBoundingClientRect()
+    offset.current = {
+      x: e.clientX - rect.left - (field.x / 100) * PW,
+      y: e.clientY - rect.top  - (field.y / 100) * PH,
+    }
+    draggingId.current = field.id
+  }, [onSelect])
+
+  useEffect(() => {
+    const move = (e) => {
+      if (!draggingId.current || !canvasRef.current) return
+      const rect = canvasRef.current.getBoundingClientRect()
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left - offset.current.x) / PW) * 100))
+      const y = Math.max(0, Math.min(95,  ((e.clientY - rect.top  - offset.current.y) / PH) * 100))
+      onMove(draggingId.current, Math.round(x), Math.round(y))
+    }
+    const up = () => { draggingId.current = null }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
+  }, [onMove])
+
+  return (
+    <div
+      ref={canvasRef}
+      className="relative bg-white rounded-lg shadow-md select-none mx-auto"
+      style={{ width: PW, height: PH, fontFamily: 'monospace', border: '2px dashed #d1d5db' }}
+      onClick={() => onSelect(null)}
+    >
+      {layout.map(field => {
+        if (!field.visible) return null
+        const isSel = selectedId === field.id
+        const selStyle = isSel ? { outline: '2px solid #3b82f6', background: 'rgba(59,130,246,0.07)', borderRadius: 3 } : {}
+
+        if (field.type === 'divider') {
+          return (
+            <div
+              key={field.id}
+              style={{
+                position: 'absolute', top: `${field.y}%`, left: 4, right: 4,
+                borderTop: '1px dashed #bbb', cursor: 'ns-resize', ...selStyle,
+                outlineOffset: 3,
+              }}
+              onMouseDown={e => startDrag(e, field)}
+            />
+          )
+        }
+
+        const tx = field.align === 'left' ? '0%' : field.align === 'right' ? '-100%' : '-50%'
+        return (
+          <div
+            key={field.id}
+            style={{
+              position: 'absolute',
+              left: `${field.x}%`, top: `${field.y}%`,
+              transform: `translateX(${tx})`,
+              fontSize: field.fontSize, fontWeight: field.bold ? 'bold' : 'normal',
+              lineHeight: 1.2, whiteSpace: 'nowrap',
+              cursor: 'grab', padding: '1px 3px',
+              ...selStyle,
+            }}
+            onMouseDown={e => startDrag(e, field)}
+            title={field.label}
+          >
+            {getContent(field, storeName)}
+          </div>
+        )
+      })}
+      <div className="absolute bottom-1 right-1.5 text-[7px] text-gray-300 pointer-events-none select-none">
+        ลาก · คลิก
+      </div>
+    </div>
+  )
+}
+
+// ─── Properties Panel ─────────────────────────────────────────────────────────
+function FieldProperties({ field, onUpdate, onDelete }) {
+  if (!field) return (
+    <div className="flex flex-col items-center justify-center py-5 text-center gap-2">
+      <Type size={18} className="text-gray-300" />
+      <p className="text-xs text-gray-400">คลิก field บน preview เพื่อแก้ไข</p>
+    </div>
+  )
+
+  const isCustom = field.id.startsWith('custom_')
+
+  return (
+    <div className="space-y-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-gray-800">{field.label}</span>
+        {isCustom && (
+          <button onClick={onDelete} className="text-red-400 hover:text-red-600 transition-colors">
+            <Trash2 size={13} />
+          </button>
+        )}
+      </div>
+
+      {/* Custom text input */}
+      {field.type === 'custom' && (
+        <div>
+          <label className="label text-xs">ข้อความ</label>
+          <input className="input text-sm" value={field.text || ''} placeholder="พิมพ์ข้อความ..."
+            onChange={e => onUpdate('text', e.target.value)} />
+        </div>
+      )}
+
+      {/* Font size */}
+      {field.type !== 'divider' && (
+        <div>
+          <label className="label text-xs">ขนาด font</label>
+          <div className="flex gap-1 flex-wrap">
+            {[7, 8, 9, 10, 11, 12, 14, 16, 18, 20].map(sz => (
+              <button key={sz} onClick={() => onUpdate('fontSize', sz)}
+                className={`w-8 py-1 rounded text-xs font-medium border transition-colors
+                  ${field.fontSize === sz ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}>
+                {sz}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Bold + Align */}
+      {field.type !== 'divider' && (
+        <div className="flex items-end gap-4">
+          <div>
+            <label className="label text-xs">สไตล์</label>
+            <button onClick={() => onUpdate('bold', !field.bold)}
+              className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-colors
+                ${field.bold ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}>
+              B
+            </button>
+          </div>
+          <div>
+            <label className="label text-xs">จัดตำแหน่ง</label>
+            <div className="flex gap-1">
+              {[['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight]].map(([val, Icon]) => (
+                <button key={val} onClick={() => onUpdate('align', val)}
+                  className={`p-1.5 rounded-lg border transition-colors
+                    ${field.align === val ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}>
+                  <Icon size={13} />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* X / Y sliders */}
+      <div className="grid grid-cols-2 gap-3">
+        {[['X', 'x', 0, 100], ['Y', 'y', 0, 95]].map(([lbl, key, min, max]) => (
+          <div key={key}>
+            <div className="flex justify-between mb-1">
+              <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{lbl}</label>
+              <span className="text-[10px] text-gray-400">{Math.round(field[key])}%</span>
+            </div>
+            <input type="range" min={min} max={max} value={Math.round(field[key])}
+              onChange={e => onUpdate(key, parseInt(e.target.value))}
+              className="w-full h-1.5 accent-cocoa-700" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Toggle Switch ─────────────────────────────────────────────────────────────
+function Toggle({ on }) {
+  return (
+    <div className={`relative w-8 h-4 rounded-full transition-colors shrink-0 ${on ? 'bg-cocoa-600' : 'bg-gray-200'}`}>
+      <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow-sm transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`} />
+    </div>
+  )
+}
+
+// ─── Main Page ─────────────────────────────────────────────────────────────────
 export default function LabelSettingsPage() {
   const { addToast } = useToast()
-  const [s, setS]           = useState(DEFAULT)
-  const [storeName, setStoreName] = useState('Cocoa House')
-  const [saveStatus, setSaveStatus] = useState('idle')   // idle | saving | saved
-  const [loading,   setLoading]   = useState(true)
-  const [testStatus, setTestStatus] = useState('idle')  // idle | testing | ok | error
-  const [activePreset, setActivePreset] = useState(null)
+  const [layout,     setLayout]     = useState(DEFAULT_LAYOUT.map(f => ({ ...f })))
+  const [selectedId, setSelectedId] = useState(null)
+  const [storeName,  setStoreName]  = useState('Cocoa House')
+  const [copies,     setCopies]     = useState(1)
+  const [printerIp,  setPrinterIp]  = useState('192.168.1.100')
+  const [printerPort,setPrinterPort]= useState(3001)
+  const [saveStatus, setSaveStatus] = useState('idle')
+  const [testStatus, setTestStatus] = useState('idle')
+  const [loading,    setLoading]    = useState(true)
+  const [activePreset,setActivePreset] = useState(null)
   const saveRipple = useRipple()
   const testRipple = useRipple()
 
+  // ── Load ────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
       const [labelRes, storeRes] = await Promise.all([
@@ -218,7 +353,13 @@ export default function LabelSettingsPage() {
         supabase.from('settings').select('value').eq('key', 'store_name').maybeSingle(),
       ])
       if (labelRes.data?.value) {
-        try { setS({ ...DEFAULT, ...JSON.parse(labelRes.data.value) }) } catch {}
+        try {
+          const saved = JSON.parse(labelRes.data.value)
+          if (saved.layout) setLayout(saved.layout)
+          if (saved.copies)     setCopies(saved.copies)
+          if (saved.printerIp)  setPrinterIp(saved.printerIp)
+          if (saved.printerPort)setPrinterPort(saved.printerPort)
+        } catch {}
       }
       if (storeRes.data?.value) setStoreName(storeRes.data.value)
       setLoading(false)
@@ -226,67 +367,100 @@ export default function LabelSettingsPage() {
     load()
   }, [])
 
-  const set = (key, val) => { setS(prev => ({ ...prev, [key]: val })); setActivePreset(null) }
+  const selectedField = layout.find(f => f.id === selectedId) ?? null
+
+  // ── Handlers ────────────────────────────────────────────────────────────────
+  const updateField = useCallback((id, key, val) => {
+    setLayout(prev => prev.map(f => f.id === id ? { ...f, [key]: val } : f))
+    setActivePreset(null)
+  }, [])
+
+  const updateSelected = useCallback((key, val) => {
+    if (selectedId) updateField(selectedId, key, val)
+  }, [selectedId, updateField])
+
+  const handleMove = useCallback((id, x, y) => {
+    setLayout(prev => prev.map(f => f.id === id ? { ...f, x, y } : f))
+  }, [])
+
+  const toggleField = (id) => {
+    setLayout(prev => prev.map(f => f.id === id ? { ...f, visible: !f.visible } : f))
+    setActivePreset(null)
+  }
+
+  const addCustom = () => {
+    const id = `custom_${Date.now()}`
+    setLayout(prev => [...prev, { id, type: 'custom', label: 'ข้อความ', visible: true,
+      x: 50, y: 82, fontSize: 9, bold: false, align: 'center', text: '' }])
+    setSelectedId(id)
+    setActivePreset(null)
+  }
+
+  const ensureField = (type, label) => {
+    const ex = layout.find(f => f.type === type)
+    if (ex) {
+      setLayout(prev => prev.map(f => f.id === ex.id ? { ...f, visible: true } : f))
+      setSelectedId(ex.id)
+    } else {
+      const id = `${type}_${Date.now()}`
+      setLayout(prev => [...prev, { id, type, label, visible: true,
+        x: 50, y: 82, fontSize: 9, bold: false, align: 'center' }])
+      setSelectedId(id)
+    }
+    setActivePreset(null)
+  }
+
+  const deleteSelected = () => {
+    if (!selectedId) return
+    setLayout(prev => prev.filter(f => f.id !== selectedId))
+    setSelectedId(null)
+  }
 
   const loadPreset = (key) => {
-    const preset = PRESETS[key]
-    if (!preset) return
-    setS(prev => ({ ...prev, ...preset.settings }))
-    setActivePreset(key)
+    const p = PRESETS[key]; if (!p) return
+    setLayout(p.layout.map(f => ({ ...f })))
+    setActivePreset(key); setSelectedId(null)
   }
 
   const handleSave = async (e) => {
-    saveRipple.trigger(e)
-    setSaveStatus('saving')
-    const { error } = await supabase
-      .from('settings')
-      .upsert({ key: 'label_settings', value: JSON.stringify(s) }, { onConflict: 'key' })
-    if (error) {
-      addToast('บันทึกไม่สำเร็จ: ' + error.message, 'error')
-      setSaveStatus('idle')
-    } else {
-      setSaveStatus('saved')
-      addToast('บันทึกการตั้งค่าฉลากแล้ว', 'success')
-      setTimeout(() => setSaveStatus('idle'), 2500)
-    }
+    saveRipple.trigger(e); setSaveStatus('saving')
+    const value = JSON.stringify({ layout, copies, printerIp, printerPort })
+    const { error } = await supabase.from('settings')
+      .upsert({ key: 'label_settings', value }, { onConflict: 'key' })
+    if (error) { addToast('บันทึกไม่สำเร็จ: ' + error.message, 'error'); setSaveStatus('idle') }
+    else { setSaveStatus('saved'); addToast('บันทึกการตั้งค่าฉลากแล้ว', 'success'); setTimeout(() => setSaveStatus('idle'), 2500) }
   }
 
-  const handleTestPrint = async (e) => {
-    testRipple.trigger(e)
-    setTestStatus('testing')
+  const handleTest = async (e) => {
+    testRipple.trigger(e); setTestStatus('testing')
     try {
-      const res = await fetch(`http://${s.printerIp}:${s.printerPort}/health`, { signal: AbortSignal.timeout(4000) })
-      const data = await res.json()
-      setTestStatus(data.status === 'ok' ? 'ok' : 'error')
-    } catch {
-      setTestStatus('error')
-    }
+      const res = await fetch(`http://${printerIp}:${printerPort}/health`, { signal: AbortSignal.timeout(4000) })
+      const d = await res.json()
+      setTestStatus(d.status === 'ok' ? 'ok' : 'error')
+    } catch { setTestStatus('error') }
     setTimeout(() => setTestStatus('idle'), 4000)
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20 text-gray-400">
-        <div className="w-6 h-6 border-2 border-cocoa-300 border-t-cocoa-600 rounded-full animate-spin" />
-      </div>
-    )
-  }
+  if (loading) return (
+    <div className="flex items-center justify-center py-20">
+      <div className="w-6 h-6 border-2 border-cocoa-300 border-t-cocoa-600 rounded-full animate-spin" />
+    </div>
+  )
+
+  const fixedFields  = layout.filter(f => !f.id.startsWith('custom_'))
+  const customFields = layout.filter(f =>  f.id.startsWith('custom_'))
 
   return (
-    <div className="max-w-4xl mx-auto space-y-4">
+    <div className="max-w-5xl mx-auto space-y-4">
 
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-900">ตั้งค่าฉลากแก้ว</h1>
-          <p className="text-sm text-gray-400 mt-0.5">กำหนด template และข้อมูลที่จะพิมพ์บนฉลาก 50×30 mm</p>
+          <p className="text-sm text-gray-400 mt-0.5">ลากตำแหน่ง · ปรับ font · เพิ่มข้อความพิเศษ</p>
         </div>
-        <button
-          ref={saveRipple.ref}
-          onClick={handleSave}
-          disabled={saveStatus === 'saving'}
-          className="btn-primary relative overflow-hidden flex items-center gap-2 disabled:opacity-50"
-        >
+        <button ref={saveRipple.ref} onClick={handleSave} disabled={saveStatus === 'saving'}
+          className="btn-primary relative overflow-hidden flex items-center gap-2 disabled:opacity-50">
           {saveStatus === 'saving' && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
           {saveStatus === 'saved'  && <CheckCircle size={16} />}
           {saveStatus === 'idle'   && <Save size={16} />}
@@ -294,128 +468,91 @@ export default function LabelSettingsPage() {
         </button>
       </div>
 
-      {/* ─── 1. Template Presets ──────────────────────────────────────────────── */}
+      {/* ── Presets ─────────────────────────────────────────────────────────── */}
       <div className="card space-y-3">
         <h2 className="font-semibold text-gray-800">⚡ Template สำเร็จรูป</h2>
         <div className="grid grid-cols-3 gap-3">
-          {Object.entries(PRESETS).map(([key, preset]) => {
-            const isActive = activePreset === key
-            return (
-              <button
-                key={key}
-                onClick={() => loadPreset(key)}
-                className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all text-left
-                  ${isActive
-                    ? 'border-cocoa-500 bg-cocoa-50 shadow-sm'
-                    : 'border-gray-200 bg-white hover:border-cocoa-300 hover:bg-gray-50'
-                  }`}
-              >
-                <MiniPreview settings={preset.settings} />
-                <div className="text-center">
-                  <p className={`text-xs font-bold ${isActive ? 'text-cocoa-700' : 'text-gray-800'}`}>
-                    {preset.icon} {preset.label}
-                  </p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">{preset.desc}</p>
-                </div>
-              </button>
-            )
-          })}
+          {Object.entries(PRESETS).map(([key, p]) => (
+            <button key={key} onClick={() => loadPreset(key)}
+              className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left
+                ${activePreset === key ? 'border-cocoa-500 bg-cocoa-50' : 'border-gray-200 bg-white hover:border-cocoa-300 hover:bg-gray-50'}`}>
+              <span className="text-2xl">{p.icon}</span>
+              <span className={`text-sm font-semibold ${activePreset === key ? 'text-cocoa-700' : 'text-gray-800'}`}>{p.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Main layout */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* ── Main layout ─────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
 
-        {/* ─── Left: Settings ──────────────────────────────────────────────────── */}
-        <div className="space-y-4">
+        {/* Left: field list + settings */}
+        <div className="lg:col-span-2 space-y-4">
 
-          {/* Paper size */}
-          <div className="card space-y-3">
-            <h2 className="font-semibold text-gray-800">📐 ขนาดกระดาษ</h2>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label text-xs">ความกว้าง (mm)</label>
-                <input type="number" className="input" min={30} max={80}
-                  value={s.paperWidth}
-                  onChange={e => set('paperWidth', parseInt(e.target.value) || 50)} />
-              </div>
-              <div>
-                <label className="label text-xs">ความสูง (mm)</label>
-                <input type="number" className="input" min={20} max={100}
-                  value={s.paperHeight}
-                  onChange={e => set('paperHeight', parseInt(e.target.value) || 30)} />
-              </div>
-            </div>
-          </div>
+          {/* Field toggles */}
+          <div className="card space-y-2">
+            <h2 className="font-semibold text-gray-800">📋 Field บนฉลาก</h2>
+            <p className="text-xs text-gray-400">Toggle เปิด/ปิด · คลิกเพื่อเลือกแก้ไข</p>
 
-          {/* ─── 2. Color-coded Field Chips ───────────────────────────────────── */}
-          <div className="card space-y-3">
-            <h2 className="font-semibold text-gray-800">📋 ข้อมูลบนฉลาก</h2>
-            <p className="text-xs text-gray-400 -mt-1">กดเพื่อเปิด/ปิด field</p>
-
-            {/* Content fields */}
-            <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Content</p>
-              <div className="flex flex-wrap gap-1.5">
-                <FieldChip
-                  label="ชื่อเมนู" icon={Coffee}
-                  active={s.showMenuName} category="content"
-                  onClick={() => set('showMenuName', !s.showMenuName)}
-                />
-                <FieldChip
-                  label="Options" icon={SlidersHorizontal}
-                  active={s.showOptions} category="content"
-                  onClick={() => set('showOptions', !s.showOptions)}
-                />
-                {s.showOptions && (
-                  <>
-                    <FieldChip label="นม"        icon={Milk}    active={s.showOptionMilk}   category="content" onClick={() => set('showOptionMilk',   !s.showOptionMilk)}   />
-                    <FieldChip label="ความหวาน"  icon={Percent} active={s.showOptionSweet}  category="content" onClick={() => set('showOptionSweet',  !s.showOptionSweet)}  />
-                    <FieldChip label="รีฟิล"      icon={RotateCcw} active={s.showOptionRefill} category="content" onClick={() => set('showOptionRefill', !s.showOptionRefill)} />
-                    <FieldChip label="โน้ต"       icon={FileText} active={s.showOptionNote}  category="content" onClick={() => set('showOptionNote',   !s.showOptionNote)}   />
-                  </>
-                )}
-              </div>
+            <div className="space-y-0.5">
+              {fixedFields.map(field => {
+                const Icon = FIELD_ICON[field.type]
+                const isSel = selectedId === field.id
+                return (
+                  <div key={field.id}
+                    className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors
+                      ${isSel ? 'bg-blue-50 border border-blue-200' : 'hover:bg-gray-50 border border-transparent'}`}
+                    onClick={() => { toggleField(field.id); setSelectedId(field.id) }}>
+                    <div className="flex items-center gap-2">
+                      {Icon && <Icon size={12} className={field.visible ? 'text-cocoa-600' : 'text-gray-300'} />}
+                      <span className={`text-xs font-medium ${field.visible ? 'text-gray-800' : 'text-gray-400'}`}>
+                        {field.label}
+                      </span>
+                    </div>
+                    <Toggle on={field.visible} />
+                  </div>
+                )
+              })}
             </div>
 
-            {/* Menu name size (only when showMenuName is on) */}
-            {s.showMenuName && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500 shrink-0">ขนาดชื่อ:</span>
-                {['large', 'medium'].map(sz => (
-                  <button key={sz}
-                    onClick={() => set('menuNameSize', sz)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors
-                      ${s.menuNameSize === sz ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}
-                  >
-                    {sz === 'large' ? 'ใหญ่' : 'กลาง'}
-                  </button>
+            {/* Custom fields */}
+            {customFields.length > 0 && (
+              <div className="border-t border-gray-100 pt-2 space-y-0.5">
+                {customFields.map(field => (
+                  <div key={field.id}
+                    className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors
+                      ${selectedId === field.id ? 'bg-blue-50 border border-blue-200' : 'hover:bg-gray-50 border border-transparent'}`}
+                    onClick={() => setSelectedId(field.id)}>
+                    <div className="flex items-center gap-2">
+                      <FileText size={12} className="text-gray-400" />
+                      <span className="text-xs font-medium text-gray-700 truncate max-w-[120px]">
+                        {field.text || '(ว่าง)'}
+                      </span>
+                    </div>
+                    <button onClick={e => { e.stopPropagation(); setLayout(prev => prev.filter(f => f.id !== field.id)); if (selectedId === field.id) setSelectedId(null) }}
+                      className="text-gray-300 hover:text-red-400 transition-colors">
+                      <X size={12} />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
 
-            {/* Order fields */}
-            <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Order</p>
+            {/* Add field buttons */}
+            <div className="border-t border-gray-100 pt-2">
+              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider mb-1.5">+ เพิ่ม field</p>
               <div className="flex flex-wrap gap-1.5">
-                <FieldChip label="Order ID" icon={Hash}    active={s.showOrderId} category="order" onClick={() => set('showOrderId', !s.showOrderId)} />
-                <FieldChip label="จำนวน"    icon={Package} active={s.showQty}     category="order" onClick={() => set('showQty',     !s.showQty)}     />
-                <FieldChip label="ลำดับ"     icon={Layers}  active={s.showIndex}   category="order" onClick={() => set('showIndex',   !s.showIndex)}   />
+                {[
+                  ['ข้อความ', addCustom],
+                  ['Platform', () => ensureField('platform', 'Platform')],
+                  ['วันที่',   () => ensureField('date', 'วันที่')],
+                ].map(([label, fn]) => (
+                  <button key={label} onClick={fn}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-medium text-gray-700 transition-colors">
+                    <Plus size={11} /> {label}
+                  </button>
+                ))}
               </div>
-            </div>
-
-            {/* Meta fields */}
-            <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Meta</p>
-              <div className="flex flex-wrap gap-1.5">
-                <FieldChip label="เวลา"     icon={Clock} active={s.showTime}      category="meta" onClick={() => set('showTime',      !s.showTime)}      />
-                <FieldChip label="ชื่อร้าน" icon={Tag}   active={s.showStoreName} category="meta" onClick={() => set('showStoreName', !s.showStoreName)} />
-              </div>
-              {s.showStoreName && (
-                <p className="text-[10px] text-gray-400">
-                  แก้ชื่อร้านได้ที่ <span className="text-cocoa-600 font-medium">ตั้งค่า → ข้อมูลร้าน</span>
-                </p>
-              )}
             </div>
           </div>
 
@@ -424,11 +561,9 @@ export default function LabelSettingsPage() {
             <h2 className="font-semibold text-gray-800">🖨️ จำนวนสำเนา</h2>
             <div className="flex gap-2">
               {[1, 2, 3].map(n => (
-                <button key={n}
-                  onClick={() => set('copies', n)}
+                <button key={n} onClick={() => setCopies(n)}
                   className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-colors
-                    ${s.copies === n ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}
-                >
+                    ${copies === n ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}>
                   {n} ใบ
                 </button>
               ))}
@@ -440,90 +575,58 @@ export default function LabelSettingsPage() {
             <h2 className="font-semibold text-gray-800">🌐 Print Server</h2>
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2">
-                <label className="label text-xs">IP Address ของ Print Server</label>
+                <label className="label text-xs">IP Address</label>
                 <input type="text" className="input font-mono" placeholder="192.168.1.xxx"
-                  value={s.printerIp} onChange={e => set('printerIp', e.target.value)} />
+                  value={printerIp} onChange={e => setPrinterIp(e.target.value)} />
               </div>
               <div>
                 <label className="label text-xs">Port</label>
-                <input type="number" className="input" value={s.printerPort}
-                  onChange={e => set('printerPort', parseInt(e.target.value) || 3001)} />
+                <input type="number" className="input" value={printerPort}
+                  onChange={e => setPrinterPort(parseInt(e.target.value) || 3001)} />
               </div>
             </div>
             <p className="text-xs text-gray-400">
-              ES-9960 WiFi ต้องต่อ network เดียวกับ print server
+              ใส่ IP คอมพิวเตอร์ที่รัน print-server
+              {' '}<span className="text-cocoa-600 font-medium cursor-pointer" onClick={() => ensureField('store_name', 'ชื่อร้าน')}>
+                แก้ชื่อร้านได้ที่ ตั้งค่า → ข้อมูลร้าน
+              </span>
             </p>
-            <button
-              ref={testRipple.ref}
-              onClick={handleTestPrint}
-              disabled={testStatus === 'testing'}
-              className="relative overflow-hidden flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
-            >
+            <button ref={testRipple.ref} onClick={handleTest} disabled={testStatus === 'testing'}
+              className="relative overflow-hidden flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50">
               {testStatus === 'testing' && <RefreshCw size={14} className="animate-spin" />}
               {testStatus === 'ok'      && <CheckCircle size={14} className="text-green-600" />}
               {testStatus === 'error'   && <Wifi size={14} className="text-red-500" />}
               {testStatus === 'idle'    && <Wifi size={14} />}
-              {testStatus === 'testing' ? 'กำลังทดสอบ...'
-                : testStatus === 'ok'   ? 'เชื่อมต่อสำเร็จ ✓'
-                : testStatus === 'error' ? 'เชื่อมต่อไม่ได้ ✗'
-                : 'ทดสอบการเชื่อมต่อ'}
+              {testStatus === 'testing' ? 'กำลังทดสอบ...' : testStatus === 'ok' ? 'เชื่อมต่อสำเร็จ ✓'
+                : testStatus === 'error' ? 'เชื่อมต่อไม่ได้ ✗' : 'ทดสอบการเชื่อมต่อ'}
             </button>
           </div>
         </div>
 
-        {/* ─── Right: Preview ──────────────────────────────────────────────────── */}
-        <div className="space-y-4">
-          <div className="card flex flex-col items-center py-6 gap-4">
-
-            {/* ─── 4. Alignment Quick Actions ─────────────────────────────── */}
-            <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-lg w-fit">
-              {[
-                { align: 'left',   icon: AlignLeft,   label: 'ชิดซ้าย' },
-                { align: 'center', icon: AlignCenter, label: 'กลาง'    },
-                { align: 'right',  icon: AlignRight,  label: 'ชิดขวา'  },
-              ].map(({ align, icon: Icon, label }) => (
-                <button
-                  key={align}
-                  onClick={() => set('textAlign', align)}
-                  title={label}
-                  className={`p-1.5 rounded-md transition-all ${
-                    s.textAlign === align
-                      ? 'bg-white text-cocoa-700 shadow-sm'
-                      : 'text-gray-400 hover:text-gray-600'
-                  }`}
-                >
-                  <Icon size={15} />
-                </button>
-              ))}
+        {/* Right: Canvas + Properties */}
+        <div className="lg:col-span-3 space-y-4">
+          <div className="card space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-gray-800">👁️ Preview — 50×30 mm (แสดง 5×)</h2>
             </div>
 
-            <LabelPreview s={s} storeName={storeName} />
-          </div>
+            <LabelCanvas
+              layout={layout}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onMove={handleMove}
+              storeName={storeName}
+            />
 
-          {/* Data fields reference */}
-          <div className="card space-y-3">
-            <h2 className="font-semibold text-gray-800">📦 ข้อมูลที่ดึงได้จาก POS</h2>
-            <div className="space-y-1.5 text-sm">
-              {[
-                { field: 'ชื่อเมนู',   source: 'order_items.name',       example: '"Cocoa Latte"' },
-                { field: 'จำนวน',      source: 'order_items.qty',        example: '×2' },
-                { field: 'ประเภทนม',   source: 'item_options.milk',      example: '"นมสด"' },
-                { field: 'ความหวาน',   source: 'item_options.sweetness', example: '"50%"' },
-                { field: 'รีฟิล',      source: 'item_options.refill',    example: 'true/false' },
-                { field: 'โน้ตพิเศษ', source: 'item_options.note',      example: '"ไม่ใส่น้ำแข็ง"' },
-                { field: 'Order ID',   source: 'orders.id',              example: '"GF-012"' },
-                { field: 'Platform',   source: 'orders.platform',        example: '"GRAB"' },
-                { field: 'เวลาพิมพ์',  source: 'new Date() ตอนพิมพ์',   example: '"14:30"' },
-                { field: 'ลำดับฉลาก',  source: 'คำนวณจาก items array',  example: '"1/3"' },
-              ].map(({ field, source, example }) => (
-                <div key={field} className="flex items-start justify-between gap-2 py-1.5 border-b border-gray-50">
-                  <div>
-                    <span className="font-medium text-gray-800">{field}</span>
-                    <span className="ml-2 text-xs text-gray-400 font-mono">{source}</span>
-                  </div>
-                  <span className="text-xs text-cocoa-700 bg-cocoa-50 px-2 py-0.5 rounded font-mono shrink-0">{example}</span>
-                </div>
-              ))}
+            <p className="text-center text-xs text-gray-400">ลากเพื่อย้ายตำแหน่ง · คลิก field เพื่อแก้ไข</p>
+
+            {/* Properties */}
+            <div className="border-t border-gray-100 pt-3">
+              <FieldProperties
+                field={selectedField}
+                onUpdate={updateSelected}
+                onDelete={deleteSelected}
+              />
             </div>
           </div>
         </div>
