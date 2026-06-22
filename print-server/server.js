@@ -81,9 +81,12 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
         if (o.milk)             opts.push(o.milk)
         if (o.sweetness != null)opts.push(`${o.sweetness}%`)
         if (o.refill) {
-          if (Array.isArray(o.refill))           opts.push(o.refill.map(r => r.name ?? r).join(', '))
-          else if (typeof o.refill === 'object') opts.push(o.refill.name ?? 'Refill')
-          else                                   opts.push('Refill')
+          if (Array.isArray(o.refill) && o.refill.length > 0)
+            opts.push(o.refill.map(r => (typeof r === 'object' ? (r.name || r.label || 'Refill') : String(r))).join(', '))
+          else if (typeof o.refill === 'string' && o.refill)
+            opts.push(o.refill)
+          else if (typeof o.refill !== 'object')
+            opts.push('Refill')
         }
         if (o.note)             opts.push(o.note)
         return opts.join(' / ')

@@ -143,16 +143,44 @@ if (!document.getElementById('ripple-style')) {
   document.head.appendChild(st)
 }
 
-// ─── Label Canvas (drag & drop) ───────────────────────────────────────────────
-function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph }) {
+// ─── TSPL font metrics (mirrors server.js getFontParams) ──────────────────────
+// Returns dot height and char width at 203 DPI
+function tsplMeta(fontSize) {
+  if (fontSize >= 16) return { dh: 40, dw: 20 }  // font '3' xm=2 ym=2
+  if (fontSize >= 13) return { dh: 20, dw: 10 }  // font '3' xm=1 ym=1
+  if (fontSize >= 10) return { dh: 16, dw: 8  }  // font '2' xm=1 ym=1
+  return                      { dh: 12, dw: 6  }  // font '1' xm=1 ym=1
+}
+
+// ─── Label Canvas (TSPL-accurate preview) ─────────────────────────────────────
+function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph, labelW, labelH }) {
   const canvasRef  = useRef(null)
   const draggingId = useRef(null)
   const offset     = useRef({ x: 0, y: 0 })
+
+  // Dot dimensions at 203 DPI
+  const MM2DOT = 203 / 25.4
+  const wDot   = labelW * MM2DOT
+  const hDot   = labelH * MM2DOT
+  const scaleX = pw / wDot
+  const scaleY = ph / hDot
+
+  // Mirror server.js alignX: given field anchor (x%), content, return left px
+  const fieldLeftPx = useCallback((field, content) => {
+    const { dw } = tsplMeta(field.fontSize || 9)
+    const xBaseDot = (field.x / 100) * wDot
+    const textWDot = content.length * dw
+    let xDot = xBaseDot
+    if (field.align === 'center') xDot = Math.max(0, xBaseDot - textWDot / 2)
+    if (field.align === 'right')  xDot = Math.max(0, xBaseDot - textWDot)
+    return xDot * scaleX
+  }, [wDot, scaleX])
 
   const startDrag = useCallback((e, field) => {
     e.stopPropagation(); e.preventDefault()
     onSelect(field.id)
     const rect = canvasRef.current.getBoundingClientRect()
+    // Anchor the drag on the field's x% point (same as onMove uses)
     offset.current = {
       x: e.clientX - rect.left - (field.x / 100) * pw,
       y: e.clientY - rect.top  - (field.y / 100) * ph,
@@ -177,7 +205,7 @@ function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph }
   return (
     <div
       ref={canvasRef}
-      className="relative bg-white rounded-lg shadow-md select-none mx-auto"
+      className="relative bg-white rounded-lg shadow-md select-none mx-auto overflow-hidden"
       style={{ width: pw, height: ph, fontFamily: 'monospace', border: '2px dashed #d1d5db' }}
       onClick={() => onSelect(null)}
     >
@@ -187,36 +215,39 @@ function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph }
         const selStyle = isSel ? { outline: '2px solid #3b82f6', background: 'rgba(59,130,246,0.07)', borderRadius: 3 } : {}
 
         if (field.type === 'divider') {
+          const yPx = (field.y / 100) * ph
           return (
-            <div
-              key={field.id}
+            <div key={field.id}
               style={{
-                position: 'absolute', top: `${field.y}%`, left: 4, right: 4,
-                borderTop: '1px dashed #bbb', cursor: 'ns-resize', ...selStyle,
-                outlineOffset: 3,
+                position: 'absolute', top: yPx, left: 4, right: 4,
+                borderTop: '1.5px solid #aaa', cursor: 'ns-resize', ...selStyle, outlineOffset: 3,
               }}
               onMouseDown={e => startDrag(e, field)}
             />
           )
         }
 
-        const tx = field.align === 'left' ? '0%' : field.align === 'right' ? '-100%' : '-50%'
+        const content = getContent(field, storeName)
+        const { dh } = tsplMeta(field.fontSize || 9)
+        const fontSizePx = Math.max(5, dh * scaleY)
+        const xPx = fieldLeftPx(field, content)
+        const yPx = (field.y / 100) * ph
+
         return (
-          <div
-            key={field.id}
+          <div key={field.id}
             style={{
               position: 'absolute',
-              left: `${field.x}%`, top: `${field.y}%`,
-              transform: `translateX(${tx})`,
-              fontSize: field.fontSize, fontWeight: field.bold ? 'bold' : 'normal',
-              lineHeight: 1.2, whiteSpace: 'nowrap',
-              cursor: 'grab', padding: '1px 3px',
+              left: xPx, top: yPx,
+              fontSize: fontSizePx,
+              fontWeight: field.bold ? 'bold' : 'normal',
+              lineHeight: 1, whiteSpace: 'nowrap',
+              cursor: 'grab', padding: '0 1px',
               ...selStyle,
             }}
             onMouseDown={e => startDrag(e, field)}
             title={field.label}
           >
-            {getContent(field, storeName)}
+            {content}
           </div>
         )
       })}
@@ -648,6 +679,8 @@ export default function LabelSettingsPage() {
               storeName={storeName}
               pw={PW}
               ph={previewH}
+              labelW={labelW}
+              labelH={labelH}
             />
 
             <p className="text-center text-xs text-gray-400">ลากเพื่อย้ายตำแหน่ง · คลิก field เพื่อแก้ไข</p>
