@@ -5,7 +5,7 @@ import { th } from 'date-fns/locale'
 import {
   RefreshCw, ChevronDown, ChevronUp, Loader2, X, Plus, Minus,
   CheckCircle2, Clock, Package, Truck, AlertCircle, Edit3, Save,
-  Search, CalendarDays, Trash2,
+  Search, CalendarDays, Trash2, SlidersHorizontal,
 } from 'lucide-react'
 import MenuOptionModal from '../components/MenuOptionModal'
 
@@ -327,7 +327,7 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
     const basePrice = menu.menu_prices?.find(p => p.platform === order.platform)?.price ?? 0
     const milkPrice   = opts.milk?.price   ?? 0
     const refillPrice = opts.refill?.price ?? 0
-    setEditItems(prev => ({ ...prev, [menu.id]: 1 }))
+    setEditItems(prev => ({ ...prev, [menu.id]: prev[menu.id] ?? 1 }))
     setEditItemMeta(prev => ({
       ...prev,
       [menu.id]: {
@@ -671,6 +671,16 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
                               {price > 0 && <p className="text-[10px] text-gray-400">{fmt(price)}</p>}
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
+                              {/* Options edit button — แสดงเมื่อมี item อยู่แล้ว */}
+                              {qty > 0 && (
+                                <button
+                                  onClick={() => setOptionTarget({ menu, order })}
+                                  className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-cocoa-100 flex items-center justify-center"
+                                  title="แก้ไขตัวเลือก"
+                                >
+                                  <SlidersHorizontal size={11} className="text-gray-500" />
+                                </button>
+                              )}
                               <button
                                 onClick={() => setEditItems(prev => {
                                   const next = (prev[menu.id] ?? 0) - 1
@@ -781,7 +791,7 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
           platform={optionTarget.order.platform}
           addons={addonMenus}
           refills={refillMenus}
-          initial={null}
+          initial={editItemMeta[optionTarget.menu.id]?.item_options ?? null}
           onConfirm={handleEditOptionConfirm}
           onClose={() => setOptionTarget(null)}
           confirmLabel="เพิ่มในรายการ"
