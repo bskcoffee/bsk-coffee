@@ -115,9 +115,10 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
       case 'note': {
         const s = o.note
         if (!s) return ''
-        if (typeof s === 'string') return s
-        if (typeof s === 'object') return s.name || s.label || s.value || ''
-        return String(s)
+        const text = typeof s === 'string' ? s
+          : typeof s === 'object' ? (s.name || s.label || s.value || '')
+          : String(s)
+        return text ? `Note : ${text}` : ''
       }
       case 'custom':     return field.text || ''
       default:           return ''

@@ -122,7 +122,7 @@ function getContent(field, storeName) {
     case 'store_name': return storeName || 'Cocoa House'
     case 'platform':   return MOCK.platform
     case 'date':       return new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
-    case 'note':       return MOCK.options.note || ''
+    case 'note':       return MOCK.options.note ? `Note : ${MOCK.options.note}` : ''
     case 'custom':     return field.text || '(ข้อความ)'
     default:           return ''
   }
