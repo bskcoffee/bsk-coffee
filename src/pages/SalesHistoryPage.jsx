@@ -54,6 +54,7 @@ export default function SalesHistoryPage() {
   const [expanded, setExpanded]           = useState(new Set())
   const [saving, setSaving]               = useState(null)
   const [pendingChanges, setPendingChanges] = useState({})
+  const [laborPct, setLaborPct]             = useState(0)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -107,6 +108,7 @@ export default function SalesHistoryPage() {
         if (!(row.key in cs)) cs[row.key] = Number(row.value)
       }
       const laborPct = cs.labor_pct ?? 0
+      setLaborPct(laborPct)
 
       // Menu cost map
       const menuCostMap = {}
