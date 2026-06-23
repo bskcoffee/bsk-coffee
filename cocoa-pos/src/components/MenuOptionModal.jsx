@@ -54,7 +54,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
   const totalExtra  = (milk?.price ?? 0) + refillTotal
   const totalPrice  = basePrice + totalExtra
 
-  const canConfirm = milk !== null && packaging !== null
+  const canConfirm = packaging !== null
 
   const handleConfirm = () => {
     if (!canConfirm) return
@@ -93,7 +93,8 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
           {/* ── 1. ชนิดนม (ต้องระบุ) ──────────────────────── */}
           <section>
             <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-              🥛 ชนิดนม <RequiredBadge />
+              🥛 ชนิดนม
+              <span className="text-[10px] text-gray-400 font-normal bg-gray-100 px-1.5 py-0.5 rounded">ไม่บังคับ</span>
               {milk && <span className="ml-auto text-xs text-cocoa-600 font-semibold">{milk.name}</span>}
             </p>
             {addons.length === 0 ? (
@@ -229,7 +230,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
         <div className="px-5 pt-3 pb-6 border-t border-gray-100 shrink-0">
           {!canConfirm && (
             <p className="text-xs text-red-400 text-center mb-2">
-              กรุณาเลือก{!milk ? 'ชนิดนม' : ''}{!milk && !packaging ? ' และ ' : ''}{!packaging ? 'บรรจุภัณฑ์' : ''}
+              กรุณาเลือกบรรจุภัณฑ์
             </p>
           )}
           {totalExtra > 0 && (

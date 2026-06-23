@@ -394,7 +394,12 @@ export default function LabelSettingsPage() {
       if (labelRes.data?.value) {
         try {
           const saved = JSON.parse(labelRes.data.value)
-          if (saved.layout) setLayout(saved.layout)
+          if (saved.layout) {
+            // Merge: คง field เดิม + เพิ่ม field ใหม่จาก DEFAULT_LAYOUT ที่ยังไม่มี
+            const savedIds = new Set(saved.layout.map(f => f.id))
+            const newFields = DEFAULT_LAYOUT.filter(f => !savedIds.has(f.id))
+            setLayout([...saved.layout, ...newFields])
+          }
           if (saved.copies)     setCopies(saved.copies)
           if (saved.printerIp)  setPrinterIp(saved.printerIp)
           if (saved.printerPort)setPrinterPort(saved.printerPort)
