@@ -230,7 +230,7 @@ export default function SalesHistoryPage() {
           totalItems     += r.itemCount
           // Use r.sales (not grossSales) to be consistent with Dashboard's pSales
           platformSales[platform]  = r.sales
-          platformDetail[platform] = { sales: r.sales, matCost: platMatCost, netProfit }
+          platformDetail[platform] = { sales: r.sales, matCost: platMatCost, laborCost: platLaborCost, netProfit }
           if (r.itemCount > 0 || r.sales > 0) activePlatforms.push(platform)
         }
 
@@ -538,7 +538,7 @@ export default function SalesHistoryPage() {
                           ))}
                         </div>
                       )}
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-3 gap-2">
                         <button onClick={() => stageChange(day.date, p, 'mat')} disabled={isSaving}
                           className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
                             dispMat
@@ -553,6 +553,13 @@ export default function SalesHistoryPage() {
                             {dispMat ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
                           </span>
                         </button>
+                        <div className="flex flex-col items-start gap-1 rounded-xl border border-gray-200 px-3 py-2.5">
+                          <span className="text-[11px] text-gray-400 font-medium">Labor Cost</span>
+                          <span className="text-sm font-bold text-gray-800">{formatBaht(detail.laborCost ?? 0)}</span>
+                          <span className="text-[11px] flex items-center gap-1 font-semibold text-gray-400">
+                            <Clock size={11} /> {laborPct}% ของยอดขาย
+                          </span>
+                        </div>
                         <button onClick={() => stageChange(day.date, p, 'profit')} disabled={isSaving}
                           className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
                             dispProfit
