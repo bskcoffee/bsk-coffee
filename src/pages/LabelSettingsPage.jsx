@@ -15,7 +15,7 @@ const PW = 250
 const MOCK = {
   name: 'Cocoa Latte',
   qty: 2,
-  options: { milk: 'นมสด', sweetness: 50, refill: false, note: '' },
+  options: { milk: 'นมสด', sweetness: 50, refill: false, note: '', packaging: 'แยกน้ำแข็ง' },
   orderId: 'GF-012',
   platform: 'GRAB',
 }
@@ -105,8 +105,9 @@ function getContent(field, storeName) {
     case 'menu_name': return MOCK.name
     case 'options': {
       const opts = []
-      if (o.milk) opts.push(o.milk)
+      if (o.milk)           opts.push(o.milk)
       if (o.sweetness != null) opts.push(`${o.sweetness}%`)
+      if (o.packaging)      opts.push(o.packaging)
       return opts.join(' · ') || '–'
     }
     case 'order_id':   return `#${MOCK.orderId}`

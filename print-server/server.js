@@ -87,6 +87,7 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
         const opts = []
         if (o.milk)             { const s = toStr(o.milk);  if (s) opts.push(s) }
         if (o.sweetness != null) opts.push(`${o.sweetness}%`)
+        if (o.packaging)        { const s = toStr(o.packaging); if (s) opts.push(s) }
         if (o.refill) {
           if (Array.isArray(o.refill) && o.refill.length > 0)
             opts.push(o.refill.map(toStr).filter(Boolean).join(', ') || 'Refill')
@@ -177,6 +178,7 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
   if (s.showOptions) {
     if (s.showOptionMilk   && o.milk)             opts.push(o.milk)
     if (s.showOptionSweet  && o.sweetness != null) opts.push(`${o.sweetness}%`)
+    if (o.packaging)                               opts.push(o.packaging)
     if (s.showOptionRefill && o.refill)            opts.push('Refill')
     if (s.showOptionNote   && o.note)              opts.push(o.note)
   }
@@ -228,15 +230,39 @@ app.post('/print', async (req, res) => {
     return res.status(400).json({ error: 'No items to print' })
   }
 
-  const copies      = parseInt(labelSettings.copies ?? 1)
-  const totalLabels = items.reduce((s, i) => s + (i.qty ?? 1), 0)
+  const copies = parseInt(labelSettings.copies ?? 1)
+
+  // แปลง refill value เป็น string ชื่อ
+  const toRefillName = (v) => {
+    if (v == null) return ''
+    if (typeof v === 'string') return v
+    if (typeof v === 'object') return v.name || v.label || v.value || ''
+    return String(v)
+  }
+
+  // ดึง refill list จาก item (เสมอ array)
+  const getRefillList = (item) => {
+    const refills = item.item_options?.refill
+    if (!refills) return []
+    const arr = Array.isArray(refills) ? refills : [refills]
+    return arr.map(toRefillName).filter(Boolean)
+  }
+
+  // totalLabels = แต่ละ unit × (1 label ปกติ + N label refill)
+  const totalLabels = items.reduce((s, item) => {
+    const qty = item.qty ?? 1
+    return s + qty * (1 + getRefillList(item).length)
+  }, 0)
 
   const buffers = []
   let labelIdx  = 1
 
   for (const item of items) {
-    const qty = item.qty ?? 1
+    const qty        = item.qty ?? 1
+    const refillList = getRefillList(item)
+
     for (let q = 0; q < qty; q++) {
+      // ── Label ปกติ ──
       for (let c = 0; c < copies; c++) {
         const buf = labelSettings.layout
           ? buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
@@ -244,6 +270,22 @@ app.post('/print', async (req, res) => {
         buffers.push(buf)
       }
       labelIdx++
+
+      // ── Label Refill (1 ใบต่อ 1 refill ที่เลือก) ──
+      for (const refillName of refillList) {
+        const refillItem = {
+          ...item,
+          name: refillName,
+          item_options: { ...item.item_options, refill: null },
+        }
+        for (let c = 0; c < copies; c++) {
+          const buf = labelSettings.layout
+            ? buildLabelFromLayout(refillItem, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
+            : buildLabel(refillItem, orderId, platform, labelIdx, totalLabels, labelSettings, storeName)
+          buffers.push(buf)
+        }
+        labelIdx++
+      }
     }
   }
 
