@@ -3,7 +3,7 @@ import {
   Save, Printer, RefreshCw, CheckCircle, Wifi,
   AlignLeft, AlignCenter, AlignRight,
   Coffee, Hash, Clock, Tag, Package, SlidersHorizontal,
-  FileText, Plus, X, Trash2, Calendar, Type,
+  FileText, Plus, X, Trash2, Calendar, Type, MessageSquare,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../contexts/ToastContext'
@@ -15,7 +15,7 @@ const PW = 250
 const MOCK = {
   name: 'Cocoa Latte',
   qty: 2,
-  options: { milk: 'นมสด', sweetness: 50, refill: false, note: '', packaging: 'แยกน้ำแข็ง' },
+  options: { milk: 'นมสด', sweetness: 50, refill: false, note: 'ไม่ใส่น้ำแข็ง', packaging: 'แยกน้ำแข็ง' },
   orderId: 'GF-012',
   platform: 'GRAB',
 }
@@ -32,6 +32,7 @@ const DEFAULT_LAYOUT = [
   { id: 'store_name',type: 'store_name',label: 'ชื่อร้าน',   visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
   { id: 'platform',  type: 'platform',  label: 'Platform',   visible: false, x: 50, y: 80, fontSize: 10, bold: true,  align: 'center' },
   { id: 'date',      type: 'date',      label: 'วันที่',     visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+  { id: 'note',      type: 'note',      label: 'Note',       visible: false, x: 50, y: 88, fontSize: 9,  bold: false, align: 'center' },
 ]
 
 // ─── Presets ──────────────────────────────────────────────────────────────────
@@ -49,6 +50,7 @@ const PRESETS = {
       { id: 'store_name',type: 'store_name',label: 'ชื่อร้าน',  visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
       { id: 'platform',  type: 'platform',  label: 'Platform',  visible: false, x: 50, y: 80, fontSize: 10, bold: true,  align: 'center' },
       { id: 'date',      type: 'date',      label: 'วันที่',    visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'note',      type: 'note',      label: 'Note',      visible: false, x: 50, y: 88, fontSize: 9,  bold: false, align: 'center' },
     ],
   },
   kitchen: {
@@ -64,6 +66,7 @@ const PRESETS = {
       { id: 'time',      type: 'time',      label: 'เวลา',      visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
       { id: 'store_name',type: 'store_name',label: 'ชื่อร้าน',  visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
       { id: 'date',      type: 'date',      label: 'วันที่',    visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'note',      type: 'note',      label: 'Note',      visible: false, x: 50, y: 88, fontSize: 9,  bold: false, align: 'center' },
     ],
   },
   minimal: {
@@ -79,6 +82,7 @@ const PRESETS = {
       { id: 'store_name',type: 'store_name',label: 'ชื่อร้าน',  visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
       { id: 'platform',  type: 'platform',  label: 'Platform',  visible: false, x: 50, y: 80, fontSize: 10, bold: true,  align: 'center' },
       { id: 'date',      type: 'date',      label: 'วันที่',    visible: false, x: 50, y: 80, fontSize: 9,  bold: false, align: 'center' },
+      { id: 'note',      type: 'note',      label: 'Note',      visible: false, x: 50, y: 88, fontSize: 9,  bold: false, align: 'center' },
     ],
   },
 }
@@ -95,6 +99,7 @@ const FIELD_ICON = {
   store_name: Tag,
   platform:   Tag,
   date:       Calendar,
+  note:       MessageSquare,
   custom:     FileText,
 }
 
@@ -117,6 +122,7 @@ function getContent(field, storeName) {
     case 'store_name': return storeName || 'Cocoa House'
     case 'platform':   return MOCK.platform
     case 'date':       return new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+    case 'note':       return MOCK.options.note || ''
     case 'custom':     return field.text || '(ข้อความ)'
     default:           return ''
   }

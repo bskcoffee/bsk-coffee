@@ -112,6 +112,13 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
         const now = new Date()
         return `${now.getDate()}/${now.getMonth()+1}`
       }
+      case 'note': {
+        const s = o.note
+        if (!s) return ''
+        if (typeof s === 'string') return s
+        if (typeof s === 'object') return s.name || s.label || s.value || ''
+        return String(s)
+      }
       case 'custom':     return field.text || ''
       default:           return ''
     }
