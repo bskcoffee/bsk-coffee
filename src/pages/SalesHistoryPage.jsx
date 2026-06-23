@@ -118,9 +118,9 @@ export default function SalesHistoryPage() {
       const tmap = {}
       for (const t of transfers) {
         tmap[tsKey(t.sale_date, t.platform)] = {
-          mat: t.mat_transferred, profit: t.profit_transferred,
-          matAt: t.mat_transferred_at, profitAt: t.profit_transferred_at,
-          matAmount: t.mat_amount ?? 0, profitAmount: t.profit_amount ?? 0,
+          mat: t.mat_transferred, profit: t.profit_transferred, labor: t.labor_transferred,
+          matAt: t.mat_transferred_at, profitAt: t.profit_transferred_at, laborAt: t.labor_transferred_at,
+          matAmount: t.mat_amount ?? 0, profitAmount: t.profit_amount ?? 0, laborAmount: t.labor_amount ?? 0,
         }
       }
       setTransferMap(tmap)
@@ -272,8 +272,8 @@ export default function SalesHistoryPage() {
   // Stage a change locally (no DB write yet)
   const stageChange = (date, platform, field) => {
     const key     = tsKey(date, platform)
-    const saved   = transferMap[key] ?? { mat: false, profit: false }
-    const current = pendingChanges[key] ?? { mat: saved.mat, profit: saved.profit }
+    const saved   = transferMap[key] ?? { mat: false, profit: false, labor: false }
+    const current = pendingChanges[key] ?? { mat: saved.mat, profit: saved.profit, labor: saved.labor }
     setPendingChanges(prev => ({
       ...prev,
       [key]: { ...current, [field]: !current[field] },
@@ -283,10 +283,11 @@ export default function SalesHistoryPage() {
   // Confirm and save pending changes to DB
   const saveChanges = async (date, platform, detail = {}) => {
     const key    = tsKey(date, platform)
-    const cur    = transferMap[key] ?? { mat: false, profit: false, matAt: null, profitAt: null, matAmount: 0, profitAmount: 0 }
-    const staged = pendingChanges[key] ?? { mat: cur.mat, profit: cur.profit }
+    const cur    = transferMap[key] ?? { mat: false, profit: false, labor: false, matAt: null, profitAt: null, laborAt: null, matAmount: 0, profitAmount: 0, laborAmount: 0 }
+    const staged = pendingChanges[key] ?? { mat: cur.mat, profit: cur.profit, labor: cur.labor }
     const matNow    = staged.mat    && !cur.mat    ? new Date().toISOString() : (staged.mat    ? cur.matAt    : null)
     const profitNow = staged.profit && !cur.profit ? new Date().toISOString() : (staged.profit ? cur.profitAt : null)
+    const laborNow  = staged.labor  && !cur.labor  ? new Date().toISOString() : (staged.labor  ? cur.laborAt  : null)
 
     setSaving(key)
     await supabase.from('transfer_status').upsert({
@@ -294,17 +295,22 @@ export default function SalesHistoryPage() {
       platform,
       mat_transferred:       staged.mat,
       mat_transferred_at:    matNow,
-      mat_amount:            staged.mat    ? (detail.matCost   ?? cur.matAmount   ?? 0) : 0,
+      mat_amount:            staged.mat    ? (detail.matCost    ?? cur.matAmount    ?? 0) : 0,
       profit_transferred:    staged.profit,
       profit_transferred_at: profitNow,
-      profit_amount:         staged.profit ? (detail.netProfit ?? cur.profitAmount ?? 0) : 0,
+      profit_amount:         staged.profit ? (detail.netProfit  ?? cur.profitAmount ?? 0) : 0,
+      labor_transferred:     staged.labor,
+      labor_transferred_at:  laborNow,
+      labor_amount:          staged.labor  ? (detail.laborCost  ?? cur.laborAmount  ?? 0) : 0,
     }, { onConflict: 'sale_date,platform' })
 
     setTransferMap(prev => ({
       ...prev,
-      [key]: { ...cur, mat: staged.mat, profit: staged.profit, matAt: matNow, profitAt: profitNow,
-               matAmount: staged.mat ? (detail.matCost ?? cur.matAmount ?? 0) : 0,
-               profitAmount: staged.profit ? (detail.netProfit ?? cur.profitAmount ?? 0) : 0 },
+      [key]: { ...cur, mat: staged.mat, profit: staged.profit, labor: staged.labor,
+               matAt: matNow, profitAt: profitNow, laborAt: laborNow,
+               matAmount:    staged.mat    ? (detail.matCost   ?? cur.matAmount    ?? 0) : 0,
+               profitAmount: staged.profit ? (detail.netProfit ?? cur.profitAmount ?? 0) : 0,
+               laborAmount:  staged.labor  ? (detail.laborCost ?? cur.laborAmount  ?? 0) : 0 },
     }))
     setPendingChanges(prev => { const n = { ...prev }; delete n[key]; return n })
     setSaving(null)
@@ -511,6 +517,7 @@ export default function SalesHistoryPage() {
                   // Display state: use pending if exists, else use saved
                   const dispMat    = hasPending ? pending.mat    : (ts.mat    ?? false)
                   const dispProfit = hasPending ? pending.profit : (ts.profit ?? false)
+                  const dispLabor  = hasPending ? pending.labor  : (ts.labor  ?? false)
                   const isSaving   = saving === key
                   return (
                     <div key={p} className="bg-gray-50 rounded-xl p-3 space-y-2">
@@ -555,13 +562,20 @@ export default function SalesHistoryPage() {
                             {dispMat ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
                           </span>
                         </button>
-                        <div className="flex flex-col items-start gap-1 rounded-xl border border-gray-200 px-3 py-2.5">
+                        <button onClick={() => stageChange(day.date, p, 'labor')} disabled={isSaving}
+                          className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
+                            dispLabor
+                              ? 'bg-green-50 border-green-300'
+                              : hasPending && !dispLabor
+                                ? 'bg-white border-amber-300 ring-1 ring-amber-200'
+                                : 'bg-white border-gray-200 hover:border-cocoa-300'
+                          } ${isSaving ? 'opacity-50' : ''}`}>
                           <span className="text-[11px] text-gray-400 font-medium">Labor Cost</span>
                           <span className="text-sm font-bold text-gray-800">{formatBaht(detail.laborCost ?? 0)}</span>
-                          <span className="text-[11px] flex items-center gap-1 font-semibold text-gray-400">
-                            <Clock size={11} /> {laborPct}% ของยอดขาย
+                          <span className={`text-[11px] flex items-center gap-1 font-semibold ${dispLabor ? 'text-green-600' : 'text-gray-400'}`}>
+                            {dispLabor ? <><CheckCircle2 size={11} /> โอนแล้ว</> : <><Clock size={11} /> รอโอน</>}
                           </span>
-                        </div>
+                        </button>
                         <button onClick={() => stageChange(day.date, p, 'profit')} disabled={isSaving}
                           className={`flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-all active:scale-95 ${
                             dispProfit
