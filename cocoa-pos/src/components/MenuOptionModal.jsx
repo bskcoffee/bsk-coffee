@@ -92,7 +92,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
 
           {/* ── 1. ชนิดนม (ต้องระบุ) ──────────────────────── */}
           <section>
-            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+            <p className="text-sm font-medium text-gray-500 mb-3 flex items-center gap-2">
               🥛 ชนิดนม
               <span className="text-[10px] text-gray-400 font-normal bg-gray-100 px-1.5 py-0.5 rounded">ไม่บังคับ</span>
               {milk && <span className="ml-auto text-xs text-cocoa-600 font-semibold">{milk.name}</span>}
@@ -113,13 +113,14 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
                   </button>
                 ))}
               </div>
+              <p className="text-[10px] text-gray-400 mt-1.5">แตะอีกครั้งเพื่อยกเลิกการเลือก</p>
             )}
           </section>
 
           {/* ── 2. ความหวาน (ต้องระบุ) ────────────────────── */}
           <section>
             <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-              🍬 ความหวาน <RequiredBadge />
+              🍬 ความหวาน
               <span className="ml-auto text-cocoa-600 font-bold">{sweetness}%</span>
             </p>
             <div className="flex gap-2">

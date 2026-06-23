@@ -2,6 +2,7 @@ require('dotenv').config()
 const express = require('express')
 const cors    = require('cors')
 const net     = require('net')
+const iconv   = require('iconv-lite')
 
 const app = express()
 app.use(cors())
@@ -57,7 +58,8 @@ function tsplHeader() {
   return [
     `SIZE ${LABEL_W_MM} mm, ${LABEL_H_MM} mm`,
     `GAP 2 mm, 0 mm`,
-    `DIRECTION 1`,   // fix upside-down orientation
+    `DIRECTION 1`,
+    `CODEPAGE 874`,  // Thai character support
     `CLS`,
   ]
 }
@@ -129,6 +131,7 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
     `SIZE ${wMM} mm, ${hMM} mm`,
     `GAP 2 mm, 0 mm`,
     `DIRECTION 1`,
+    `CODEPAGE 874`,
     `CLS`,
   ]
 
@@ -154,7 +157,7 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
   }
 
   cmds.push(`PRINT 1,1`, '')
-  return Buffer.from(cmds.join('\r\n'), 'utf8')
+  return iconv.encode(cmds.join('\r\n'), 'cp874')
 }
 
 // ─── Build TSPL label from old settings format (fallback) ────────────────────
@@ -223,7 +226,7 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
   }
 
   cmds.push(`PRINT 1,1`, '')
-  return Buffer.from(cmds.join('\r\n'), 'utf8')
+  return iconv.encode(cmds.join('\r\n'), 'cp874')
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
