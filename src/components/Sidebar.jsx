@@ -1,13 +1,14 @@
 import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
-const PASSKEY = '18879'
-const POS_URL = 'https://cocoa-pos.vercel.app'
+const PASSKEY   = '18879'
+const POS_URL  = 'https://cocoa-pos.vercel.app'
+const LIFF_URL = 'https://cocoa-liff.vercel.app'
 
-function PasskeyModal({ onConfirm, onClose }) {
+function PasskeyModal({ title = 'ไปที่ Cocoa POS', onConfirm, onClose }) {
   const [val, setVal]     = useState('')
   const [error, setError] = useState(false)
 
@@ -20,7 +21,7 @@ function PasskeyModal({ onConfirm, onClose }) {
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[80] p-4">
       <div className="bg-white rounded-2xl p-6 w-full max-w-xs shadow-xl space-y-4">
         <div className="flex items-center justify-between">
-          <p className="font-bold text-gray-900">ไปที่ Cocoa POS</p>
+          <p className="font-bold text-gray-900">{title}</p>
           <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X size={18} /></button>
         </div>
         <div>
@@ -91,6 +92,7 @@ export default function Sidebar() {
   const [dragOver, setDragOver] = useState(null)
   const [showSignOutModal, setShowSignOutModal] = useState(false)
   const [showPasskey, setShowPasskey]           = useState(false)
+  const [showLiff, setShowLiff]                 = useState(false)
 
   // Fetch nav order from Supabase on mount — syncs across all devices
   useEffect(() => {
@@ -225,6 +227,13 @@ export default function Sidebar() {
         >
           <Tablet size={15} /> Cocoa POS
         </button>
+        {/* Go to Cocoa LIFF */}
+        <button
+          onClick={() => setShowLiff(true)}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-green-700 hover:bg-green-600 text-white text-sm font-medium transition-colors"
+        >
+          <Package size={15} /> Cocoa LIFF
+        </button>
         <button
           onClick={() => setShowSignOutModal(true)}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
@@ -239,8 +248,16 @@ export default function Sidebar() {
     {/* Passkey modal — outside aside to avoid event capture */}
     {showPasskey && (
       <PasskeyModal
+        title="ไปที่ Cocoa POS"
         onConfirm={() => { setShowPasskey(false); window.open(POS_URL, '_blank') }}
         onClose={() => setShowPasskey(false)}
+      />
+    )}
+    {showLiff && (
+      <PasskeyModal
+        title="ไปที่ Cocoa LIFF"
+        onConfirm={() => { setShowLiff(false); window.open(LIFF_URL, '_blank') }}
+        onClose={() => setShowLiff(false)}
       />
     )}
 
