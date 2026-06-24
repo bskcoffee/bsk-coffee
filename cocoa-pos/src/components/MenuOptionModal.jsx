@@ -100,20 +100,22 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
             {addons.length === 0 ? (
               <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">ยังไม่มีข้อมูล Addon</p>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {addons.map(addon => (
-                  <button
-                    key={addon.id}
-                    onClick={() => setMilk(prev => prev?.id === addon.id ? null : { id: addon.id, name: addon.name, price: addon.price, prices: addon.prices })}
-                    className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95
-                      ${milk?.id === addon.id ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 bg-white text-gray-600'}`}
-                  >
-                    <div className="font-bold">{addon.name}</div>
-                    <div className="text-xs opacity-60 mt-0.5">{addon.price > 0 ? `+${fmt(addon.price)}` : 'ฟรี'}</div>
-                  </button>
-                ))}
-              </div>
-              <p className="text-[10px] text-gray-400 mt-1.5">แตะอีกครั้งเพื่อยกเลิกการเลือก</p>
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  {addons.map(addon => (
+                    <button
+                      key={addon.id}
+                      onClick={() => setMilk(prev => prev?.id === addon.id ? null : { id: addon.id, name: addon.name, price: addon.price, prices: addon.prices })}
+                      className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95
+                        ${milk?.id === addon.id ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 bg-white text-gray-600'}`}
+                    >
+                      <div className="font-bold">{addon.name}</div>
+                      <div className="text-xs opacity-60 mt-0.5">{addon.price > 0 ? `+${fmt(addon.price)}` : 'ฟรี'}</div>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1.5">แตะอีกครั้งเพื่อยกเลิกการเลือก</p>
+              </>
             )}
           </section>
 

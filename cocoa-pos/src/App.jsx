@@ -3,15 +3,16 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import LoginPage      from './pages/LoginPage'
 import POSPage        from './pages/POSPage'
 import OrderManagePage from './pages/OrderManagePage'
-import { ShoppingCart, ClipboardList, LayoutDashboard, X } from 'lucide-react'
+import { ShoppingCart, ClipboardList, LayoutDashboard, X, Package } from 'lucide-react'
 
 const TABS = [
   { key: 'pos',    label: 'POS',        icon: ShoppingCart  },
   { key: 'orders', label: 'ออเดอร์',   icon: ClipboardList },
 ]
 
-const PASSKEY = '18879'
+const PASSKEY   = '18879'
 const HOUSE_URL = 'https://cocoa-house.vercel.app'
+const LIFF_URL  = 'https://cocoa-liff.vercel.app'
 
 function PasskeyModal({ title, onConfirm, onClose }) {
   const [val, setVal]     = useState('')
@@ -72,6 +73,7 @@ function PasskeyModal({ title, onConfirm, onClose }) {
 function AppInner() {
   const { session, loading } = useAuth()
   const [showPasskey, setShowPasskey] = useState(false)
+  const [showLiff, setShowLiff]       = useState(false)
 
   // Read URL params for deep-link from cocoa-house history page
   const params      = new URLSearchParams(window.location.search)
@@ -126,6 +128,15 @@ function AppInner() {
           <LayoutDashboard size={16} />
           <span>Cocoa House</span>
         </button>
+        {/* Go to Cocoa LIFF */}
+        <button
+          onClick={() => setShowLiff(true)}
+          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-700 text-white hover:bg-green-600 transition-all text-sm font-semibold border border-green-500/40"
+          title="ไปที่ Cocoa LIFF"
+        >
+          <Package size={16} />
+          <span>Cocoa LIFF</span>
+        </button>
       </div>
 
       {/* Page content */}
@@ -140,6 +151,13 @@ function AppInner() {
           title="ไปที่ Cocoa House"
           onConfirm={() => { setShowPasskey(false); window.open(HOUSE_URL, '_blank') }}
           onClose={() => setShowPasskey(false)}
+        />
+      )}
+      {showLiff && (
+        <PasskeyModal
+          title="ไปที่ Cocoa LIFF"
+          onConfirm={() => { setShowLiff(false); window.open(LIFF_URL, '_blank') }}
+          onClose={() => setShowLiff(false)}
         />
       )}
     </div>
