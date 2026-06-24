@@ -336,17 +336,17 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
     if (!reprintTarget) return
     setReprintPrinting(true)
     setReprintToast(null)
-    let ok = 0, fail = 0
     try {
       const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
       const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
       const ip   = labelSettings.printerIp   ?? '192.168.1.100'
       const port = labelSettings.printerPort ?? 3001
       const units = buildPrintUnits(reprintItems).filter(u => reprintSelected.has(u.key))
-      for (const unit of units) {
-        let unitStatus = 'success'
-        try {
-          const res = await fetch(`http://${ip}:${port}/print`, {
+
+      // ยิงทุก request พร้อมกัน — max wait = 5s ไม่ว่าจะมีกี่รายการ
+      const results = await Promise.allSettled(
+        units.map(unit =>
+          fetch(`http://${ip}:${port}/print`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -356,21 +356,21 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
               labelSettings,
             }),
             signal: AbortSignal.timeout(5000),
-          })
-          if (!res.ok) throw new Error(`HTTP ${res.status}`)
-          ok++
-        } catch (e) {
-          console.warn('reprint unit failed:', e.message)
-          unitStatus = 'error'
-          fail++
-        }
-        const opts = unit.printItem.item_options ?? {}
-        const parts = []
-        if (opts.milk?.name)       parts.push(opts.milk.name)
+          }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r })
+        )
+      )
+
+      const now = Date.now()
+      results.forEach((result, i) => {
+        const unit       = units[i]
+        const unitStatus = result.status === 'fulfilled' ? 'success' : 'error'
+        const opts       = unit.printItem.item_options ?? {}
+        const parts      = []
+        if (opts.milk?.name)        parts.push(opts.milk.name)
         if (opts.sweetness != null) parts.push(`หวาน ${opts.sweetness}%`)
-        if (opts.packaging)        parts.push(opts.packaging)
+        if (opts.packaging)         parts.push(opts.packaging)
         onAddLog?.({
-          id:        Date.now() + Math.random(),
+          id:        now + i,
           menuName:  unit.printItem.name,
           menuObj:   { name: unit.printItem.name },
           options:   opts,
@@ -378,18 +378,23 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
           status:    unitStatus,
           timestamp: new Date(),
         })
-      }
+      })
+
+      const ok   = results.filter(r => r.status === 'fulfilled').length
+      const fail = results.filter(r => r.status === 'rejected').length
+      setReprintPrinting(false)
+      setReprintToast({ ok, fail })
+      setTimeout(() => {
+        setReprintToast(null)
+        setReprintTarget(null)
+        setReprintItems([])
+      }, fail > 0 ? 3000 : 1500)
     } catch (err) {
       console.warn('reprint failed:', err.message)
-      fail++
+      setReprintPrinting(false)
+      setReprintToast({ ok: 0, fail: 1 })
+      setTimeout(() => { setReprintToast(null); setReprintTarget(null); setReprintItems([]) }, 3000)
     }
-    setReprintPrinting(false)
-    setReprintToast({ ok, fail })
-    setTimeout(() => {
-      setReprintToast(null)
-      setReprintTarget(null)
-      setReprintItems([])
-    }, fail > 0 ? 3000 : 1500)
   }
 
   const toggleReprintKey = (key) =>
