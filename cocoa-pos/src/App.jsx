@@ -17,7 +17,8 @@ function PrintLabelModal({ onClose }) {
   const [search,      setSearch]      = useState('')
   const [selected,    setSelected]    = useState(null)
   const [showOptions, setShowOptions] = useState(false)
-  const [printing,    setPrinting]    = useState(false)
+  const [printing,     setPrinting]     = useState(false)
+  const [printStatus,  setPrintStatus]  = useState(null)  // null | 'success' | 'error'
 
   useEffect(() => {
     supabase
@@ -35,12 +36,13 @@ function PrintLabelModal({ onClose }) {
 
   const handlePrint = async (options) => {
     setPrinting(true)
+    setPrintStatus(null)
     try {
       const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
       const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
       const ip   = labelSettings.printerIp   ?? '192.168.1.100'
       const port = labelSettings.printerPort ?? 3001
-      await fetch(`http://${ip}:${port}/print`, {
+      const res = await fetch(`http://${ip}:${port}/print`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -51,10 +53,15 @@ function PrintLabelModal({ onClose }) {
         }),
         signal: AbortSignal.timeout(5000),
       })
-    } catch (err) { console.warn('test print failed:', err.message) }
+      setPrintStatus(res.ok ? 'success' : 'error')
+    } catch (err) {
+      console.warn('test print failed:', err.message)
+      setPrintStatus('error')
+    }
     setPrinting(false)
     setShowOptions(false)
     setSelected(null)
+    setTimeout(() => setPrintStatus(null), 4000)
   }
 
   if (showOptions && selected) {
@@ -82,6 +89,26 @@ function PrintLabelModal({ onClose }) {
             <X size={18} className="text-gray-400" />
           </button>
         </div>
+
+        {/* Status banner */}
+        {printStatus === 'success' && (
+          <div className="mx-5 mt-3 px-4 py-2.5 rounded-xl bg-green-50 border border-green-200 flex items-center gap-2 shrink-0">
+            <span className="text-green-600 text-lg">✓</span>
+            <p className="text-sm font-semibold text-green-700">ส่งคำสั่งพิมพ์สำเร็จ</p>
+          </div>
+        )}
+        {printStatus === 'error' && (
+          <div className="mx-5 mt-3 px-4 py-2.5 rounded-xl bg-red-50 border border-red-200 flex items-center gap-2 shrink-0">
+            <span className="text-red-500 text-lg">✕</span>
+            <p className="text-sm font-semibold text-red-600">พิมพ์ไม่สำเร็จ — ตรวจสอบ print server</p>
+          </div>
+        )}
+        {printing && (
+          <div className="mx-5 mt-3 px-4 py-2.5 rounded-xl bg-blue-50 border border-blue-200 flex items-center gap-2 shrink-0">
+            <Loader2 size={15} className="animate-spin text-blue-500" />
+            <p className="text-sm font-semibold text-blue-600">กำลังส่งคำสั่งพิมพ์...</p>
+          </div>
+        )}
 
         <div className="px-5 pt-3 pb-1 shrink-0">
           <div className="relative">
