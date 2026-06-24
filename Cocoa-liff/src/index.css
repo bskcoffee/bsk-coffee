@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-white text-gray-900;
+    font-family: -apple-system, 'Helvetica Neue', sans-serif;
+  }
+  /* Safe area สำหรับ iPhone notch */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 12px);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 16px);
+  }
+}
