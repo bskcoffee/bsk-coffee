@@ -16,13 +16,16 @@ export interface CreateOrderPayload {
 }
 
 export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
-  const { lineUserId, customerName, cartItems, deliveryAddress, paymentMethod, subtotal, deliveryFee, total, scheduledAt } = payload
+  const {
+    lineUserId, customerName, cartItems, deliveryAddress,
+    paymentMethod, subtotal, deliveryFee, total, scheduledAt,
+  } = payload
 
   const payment = paymentMethod === 'campaign_6040'
     ? calculate6040(total)
     : { method: 'qr' as const, total, gov_pays: undefined, customer_pays: total }
 
-  const items = cartItems.map((ci) => ({
+  const line_items = cartItems.map((ci) => ({
     menu_item_id: ci.menuItem.id,
     name: ci.menuItem.name,
     price: ci.menuItem.price,
@@ -34,19 +37,24 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
   const { data, error } = await supabase
     .from('orders')
     .insert({
-      source: 'line',
-      customer_name: customerName,
+      // POS columns (ต้องมี)
+      platform: 'LINE@',
+      date: new Date().toISOString().split('T')[0],   // YYYY-MM-DD
+      status: 'preparing',
+      notes: `LINE@ order — ${customerName}`,
+
+      // LIFF columns
       line_user_id: lineUserId,
+      customer_name: customerName,
       delivery_zone: deliveryAddress.zone,
       delivery_address: deliveryAddress,
-      items,
+      line_items,
       payment_method: paymentMethod,
       subtotal,
       delivery_fee: deliveryFee,
       total,
       gov_pays: payment.gov_pays ?? null,
       customer_pays: payment.customer_pays,
-      order_status: 'pending',
       scheduled_at: scheduledAt ?? null,
     })
     .select()
