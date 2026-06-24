@@ -1,6 +1,6 @@
 // src/services/orderService.ts
 import { supabase } from '../lib/supabase'
-import type { CartItem, DeliveryAddress, PaymentMethod, Order, OrderStatus } from '../types'
+import type { CartItem, DeliveryAddress, PaymentMethod, Order } from '../types'
 import { calculate6040 } from '../types'
 
 export interface CreateOrderPayload {
@@ -9,15 +9,18 @@ export interface CreateOrderPayload {
   cartItems: CartItem[]
   deliveryAddress: DeliveryAddress
   paymentMethod: PaymentMethod
+  subtotal: number
+  deliveryFee: number
   total: number
+  scheduledAt?: string
 }
 
 export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
-  const { lineUserId, customerName, cartItems, deliveryAddress, paymentMethod, total } = payload
+  const { lineUserId, customerName, cartItems, deliveryAddress, paymentMethod, subtotal, deliveryFee, total, scheduledAt } = payload
 
   const payment = paymentMethod === 'campaign_6040'
     ? calculate6040(total)
-    : { method: 'qr' as const, total, customer_pays: total }
+    : { method: 'qr' as const, total, gov_pays: undefined, customer_pays: total }
 
   const items = cartItems.map((ci) => ({
     menu_item_id: ci.menuItem.id,
@@ -38,10 +41,13 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
       delivery_address: deliveryAddress,
       items,
       payment_method: paymentMethod,
+      subtotal,
+      delivery_fee: deliveryFee,
       total,
       gov_pays: payment.gov_pays ?? null,
       customer_pays: payment.customer_pays,
       order_status: 'pending',
+      scheduled_at: scheduledAt ?? null,
     })
     .select()
     .single()

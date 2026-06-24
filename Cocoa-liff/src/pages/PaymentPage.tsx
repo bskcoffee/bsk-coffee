@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import type { PaymentMethod, DeliveryAddress } from '../types'
 import { calculate6040 } from '../types'
+import { StepIndicator } from '../components/StepIndicator'
 
 interface PaymentPageProps {
   subtotal: number

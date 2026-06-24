@@ -19,7 +19,7 @@ export function getDistanceKm(lat1: number, lng1: number, lat2: number, lng2: nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-export type LocationStatus = 'loading' | 'ok' | 'outside' | 'denied' | 'unavailable'
+export type LocationStatus = 'idle' | 'loading' | 'ok' | 'outside' | 'too_far' | 'denied' | 'unavailable'
 
 export interface LocationResult {
   status: LocationStatus
@@ -39,7 +39,7 @@ export function checkUserLocation(): Promise<LocationResult> {
         const { latitude: lat, longitude: lng } = pos.coords
         const distanceKm = getDistanceKm(STORE_LOCATION.lat, STORE_LOCATION.lng, lat, lng)
         resolve({
-          status: distanceKm <= MAX_DISTANCE_KM ? 'ok' : 'outside',
+          status: distanceKm <= MAX_DISTANCE_KM ? 'ok' : 'too_far',
           lat,
           lng,
           distanceKm,

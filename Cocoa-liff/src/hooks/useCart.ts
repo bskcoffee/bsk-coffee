@@ -1,6 +1,5 @@
 // src/hooks/useCart.ts
 import { useState, useCallback } from 'react'
-import { v4 as uuid } from 'uuid'
 import type { CartItem, MenuItem, SelectedOptions } from '../types'
 
 export function useCart() {
@@ -24,7 +23,7 @@ export function useCart() {
       return [
         ...prev,
         {
-          id: uuid(),
+          id: crypto.randomUUID(),
           menuItem,
           quantity: 1,
           selectedOptions,

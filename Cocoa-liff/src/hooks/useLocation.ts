@@ -3,7 +3,7 @@ import { useState, useCallback } from 'react'
 import { checkUserLocation, type LocationResult } from '../lib/geolocation'
 
 export function useLocation() {
-  const [location, setLocation] = useState<LocationResult>({ status: 'loading' })
+  const [location, setLocation] = useState<LocationResult>({ status: 'idle' })
 
   const check = useCallback(async () => {
     setLocation({ status: 'loading' })

@@ -163,7 +163,7 @@ export function MenuPage({
         <OptionModal
           item={selectedItem}
           onClose={() => setSelectedItem(null)}
-          onAdd={(options) => {
+          onAdd={(options: import('../types').SelectedOptions) => {
             onAddItem(selectedItem, options)
             setSelectedItem(null)
           }}

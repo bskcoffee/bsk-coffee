@@ -32,15 +32,15 @@ export interface MenuItem {
 // Cart
 // ------------------------------------------------------------
 export interface SelectedOptions {
-  [optionLabel: string]: string  // เช่น { "ความหวาน": "หวานน้อย" }
+  [optionLabel: string]: string
 }
 
 export interface CartItem {
-  id: string            // uuid สร้างตอนเพิ่มลง cart
+  id: string
   menuItem: MenuItem
   quantity: number
   selectedOptions: SelectedOptions
-  subtotal: number      // price * quantity
+  subtotal: number
 }
 
 // ------------------------------------------------------------
@@ -65,8 +65,8 @@ export interface DeliveryAddressOther {
   lat: number
   lng: number
   distance_km: number
-  phone: string        // เบอร์โทรลูกค้า (สำหรับ Grab driver)
-  note?: string        // ชื่ออาคาร / เลขห้อง / จุดสังเกต
+  phone: string
+  note?: string
 }
 
 export type DeliveryAddress =
@@ -82,8 +82,8 @@ export type PaymentMethod = 'qr' | 'campaign_6040'
 export interface PaymentBreakdown {
   method: PaymentMethod
   total: number
-  gov_pays?: number       // เฉพาะ 60/40
-  customer_pays: number   // ยอดที่ลูกค้าจ่ายจริง
+  gov_pays?: number
+  customer_pays: number
 }
 
 // ------------------------------------------------------------
@@ -103,7 +103,7 @@ export interface OrderItem {
 
 export interface Order {
   id: string
-  order_number: number         // running number #0042
+  order_number: number
   source: OrderSource
   customer_name?: string
   line_user_id?: string
@@ -111,12 +111,13 @@ export interface Order {
   delivery_address?: DeliveryAddress
   items: OrderItem[]
   payment_method: PaymentMethod
-  subtotal: number             // ราคาสินค้ารวม
-  delivery_fee: number         // ค่าส่ง (0 = ฟรี)
-  total: number                // subtotal + delivery_fee
+  subtotal: number
+  delivery_fee: number
+  total: number
   gov_pays?: number
   customer_pays: number
   order_status: OrderStatus
+  scheduled_at?: string
   created_at: string
 }
 
@@ -127,7 +128,25 @@ export type StoreStatusResult = 'open' | 'closed' | 'manual_open' | 'manual_clos
 
 export interface StoreStatus {
   status: StoreStatusResult
-  reopen_at?: string   // ISO timestamp — แสดงเมื่อ manual_closed
+  reopen_at?: string
 }
 
-// -----------------------------
+// ------------------------------------------------------------
+// Utility functions
+// ------------------------------------------------------------
+
+/** คำนวณค่าส่ง: ฿15/กม., ปัดเป็นหลัก 5, ขั้นต่ำ ฿20 */
+export function calcDeliveryFee(distanceKm: number): number {
+  return Math.max(20, Math.round((distanceKm * 15) / 5) * 5)
+}
+
+/** คำนวณ 60/40 campaign — รัฐจ่าย 60% สูงสุด ฿200 */
+export function calculate6040(total: number): {
+  method: 'campaign_6040'
+  total: number
+  gov_pays: number
+  customer_pays: number
+} {
+  const gov_pays = Math.min(Math.round(total * 0.6), 200)
+  return { method: 'campaign_6040', total, gov_pays, customer_pays: total - gov_pays }
+}
