@@ -161,4 +161,7 @@ function getAddressLabel(addr: DeliveryAddress): string {
 
 function formatScheduled(date: Date): string {
   return date.toLocaleString('th-TH', {
-    weekday: 'short', month: 'sh
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+}

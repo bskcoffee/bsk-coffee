@@ -131,4 +131,7 @@ export function StatusPage({ orderId, onNewOrder }: StatusPageProps) {
         >
           + สั่งเพิ่ม
         </button>
-      
+      </div>
+    </div>
+  )
+}

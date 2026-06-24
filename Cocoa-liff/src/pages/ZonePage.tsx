@@ -230,4 +230,7 @@ function ZoneCard({
         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${badgeClass}`}>
           {badge}
         </span>
-       
+      </div>
+    </button>
+  )
+}

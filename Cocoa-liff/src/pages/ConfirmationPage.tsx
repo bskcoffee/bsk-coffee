@@ -166,4 +166,21 @@ function AddressDisplay({ address, deliveryFee }: { address: any; deliveryFee: n
       <span className="text-xs bg-orange-100 text-orange-700 font-semibold px-2 py-0.5 rounded-full">📍 ที่อื่น</span>
       <p className="text-sm font-medium text-gray-900 mt-2">ห่างร้าน {address.distance_km?.toFixed(1)} กม.</p>
       {address.note && <p className="text-xs text-gray-500 mt-0.5">{address.note}</p>}
-      {address.phone && <p className="text-xs text-gray-400 
+      {address.phone && <p className="text-xs text-gray-400 mt-0.5">📞 {address.phone}</p>}
+      <p className={`text-xs font-medium mt-0.5 ${deliveryFee > 0 ? 'text-amber-600' : 'text-green-500'}`}>
+        {deliveryFee > 0 ? `ค่าส่ง ฿${deliveryFee}` : 'จัดส่งฟรี'}
+      </p>
+    </div>
+  )
+}
+
+function SumRow({ label, value, valueClass = 'text-gray-700', bold = false }: {
+  label: string; value: string; valueClass?: string; bold?: boolean
+}) {
+  return (
+    <div className="flex justify-between text-xs">
+      <span className="text-gray-400">{label}</span>
+      <span className={`${valueClass} ${bold ? 'font-bold text-sm' : ''}`}>{value}</span>
+    </div>
+  )
+}

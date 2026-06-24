@@ -110,4 +110,22 @@ export function CartPage({
             <span>ยอดรวม</span>
             <span>฿{total}</span>
           </div>
-        </
+        </div>
+      </div>
+
+      {/* Bottom CTA */}
+      <div className="bg-white border-t px-4 pb-safe pt-3">
+        <button
+          onClick={onNext}
+          className={`w-full py-3.5 rounded-xl text-base font-semibold transition-colors ${
+            freeShipping
+              ? 'bg-green-500 text-white'
+              : 'bg-amber-500 text-white'
+          }`}
+        >
+          {btnLabel}
+        </button>
+      </div>
+    </div>
+  )
+}

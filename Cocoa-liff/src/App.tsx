@@ -139,4 +139,66 @@ export default function App() {
         subtotal={total}
         deliveryFee={deliveryFee}
         selectedZone={zoneSelection.zone}
-        dis
+        distanceKm={zoneSelection.distanceKm}
+        onUpdateQuantity={updateQuantity}
+        onBack={() => setScreen('menu')}
+        onNext={() => setScreen('delivery')}
+      />
+    )
+  }
+
+  if (screen === 'delivery' && zoneSelection) {
+    return (
+      <DeliveryPage
+        zone={zoneSelection.zone}
+        userLat={zoneSelection.lat}
+        userLng={zoneSelection.lng}
+        distanceKm={zoneSelection.distanceKm}
+        onBack={() => setScreen('cart')}
+        onNext={(address) => {
+          setDeliveryAddress(address)
+          setScreen('payment')
+        }}
+      />
+    )
+  }
+
+  if (screen === 'payment' && deliveryAddress) {
+    return (
+      <PaymentPage
+        subtotal={total}
+        deliveryFee={deliveryFee}
+        total={total + deliveryFee}
+        deliveryAddress={deliveryAddress}
+        scheduledAt={scheduledAt}
+        onBack={() => setScreen('delivery')}
+        onNext={handlePlaceOrder}
+      />
+    )
+  }
+
+  if (screen === 'confirmation' && order) {
+    return (
+      <ConfirmationPage
+        order={order}
+        onNewOrder={reset}
+        onTrack={() => setScreen('status')}
+      />
+    )
+  }
+
+  if (screen === 'status' && order) {
+    return (
+      <StatusPage
+        orderId={order.id}
+        onNewOrder={reset}
+      />
+    )
+  }
+
+  return (
+    <div className="flex items-center justify-center h-screen">
+      <div className="animate-spin rounded-full h-8 w-8 border-2 border-green-500 border-t-transparent" />
+    </div>
+  )
+}

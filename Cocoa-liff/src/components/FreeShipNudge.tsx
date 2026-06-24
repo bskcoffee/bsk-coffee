@@ -35,4 +35,24 @@ export function FreeShipNudge({ total, minOrder, deliveryFee, distanceKm }: Free
       {/* Row 1: icon + message + amount */}
       <div className="flex items-center gap-2 mb-1.5">
         <span className="text-base">🛵</span>
-        <div className="fle
+        <div className="flex-1">
+            <p className="text-xs font-semibold text-amber-700">ค่าจัดส่ง ฿{deliveryFee}</p>
+            <p className="text-xs text-amber-500 mt-0.5">
+              เพิ่มอีก ฿{remaining} → ฟรี ฿{deliveryFee}
+            </p>
+          </div>
+          <span className="text-xs font-bold text-amber-600">฿{deliveryFee}</span>
+        </div>
+      {/* Progress bar */}
+      <div className="h-1.5 rounded-full bg-amber-100">
+        <div
+          className="h-full rounded-full bg-amber-400 transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <p className="text-xs text-amber-600 mt-1">
+        💡 ยอดรวม ฿{total} · เพิ่มอีก ฿{remaining} รับฟรีค่าส่ง
+      </p>
+    </div>
+  )
+}

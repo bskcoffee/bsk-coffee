@@ -137,4 +137,38 @@ export function MenuPage({
           cartCount > 0 && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-50 border border-green-200">
               <span className="text-base">🎉</span>
-   
+              <p className="text-xs font-semibold text-green-700 flex-1">จัดส่งฟรี!</p>
+              <span className="text-xs text-green-600 font-bold">ฟรี</span>
+            </div>
+          )
+        )}
+
+        {/* Cart button */}
+        {cartCount > 0 && (
+          <button
+            onClick={onGoToCart}
+            className="w-full py-3.5 rounded-xl bg-green-500 text-white text-base font-semibold flex items-center justify-between px-5"
+          >
+            <span className="bg-white/25 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+              {cartCount}
+            </span>
+            <span>ดูตะกร้า</span>
+            <span>→</span>
+          </button>
+        )}
+      </div>
+
+      {/* Option Modal */}
+      {selectedItem && (
+        <OptionModal
+          item={selectedItem}
+          onClose={() => setSelectedItem(null)}
+          onAdd={(options) => {
+            onAddItem(selectedItem, options)
+            setSelectedItem(null)
+          }}
+        />
+      )}
+    </div>
+  )
+}
