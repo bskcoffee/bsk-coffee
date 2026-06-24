@@ -62,7 +62,41 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
 
   if (error) throw error
   const d = data as any
-  return { ...d, items: d.line_items ?? [] } as Order
+  const order = { ...d, items: d.line_items ?? [] } as Order
+
+  // Insert order_items เพื่อให้ POS เห็น item detail
+  const orderItems = cartItems.map((ci) => ({
+    order_id: order.id,
+    menu_id: ci.menuItem.id,
+    quantity: ci.quantity,
+    unit_price: ci.menuItem.price,
+    unit_gp_cost: 0,
+    is_campaign: paymentMethod === 'campaign_6040',
+    item_options: {
+      milk: null,
+      sweetness: mapSweetness(ci.selectedOptions['ความหวาน']),
+      refill: null,
+      packaging: (ci.selectedOptions['บรรจุภัณฑ์'] as 'พร้อมดื่ม' | 'แยกน้ำแข็ง') ?? null,
+      note: ci.selectedOptions['หมายเหตุ'] ?? '',
+    },
+  }))
+
+  if (orderItems.length > 0) {
+    await supabase.from('order_items').insert(orderItems)
+  }
+
+  return order
+}
+
+function mapSweetness(val?: string): number {
+  const map: Record<string, number> = {
+    '0%': 0, 'ไม่หวาน': 0,
+    '10%': 10,
+    '25%': 25, 'หวานน้อย': 25,
+    '50%': 50, 'หวานน้อยมาก': 50,
+    '100%': 100, 'หวานปกติ': 100,
+  }
+  return map[val ?? ''] ?? 100
 }
 
 export async function getOrderById(orderId: string): Promise<Order> {

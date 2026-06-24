@@ -3,6 +3,25 @@ const express = require('express')
 const cors    = require('cors')
 const net     = require('net')
 const iconv   = require('iconv-lite')
+const fs      = require('fs')
+
+// ─── Thai bitmap rendering ────────────────────────────────────────────────────
+let nCanvas = null, thaiFont = false
+try {
+  nCanvas = require('@napi-rs/canvas')
+  const THAI_FONT = 'C:\\Windows\\Fonts\\tahoma.ttf'
+  if (fs.existsSync(THAI_FONT)) {
+    nCanvas.GlobalFonts.registerFromPath(THAI_FONT, 'Thai')
+    thaiFont = true
+    console.log('[FONT] Thai (Tahoma) loaded OK')
+  } else {
+    console.warn('[FONT] Tahoma not found — Thai text may be garbled')
+  }
+} catch (e) {
+  console.warn('[FONT] @napi-rs/canvas unavailable:', e.message)
+}
+
+const hasThai = (str) => /[฀-๿]/.test(String(str ?? ''))
 
 const app = express()
 app.use(cors())
@@ -67,6 +86,53 @@ function tsplHeader() {
 // Safe-escape double quotes inside content
 function safe(str) { return String(str).replace(/"/g, "'") }
 
+// ─── Thai bitmap helper ───────────────────────────────────────────────────────
+function fontSizeToPx(sz) {
+  if (sz >= 16) return 28
+  if (sz >= 13) return 20
+  if (sz >= 10) return 16
+  return 12
+}
+
+// Render Thai text to TSPL BITMAP command (absolute x/y in dots)
+function renderThaiToBitmap(text, xAbs, yAbs, fontSizeHint, align) {
+  if (!nCanvas || !thaiFont) return null
+  const px   = fontSizeToPx(fontSizeHint)
+  const font = `${px}px Thai`
+
+  const mc   = nCanvas.createCanvas(4000, px * 3)
+  const mctx = mc.getContext('2d')
+  mctx.font  = font
+  const tw   = Math.ceil(mctx.measureText(text).width) + 4
+  const th   = px + Math.ceil(px * 0.4) + 2
+
+  const c   = nCanvas.createCanvas(tw, th)
+  const ctx = c.getContext('2d')
+  ctx.fillStyle = 'white'
+  ctx.fillRect(0, 0, tw, th)
+  ctx.fillStyle = 'black'
+  ctx.font      = font
+  ctx.fillText(text, 2, px)
+
+  const img = ctx.getImageData(0, 0, tw, th)
+  const bpr = Math.ceil(tw / 8)
+  const buf = Buffer.alloc(bpr * th, 0)
+  for (let r = 0; r < th; r++) {
+    for (let col = 0; col < tw; col++) {
+      const i = (r * tw + col) * 4
+      if ((img.data[i] + img.data[i + 1] + img.data[i + 2]) / 3 < 128) {
+        buf[r * bpr + Math.floor(col / 8)] |= (1 << (7 - (col % 8)))
+      }
+    }
+  }
+
+  let x = xAbs
+  if (align === 'center') x = Math.max(0, xAbs - Math.floor(tw / 2))
+  if (align === 'right')  x = Math.max(0, xAbs - tw)
+
+  return { cmd: `BITMAP ${x},${yAbs},${bpr},${th},0,`, data: buf, tw, th }
+}
+
 // ─── Build TSPL label from new layout (drag-editor) ──────────────────────────
 function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, layout, storeName, labelWmm, labelHmm) {
   const wMM = labelWmm || LABEL_W_MM
@@ -127,23 +193,40 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
     }
   }
 
-  const cmds = [
-    `SIZE ${wMM} mm, ${hMM} mm`,
-    `GAP 2 mm, 0 mm`,
-    `DIRECTION 1`,
-    `CODEPAGE 874`,
-    `CLS`,
-  ]
+  const chunks  = []
+  const enc     = (s) => iconv.encode(s, 'cp874')
+  const addLine = (s) => chunks.push(enc(s + '\r\n'))
+
+  addLine(`SIZE ${wMM} mm, ${hMM} mm`)
+  addLine(`GAP 2 mm, 0 mm`)
+  addLine(`DIRECTION 1`)
+  addLine(`CODEPAGE 874`)
+  addLine(`CLS`)
 
   for (const field of layout.filter(f => f.visible)) {
     if (field.type === 'divider') {
       const y = Math.round(field.y / 100 * hDot)
-      cmds.push(`BAR 0,${y},${wDot},2`)
+      addLine(`BAR 0,${y},${wDot},2`)
       continue
     }
 
     const content = getContent(field)
     if (!content) continue
+
+    if (hasThai(content)) {
+      const bmp = renderThaiToBitmap(
+        content,
+        Math.round(field.x / 100 * wDot),
+        Math.round(field.y / 100 * hDot),
+        field.fontSize, field.align
+      )
+      if (bmp) {
+        chunks.push(enc(bmp.cmd))
+        chunks.push(bmp.data)
+        chunks.push(Buffer.from('\r\n'))
+        continue
+      }
+    }
 
     const { font, xm, ym, cw } = getFontParams(field.fontSize)
     const xBase = Math.round(field.x / 100 * wDot)
@@ -153,11 +236,12 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
     if (field.align === 'center') x = Math.max(0, xBase - Math.round(textW / 2))
     if (field.align === 'right')  x = Math.max(0, xBase - textW)
 
-    cmds.push(`TEXT ${x},${y},"${font}",0,${xm},${ym},"${safe(content)}"`)
+    addLine(`TEXT ${x},${y},"${font}",0,${xm},${ym},"${safe(content)}"`)
   }
 
-  cmds.push(`PRINT 1,1`, '')
-  return iconv.encode(cmds.join('\r\n'), 'cp874')
+  addLine(`PRINT 1,1`)
+  addLine('')
+  return Buffer.concat(chunks)
 }
 
 // ─── Build TSPL label from old settings format (fallback) ────────────────────
@@ -171,17 +255,30 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
     showIndex: true, showTime: true, showStoreName: false,
     ...settings,
   }
-  const o = item.item_options ?? {}
-  const cmds = tsplHeader()
+  const o       = item.item_options ?? {}
+  const chunks  = []
+  const enc     = (s) => iconv.encode(s, 'cp874')
+  const addLine = (s) => chunks.push(enc(s + '\r\n'))
+  const addBmp  = (bmp) => {
+    chunks.push(enc(bmp.cmd)); chunks.push(bmp.data); chunks.push(Buffer.from('\r\n'))
+  }
+
+  for (const h of tsplHeader()) addLine(h)
   let y = 10
 
   // Menu name
   if (s.showMenuName) {
-    const big = s.menuNameSize === 'large'
-    const { font, xm, ym, cw } = getFontParams(big ? 16 : 13)
-    const x = Math.max(0, Math.round(LABEL_W / 2 - item.name.length * cw / 2))
-    cmds.push(`TEXT ${x},${y},"${font}",0,${xm},${ym},"${safe(item.name)}"`)
-    y += big ? 50 : 30
+    const big      = s.menuNameSize === 'large'
+    const fontSize = big ? 16 : 13
+    if (hasThai(item.name)) {
+      const bmp = renderThaiToBitmap(item.name, Math.round(LABEL_W / 2), y, fontSize, 'center')
+      if (bmp) { addBmp(bmp); y += bmp.th + (big ? 6 : 4) }
+    } else {
+      const { font, xm, ym, cw } = getFontParams(fontSize)
+      const x = Math.max(0, Math.round(LABEL_W / 2 - item.name.length * cw / 2))
+      addLine(`TEXT ${x},${y},"${font}",0,${xm},${ym},"${safe(item.name)}"`)
+      y += big ? 50 : 30
+    }
   }
 
   // Options
@@ -195,13 +292,18 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
   }
   if (opts.length > 0) {
     const content = opts.join(' / ')
-    const x = Math.max(0, Math.round(LABEL_W / 2 - content.length * 8 / 2))
-    cmds.push(`TEXT ${x},${y},"2",0,1,1,"${safe(content)}"`)
-    y += 25
+    if (hasThai(content)) {
+      const bmp = renderThaiToBitmap(content, Math.round(LABEL_W / 2), y, 10, 'center')
+      if (bmp) { addBmp(bmp); y += bmp.th + 4 }
+    } else {
+      const x = Math.max(0, Math.round(LABEL_W / 2 - content.length * 8 / 2))
+      addLine(`TEXT ${x},${y},"2",0,1,1,"${safe(content)}"`)
+      y += 25
+    }
   }
 
   // Divider
-  cmds.push(`BAR 0,${y},${LABEL_W},2`)
+  addLine(`BAR 0,${y},${LABEL_W},2`)
   y += 10
 
   // Bottom row
@@ -214,7 +316,7 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
   }
   if (s.showIndex) bottom.push(`${labelIdx}/${totalLabels}`)
   if (bottom.length > 0) {
-    cmds.push(`TEXT 5,${y},"2",0,1,1,"${safe(bottom.join('  '))}"`)
+    addLine(`TEXT 5,${y},"2",0,1,1,"${safe(bottom.join('  '))}"`)
   }
 
   // Store name
@@ -222,11 +324,12 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
     y += 25
     const name = storeName || 'Cocoa House'
     const x = Math.max(0, Math.round(LABEL_W / 2 - name.length * 8 / 2))
-    cmds.push(`TEXT ${x},${y},"2",0,1,1,"${safe(name)}"`)
+    addLine(`TEXT ${x},${y},"2",0,1,1,"${safe(name)}"`)
   }
 
-  cmds.push(`PRINT 1,1`, '')
-  return iconv.encode(cmds.join('\r\n'), 'cp874')
+  addLine(`PRINT 1,1`)
+  addLine('')
+  return Buffer.concat(chunks)
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
