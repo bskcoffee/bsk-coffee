@@ -5,7 +5,7 @@ import { th } from 'date-fns/locale'
 import {
   RefreshCw, ChevronDown, ChevronUp, Loader2, X, Plus, Minus,
   CheckCircle2, Clock, Package, Truck, AlertCircle, Edit3, Save,
-  Search, CalendarDays, Trash2, SlidersHorizontal,
+  Search, CalendarDays, Trash2, SlidersHorizontal, Printer,
 } from 'lucide-react'
 import MenuOptionModal from '../components/MenuOptionModal'
 
@@ -74,6 +74,11 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
   const [deleting,     setDeleting]     = useState(false)
   const [pendingDates, setPendingDates] = useState([])    // วันก่อนๆ ที่ยังมีออเดอร์ค้าง
   const [alertDismissed, setAlertDismissed] = useState(false)
+  const [reprintTarget,   setReprintTarget]   = useState(null)   // order ที่จะ reprint
+  const [reprintItems,    setReprintItems]    = useState([])    // order_items ที่โหลดแล้ว
+  const [reprintLoading,  setReprintLoading]  = useState(false)
+  const [reprintSelected, setReprintSelected] = useState(new Set())
+  const [reprintPrinting, setReprintPrinting] = useState(false)
 
   // ── Load menus (for edit) ────────────────────────────────
   useEffect(() => {
@@ -273,6 +278,93 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
     setDeleting(false)
     setDeleteTarget(null)
   }
+
+  // ── Re-print: build printable units ─────────────────────
+  const buildPrintUnits = (items) => {
+    const units = []
+    for (const item of items) {
+      const opts     = item.item_options ?? {}
+      const refills  = Array.isArray(opts.refill) && opts.refill.length > 0 ? opts.refill : []
+      const sublabel = [opts.milk?.name, opts.packaging, opts.sweetness != null ? `${opts.sweetness}%` : null]
+        .filter(Boolean).join(' · ')
+      units.push({
+        key:       `${item.id}_main`,
+        label:     item.menus?.name ?? '?',
+        sublabel,
+        printItem: {
+          name:         item.menus?.name ?? '?',
+          qty:          item.quantity,
+          item_options: refills.length > 0 ? { ...opts, refill: null } : opts,
+          isCampaign:   item.is_campaign ?? false,
+        },
+      })
+      for (const r of refills) {
+        units.push({
+          key:       `${item.id}_refill_${r.id}`,
+          label:     `Refill: ${r.name}`,
+          sublabel:  `× ${r.qty}`,
+          printItem: {
+            name:         r.name,
+            qty:          r.qty,
+            item_options: { packaging: opts.packaging, sweetness: 100 },
+            isCampaign:   false,
+          },
+        })
+      }
+    }
+    return units
+  }
+
+  // เปิด modal และโหลด items
+  const openReprintModal = async (order) => {
+    setReprintTarget(order)
+    setReprintLoading(true)
+    const { data } = await supabase
+      .from('order_items')
+      .select('id, quantity, is_campaign, item_options, menus(name)')
+      .eq('order_id', order.id)
+    const items = data ?? []
+    setReprintItems(items)
+    const units = buildPrintUnits(items)
+    setReprintSelected(new Set(units.map(u => u.key)))
+    setReprintLoading(false)
+  }
+
+  // ส่ง print request ทีละ unit ที่เลือก
+  const executeReprint = async () => {
+    if (!reprintTarget) return
+    setReprintPrinting(true)
+    try {
+      const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
+      const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
+      const ip   = labelSettings.printerIp   ?? '192.168.1.100'
+      const port = labelSettings.printerPort ?? 3001
+      const units = buildPrintUnits(reprintItems).filter(u => reprintSelected.has(u.key))
+      for (const unit of units) {
+        await fetch(`http://${ip}:${port}/print`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderId:  reprintTarget.notes ?? reprintTarget.id,
+            platform: reprintTarget.platform,
+            items:    [unit.printItem],
+            labelSettings,
+          }),
+          signal: AbortSignal.timeout(5000),
+        })
+      }
+    } catch (err) { console.warn('reprint failed:', err.message) }
+    setReprintPrinting(false)
+    setReprintTarget(null)
+    setReprintItems([])
+  }
+
+  const toggleReprintKey = (key) =>
+    setReprintSelected(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
 
   // ── Filtered orders ──────────────────────────────────────
   const filteredOrders = useMemo(() => {
@@ -604,6 +696,14 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
                         <Edit3 size={13} /> แก้ไขรายการ
                       </button>
 
+                      {/* Re-print button */}
+                      <button
+                        onClick={() => openReprintModal(order)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs font-semibold transition-colors"
+                      >
+                        <Printer size={13} /> พิมพ์ฉลาก
+                      </button>
+
                       {/* Status advance button */}
                       {st.next && (
                         <button
@@ -778,6 +878,78 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
                 className="w-full py-3 rounded-xl text-sm font-semibold text-gray-500 hover:bg-gray-100 transition-colors"
               >
                 ยกเลิก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reprint Modal ───────────────────────────────── */}
+      {reprintTarget && (
+        <div className="fixed inset-0 bg-black/60 flex items-end z-50" onClick={() => !reprintPrinting && setReprintTarget(null)}>
+          <div className="bg-white rounded-t-3xl w-full max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
+              <p className="font-bold text-gray-900">เลือกรายการที่จะพิมพ์</p>
+              <button onClick={() => !reprintPrinting && setReprintTarget(null)} className="p-1.5 rounded-lg hover:bg-gray-100">
+                <X size={18} className="text-gray-400" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+              {reprintLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 size={22} className="animate-spin text-cocoa-400" />
+                </div>
+              ) : (
+                buildPrintUnits(reprintItems).map((unit, i, arr) => {
+                  const isRefill  = unit.key.includes('_refill_')
+                  const isChecked = reprintSelected.has(unit.key)
+                  // กลุ่ม refill แนบกับ main item
+                  const isFirstOfGroup = i === 0 || !arr[i - 1].key.includes('_refill_') || isRefill === false
+
+                  return (
+                    <div
+                      key={unit.key}
+                      onClick={() => toggleReprintKey(unit.key)}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 cursor-pointer transition-all
+                        ${isChecked ? 'border-blue-400 bg-blue-50' : 'border-gray-200 bg-white'}
+                        ${isRefill ? 'ml-6' : ''}`}
+                    >
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors
+                        ${isChecked ? 'bg-blue-500 border-blue-500' : 'border-gray-300'}`}>
+                        {isChecked && <CheckCircle2 size={12} className="text-white" strokeWidth={3} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 truncate">{unit.label}</p>
+                        {unit.sublabel && <p className="text-xs text-gray-400 mt-0.5">{unit.sublabel}</p>}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 pt-3 pb-6 border-t border-gray-100 shrink-0 flex gap-2">
+              <button
+                onClick={() => setReprintTarget(null)}
+                disabled={reprintPrinting}
+                className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-600 text-sm font-semibold disabled:opacity-50"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={executeReprint}
+                disabled={reprintPrinting || reprintLoading || reprintSelected.size === 0}
+                className="flex-2 flex-[2] py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {reprintPrinting
+                  ? <Loader2 size={15} className="animate-spin" />
+                  : <Printer size={15} />
+                }
+                พิมพ์ที่เลือก ({reprintSelected.size} ฉลาก)
               </button>
             </div>
           </div>
