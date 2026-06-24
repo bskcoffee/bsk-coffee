@@ -61,7 +61,8 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
     .single()
 
   if (error) throw error
-  return data as Order
+  const d = data as any
+  return { ...d, items: d.line_items ?? [] } as Order
 }
 
 export async function getOrderById(orderId: string): Promise<Order> {
@@ -71,7 +72,8 @@ export async function getOrderById(orderId: string): Promise<Order> {
     .eq('id', orderId)
     .single()
   if (error) throw error
-  return data as Order
+  const d = data as any
+  return { ...d, items: d.line_items ?? [] } as Order
 }
 
 export function subscribeToOrder(
