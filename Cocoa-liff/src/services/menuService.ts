@@ -20,7 +20,7 @@ export async function getMenuItems(): Promise<MenuItem[]> {
   const { data: prices, error: priceErr } = await supabase
     .from('menu_prices')
     .select('menu_id, price')
-    .eq('platform', 'LINE')
+    .eq('platform', 'LINE@')
     .is('effective_to', null)
   if (priceErr) throw priceErr
 
