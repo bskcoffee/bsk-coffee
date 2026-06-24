@@ -454,7 +454,7 @@ function AppInner() {
       {/* Page content */}
       <div className="flex-1 overflow-hidden">
         {activeTab === 'pos'    && <POSPage />}
-        {activeTab === 'orders' && <OrderManagePage initialDate={initDate} highlightRef={initHighlight} />}
+        {activeTab === 'orders' && <OrderManagePage initialDate={initDate} highlightRef={initHighlight} onAddLog={addPrintLog} />}
       </div>
 
       {/* Passkey Modal */}

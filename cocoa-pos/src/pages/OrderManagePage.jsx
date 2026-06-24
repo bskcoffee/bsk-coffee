@@ -54,7 +54,7 @@ const today = () => format(new Date(), 'yyyy-MM-dd')
 const fmt   = n => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', minimumFractionDigits: 0 }).format(n)
 
 // ══════════════════════════════════════════════════════════════
-export default function OrderManagePage({ initialDate = null, highlightRef = null }) {
+export default function OrderManagePage({ initialDate = null, highlightRef = null, onAddLog }) {
   const [date,         setDate]         = useState(initialDate ?? today())
   const [orders,       setOrders]       = useState([])
   const [menus,        setMenus]        = useState([])
@@ -79,6 +79,7 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
   const [reprintLoading,  setReprintLoading]  = useState(false)
   const [reprintSelected, setReprintSelected] = useState(new Set())
   const [reprintPrinting, setReprintPrinting] = useState(false)
+  const [reprintToast,    setReprintToast]    = useState(null)  // null | { ok, fail }
 
   // ── Load menus (for edit) ────────────────────────────────
   useEffect(() => {
@@ -334,6 +335,8 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
   const executeReprint = async () => {
     if (!reprintTarget) return
     setReprintPrinting(true)
+    setReprintToast(null)
+    let ok = 0, fail = 0
     try {
       const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
       const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
@@ -341,22 +344,52 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
       const port = labelSettings.printerPort ?? 3001
       const units = buildPrintUnits(reprintItems).filter(u => reprintSelected.has(u.key))
       for (const unit of units) {
-        await fetch(`http://${ip}:${port}/print`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            orderId:  reprintTarget.notes ?? reprintTarget.id,
-            platform: reprintTarget.platform,
-            items:    [unit.printItem],
-            labelSettings,
-          }),
-          signal: AbortSignal.timeout(5000),
+        let unitStatus = 'success'
+        try {
+          const res = await fetch(`http://${ip}:${port}/print`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId:  reprintTarget.notes ?? reprintTarget.id,
+              platform: reprintTarget.platform,
+              items:    [unit.printItem],
+              labelSettings,
+            }),
+            signal: AbortSignal.timeout(5000),
+          })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          ok++
+        } catch (e) {
+          console.warn('reprint unit failed:', e.message)
+          unitStatus = 'error'
+          fail++
+        }
+        const opts = unit.printItem.item_options ?? {}
+        const parts = []
+        if (opts.milk?.name)       parts.push(opts.milk.name)
+        if (opts.sweetness != null) parts.push(`หวาน ${opts.sweetness}%`)
+        if (opts.packaging)        parts.push(opts.packaging)
+        onAddLog?.({
+          id:        Date.now() + Math.random(),
+          menuName:  unit.printItem.name,
+          menuObj:   { name: unit.printItem.name },
+          options:   opts,
+          summary:   parts.join(' · ') || '—',
+          status:    unitStatus,
+          timestamp: new Date(),
         })
       }
-    } catch (err) { console.warn('reprint failed:', err.message) }
+    } catch (err) {
+      console.warn('reprint failed:', err.message)
+      fail++
+    }
     setReprintPrinting(false)
-    setReprintTarget(null)
-    setReprintItems([])
+    setReprintToast({ ok, fail })
+    setTimeout(() => {
+      setReprintToast(null)
+      setReprintTarget(null)
+      setReprintItems([])
+    }, fail > 0 ? 3000 : 1500)
   }
 
   const toggleReprintKey = (key) =>
@@ -930,6 +963,25 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
                 })
               )}
             </div>
+
+            {/* Print status banner */}
+            {reprintToast && (
+              <div className={`mx-5 mt-2 mb-1 px-4 py-2.5 rounded-xl flex items-center gap-2 shrink-0 ${
+                reprintToast.fail > 0
+                  ? 'bg-red-50 border border-red-200'
+                  : 'bg-green-50 border border-green-200'
+              }`}>
+                <span className={`text-lg ${reprintToast.fail > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                  {reprintToast.fail > 0 ? '✕' : '✓'}
+                </span>
+                <p className={`text-sm font-semibold ${reprintToast.fail > 0 ? 'text-red-600' : 'text-green-700'}`}>
+                  {reprintToast.fail > 0
+                    ? `พิมพ์ไม่สำเร็จ ${reprintToast.fail} รายการ — ตรวจสอบ print server`
+                    : `พิมพ์สำเร็จ ${reprintToast.ok} รายการ`
+                  }
+                </p>
+              </div>
+            )}
 
             {/* Footer */}
             <div className="px-5 pt-3 pb-6 border-t border-gray-100 shrink-0 flex gap-2">
