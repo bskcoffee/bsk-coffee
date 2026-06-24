@@ -5,13 +5,41 @@ import POSPage         from './pages/POSPage'
 import OrderManagePage from './pages/OrderManagePage'
 import MenuOptionModal from './components/MenuOptionModal'
 import { supabase } from './lib/supabase'
-import { ShoppingCart, ClipboardList, LayoutDashboard, X, Package, Printer, Search, Loader2, ChevronRight } from 'lucide-react'
+import { ShoppingCart, ClipboardList, LayoutDashboard, X, Package, Printer, Search, Loader2, ChevronRight, ScrollText } from 'lucide-react'
 
 const ADDON_CATS  = ['Addon', 'addon', 'ADDON']
 const REFILL_CATS = ['Refill', 'refill', 'REFILL']
 const HIDDEN_CATS = [...ADDON_CATS, ...REFILL_CATS]
 
-function PrintLabelModal({ onClose }) {
+async function sendLabelPrint(menu, options) {
+  const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
+  const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
+  const ip   = labelSettings.printerIp   ?? '192.168.1.100'
+  const port = labelSettings.printerPort ?? 3001
+  const res  = await fetch(`http://${ip}:${port}/print`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({
+      orderId: 'TEST',
+      platform: 'GRAB',
+      items: [{ name: menu.name, qty: 1, item_options: options, isCampaign: false }],
+      labelSettings,
+    }),
+    signal: AbortSignal.timeout(5000),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
+function buildOptionsSummary(options) {
+  const parts = []
+  if (options?.milk?.name)       parts.push(options.milk.name)
+  if (options?.sweetness != null) parts.push(`หวาน ${options.sweetness}%`)
+  if (options?.packaging)        parts.push(options.packaging)
+  if (options?.refill?.length)   parts.push(`Refill ×${options.refill.reduce((s, r) => s + r.qty, 0)}`)
+  return parts.join(' · ') || '—'
+}
+
+function PrintLabelModal({ onClose, onAddLog }) {
   const [menus,       setMenus]       = useState([])
   const [loadingM,    setLoadingM]    = useState(true)
   const [search,      setSearch]      = useState('')
@@ -37,27 +65,23 @@ function PrintLabelModal({ onClose }) {
   const handlePrint = async (options) => {
     setPrinting(true)
     setPrintStatus(null)
+    let status = 'success'
     try {
-      const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
-      const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
-      const ip   = labelSettings.printerIp   ?? '192.168.1.100'
-      const port = labelSettings.printerPort ?? 3001
-      const res = await fetch(`http://${ip}:${port}/print`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orderId: 'TEST',
-          platform: 'GRAB',
-          items: [{ name: selected.name, qty: 1, item_options: options, isCampaign: false }],
-          labelSettings,
-        }),
-        signal: AbortSignal.timeout(5000),
-      })
-      setPrintStatus(res.ok ? 'success' : 'error')
+      await sendLabelPrint(selected, options)
     } catch (err) {
       console.warn('test print failed:', err.message)
-      setPrintStatus('error')
+      status = 'error'
     }
+    onAddLog?.({
+      id:        Date.now(),
+      menuName:  selected.name,
+      menuObj:   selected,
+      options,
+      summary:   buildOptionsSummary(options),
+      status,
+      timestamp: new Date(),
+    })
+    setPrintStatus(status)
     setPrinting(false)
     setShowOptions(false)
     setSelected(null)
@@ -151,6 +175,114 @@ function PrintLabelModal({ onClose }) {
   )
 }
 
+function PrintLogModal({ printLog, onUpdateLog, onClear, onClose }) {
+  const [retrying, setRetrying] = useState(null)
+
+  const handleRetry = async (entry) => {
+    setRetrying(entry.id)
+    let status = 'success'
+    try {
+      await sendLabelPrint(entry.menuObj, entry.options)
+    } catch (err) {
+      console.warn('retry print failed:', err.message)
+      status = 'error'
+    }
+    onUpdateLog(entry.id, status)
+    setRetrying(null)
+  }
+
+  const failCount = printLog.filter(e => e.status === 'error').length
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-end z-50" onClick={onClose}>
+      <div className="bg-white rounded-t-3xl w-full max-h-[75vh] flex flex-col" onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
+          <p className="font-bold text-gray-900 flex items-center gap-2">
+            <ScrollText size={16} /> ประวัติการพิมพ์
+            {failCount > 0 && (
+              <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-semibold">
+                {failCount} ล้มเหลว
+              </span>
+            )}
+          </p>
+          <div className="flex items-center gap-2">
+            {printLog.length > 0 && (
+              <button
+                onClick={onClear}
+                className="text-xs text-gray-400 hover:text-red-500 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
+              >
+                ล้าง log
+              </button>
+            )}
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100">
+              <X size={18} className="text-gray-400" />
+            </button>
+          </div>
+        </div>
+
+        {/* Log list */}
+        <div className="flex-1 overflow-y-auto">
+          {printLog.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+              <ScrollText size={36} className="mb-3 opacity-20" />
+              <p className="text-sm">ยังไม่มีประวัติการพิมพ์</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {printLog.map(entry => (
+                <div
+                  key={entry.id}
+                  className={`flex items-center gap-3 px-5 py-3.5 transition-colors ${
+                    entry.status === 'error' ? 'bg-red-50' : 'bg-white'
+                  }`}
+                >
+                  {/* Status icon */}
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                    entry.status === 'success' ? 'bg-green-100' : 'bg-red-100'
+                  }`}>
+                    {entry.status === 'success'
+                      ? <span className="text-green-600 font-bold text-base">✓</span>
+                      : <span className="text-red-500 font-bold text-base">✕</span>
+                    }
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-900 truncate">{entry.menuName}</p>
+                    <p className="text-xs text-gray-400 truncate">{entry.summary}</p>
+                  </div>
+
+                  {/* Time + retry */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs text-gray-400">
+                      {entry.timestamp.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    {entry.status === 'error' && (
+                      <button
+                        onClick={() => handleRetry(entry)}
+                        disabled={retrying === entry.id}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-300 text-red-600 text-xs font-semibold bg-white hover:bg-red-50 active:bg-red-100 disabled:opacity-50 transition-colors"
+                      >
+                        {retrying === entry.id
+                          ? <Loader2 size={11} className="animate-spin" />
+                          : <Printer size={11} />
+                        }
+                        พิมพ์ซ้ำ
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const TABS = [
   { key: 'pos',    label: 'POS',        icon: ShoppingCart  },
   { key: 'orders', label: 'ออเดอร์',   icon: ClipboardList },
@@ -221,6 +353,14 @@ function AppInner() {
   const [showPasskey,    setShowPasskey]    = useState(false)
   const [showLiff,       setShowLiff]       = useState(false)
   const [showPrintModal, setShowPrintModal] = useState(false)
+  const [showLogModal,   setShowLogModal]   = useState(false)
+  const [printLog,       setPrintLog]       = useState([])
+
+  const addPrintLog    = (entry)       => setPrintLog(prev => [entry, ...prev])
+  const updatePrintLog = (id, status)  => setPrintLog(prev => prev.map(e => e.id === id ? { ...e, status } : e))
+  const clearPrintLog  = ()            => setPrintLog([])
+
+  const failCount = printLog.filter(e => e.status === 'error').length
 
   // Read URL params for deep-link from cocoa-house history page
   const params      = new URLSearchParams(window.location.search)
@@ -273,6 +413,21 @@ function AppInner() {
           <span>พิมพ์ฉลาก</span>
         </button>
 
+        {/* Print Log */}
+        <button
+          onClick={() => setShowLogModal(true)}
+          className="relative flex items-center gap-2 px-3 py-2 rounded-xl text-cocoa-300 hover:text-white hover:bg-cocoa-700 transition-all text-sm font-semibold"
+          title="ประวัติการพิมพ์"
+        >
+          <ScrollText size={16} />
+          <span>Print Log</span>
+          {failCount > 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-[10px] text-white flex items-center justify-center font-bold leading-none">
+              {failCount}
+            </span>
+          )}
+        </button>
+
         {/* Spacer */}
         <div className="flex-1" />
 
@@ -318,7 +473,18 @@ function AppInner() {
         />
       )}
       {showPrintModal && (
-        <PrintLabelModal onClose={() => setShowPrintModal(false)} />
+        <PrintLabelModal
+          onClose={() => setShowPrintModal(false)}
+          onAddLog={addPrintLog}
+        />
+      )}
+      {showLogModal && (
+        <PrintLogModal
+          printLog={printLog}
+          onUpdateLog={updatePrintLog}
+          onClear={clearPrintLog}
+          onClose={() => setShowLogModal(false)}
+        />
       )}
     </div>
   )
