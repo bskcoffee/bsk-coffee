@@ -130,9 +130,8 @@ export default function POSPage() {
   const catOrderInitRef = useRef(false)
   useEffect(() => {
     if (!catOrderInitRef.current) { catOrderInitRef.current = true; return }
-    const orderToSave = catOrder.filter(c => c !== 'ทั้งหมด')
-    if (orderToSave.length === 0) return
-    try { localStorage.setItem('pos_cat_order_local', JSON.stringify(orderToSave)) } catch {}
+    if (catOrder.length === 0) return
+    try { localStorage.setItem('pos_cat_order_local', JSON.stringify(catOrder)) } catch {}
   }, [catOrder])
 
   // ── Clock ──
@@ -194,8 +193,18 @@ export default function POSPage() {
         try {
           const saved = JSON.parse(savedCatStr)
           const rawCats = [...new Set(mainMenus.map(m => m.category).filter(Boolean))]
-          const ordered = [...saved.filter(c => rawCats.includes(c)), ...rawCats.filter(c => !saved.includes(c))]
-          setCatOrder(['ทั้งหมด', ...ordered])
+          if (saved.includes('ทั้งหมด')) {
+            // new format — ทั้งหมด position is stored; respect it
+            const ordered = [
+              ...saved.filter(c => c === 'ทั้งหมด' || rawCats.includes(c)),
+              ...rawCats.filter(c => !saved.includes(c)),
+            ]
+            setCatOrder(ordered)
+          } else {
+            // old format — prepend ทั้งหมด to front
+            const ordered = [...saved.filter(c => rawCats.includes(c)), ...rawCats.filter(c => !saved.includes(c))]
+            setCatOrder(['ทั้งหมด', ...ordered])
+          }
         } catch { _buildDefaultCatOrder(mainMenus) }
       } else {
         _buildDefaultCatOrder(mainMenus)
@@ -259,8 +268,7 @@ export default function POSPage() {
     setSavingLayout(true)
     setLayoutSaveErr(null)
     try {
-      const orderToSave = catOrder.filter(c => c !== 'ทั้งหมด')
-      const valueStr    = JSON.stringify(orderToSave)
+      const valueStr = JSON.stringify(catOrder)  // เก็บ position ของ ทั้งหมด ด้วย
 
       // บันทึก localStorage เสมอ (ทำงานแน่นอน ไม่ขึ้นกับ RLS)
       try {
