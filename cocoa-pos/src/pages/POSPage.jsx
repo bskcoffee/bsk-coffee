@@ -186,10 +186,9 @@ export default function POSPage() {
       const localCatStr = (() => { try { return localStorage.getItem('pos_cat_order_local') } catch { return null } })()
       const savedCatStr = localCatStr ?? catOrderRow?.value
 
-      // DEBUG toast — remove after fix confirmed
+      // DEBUG — remove after fix confirmed
       const dbgSrc = localCatStr ? 'localStorage' : catOrderRow?.value ? 'Supabase' : 'DEFAULT'
-      setDebugToast(`[LOAD] src=${dbgSrc} val=${(savedCatStr ?? '').slice(0,60)}`)
-      setTimeout(() => setDebugToast(null), 8000)
+      setDebugToast(`[LOAD] src=${dbgSrc} | val=${(savedCatStr ?? 'null').slice(0,80)}`)
 
       if (savedCatStr) {
         try {
@@ -266,12 +265,10 @@ export default function POSPage() {
       // บันทึก localStorage เสมอ (ทำงานแน่นอน ไม่ขึ้นกับ RLS)
       try {
         localStorage.setItem('pos_cat_order_local', valueStr)
-        // DEBUG toast — remove after fix confirmed
-        setDebugToast(`[SAVE] catOrder=${valueStr.slice(0,80)}`)
-        setTimeout(() => setDebugToast(null), 8000)
+        // DEBUG — remove after fix confirmed
+        setDebugToast(`[SAVE OK] val=${valueStr.slice(0,80)}`)
       } catch(e) {
         setDebugToast(`[SAVE ERROR] ${e.message}`)
-        setTimeout(() => setDebugToast(null), 8000)
       }
 
       // ลองบันทึก Supabase (cross-device sync)
@@ -584,9 +581,10 @@ export default function POSPage() {
   return (
     <div className="h-full flex flex-col overflow-hidden bg-gray-50">
 
-      {/* DEBUG TOAST — remove after fix confirmed */}
+      {/* DEBUG BAR — remove after fix confirmed */}
       {debugToast && (
-        <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[9999] bg-black/90 text-white text-[11px] px-3 py-2 rounded-lg max-w-[95vw] break-all shadow-xl">
+        <div className="fixed bottom-0 left-0 right-0 z-[9999] bg-black text-green-400 text-[11px] px-3 py-1.5 break-all font-mono"
+          onClick={() => setDebugToast(null)}>
           {debugToast}
         </div>
       )}
