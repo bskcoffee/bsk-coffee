@@ -174,7 +174,8 @@ export default function POSPage() {
       const settings = settingsRes.data ?? []
       const catOrderRow = settings.find(r => r.key === 'pos_cat_order')
       const localCatStr = (() => { try { return localStorage.getItem('pos_cat_order_local') } catch { return null } })()
-      const savedCatStr = catOrderRow?.value ?? localCatStr
+      // localStorage ก่อนเสมอ — เพราะ Supabase อาจมีค่าเก่า (upsert fail RLS)
+      const savedCatStr = localCatStr ?? catOrderRow?.value
 
       if (savedCatStr) {
         try {
