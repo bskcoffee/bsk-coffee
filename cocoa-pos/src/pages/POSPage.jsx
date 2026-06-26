@@ -112,6 +112,8 @@ export default function POSPage() {
   const [saveError,      setSaveError]      = useState(null)
   const [printWarning,   setPrintWarning]   = useState(null)
   const [savedMsg,       setSavedMsg]       = useState(null)
+  const [discountType,   setDiscountType]   = useState('amt')  // 'pct' | 'amt'
+  const [discountRaw,    setDiscountRaw]    = useState('')      // string input
   const [showOrders,     setShowOrders]     = useState(false)
   const [todayOrders,    setTodayOrders]    = useState([])
   const [loadingOrders,  setLoadingOrders]  = useState(false)
@@ -328,6 +330,14 @@ export default function POSPage() {
 
   const totalAmount = orderItemsWithPrice.reduce((s, i) => s + (i.subtotal ?? 0), 0)
 
+  const discountValue = (() => {
+    const v = parseFloat(discountRaw) || 0
+    if (v <= 0) return 0
+    const raw = discountType === 'pct' ? Math.round(totalAmount * v / 100) : Math.round(v)
+    return Math.min(raw, totalAmount)
+  })()
+  const finalTotal = totalAmount - discountValue
+
   // ── Handlers ─────────────────────────────────────────────
   const increment = (menu) => {
     if (menuEditMode || catEditMode) return
@@ -393,7 +403,7 @@ export default function POSPage() {
     setPendingMenu(null)
   }
 
-  const resetOrder = () => { setLineItems([]); setSaveError(null); setPrintWarning(null); setSelectedPlat(null) }
+  const resetOrder = () => { setLineItems([]); setSaveError(null); setPrintWarning(null); setSelectedPlat(null); setDiscountRaw(''); setDiscountType('amt') }
   const openConfirm = () => { setSelectedPlat(null); setSaveError(null); setShowConfirm(true) }
 
   // ── Save order ────────────────────────────────────────────
@@ -406,7 +416,7 @@ export default function POSPage() {
 
       // สร้าง order ใหม่ทุกครั้ง (ไม่ merge)
       const { data: newOrder, error: orderErr } = await supabase.from('orders')
-        .insert({ date, platform: selectedPlat, notes, status: 'preparing' })
+        .insert({ date, platform: selectedPlat, notes, status: 'preparing', discount: discountValue })
         .select('id').single()
       if (orderErr) throw orderErr
 
@@ -429,7 +439,7 @@ export default function POSPage() {
       )
       if (itemsErr) throw itemsErr
 
-      setSavedMsg({ itemCount: totalItems, total: totalAmount, platform: selectedPlat })
+      setSavedMsg({ itemCount: totalItems, total: finalTotal, platform: selectedPlat })
       resetOrder(); setShowConfirm(false); setOrderRef(''); setOrderDate(todayStr())
       setTimeout(() => setSavedMsg(null), 6000)
 
@@ -1078,10 +1088,56 @@ export default function POSPage() {
               </div>
             )}
             <div className="px-5 pb-5 pt-3 border-t border-gray-100 shrink-0">
+
+              {/* ── Discount ────────────────────────────────── */}
+              <div className="mb-4">
+                <p className="text-xs font-medium text-gray-500 mb-2">
+                  ส่วนลด <span className="font-normal text-gray-400">(ถ้ามี)</span>
+                </p>
+                <div className="flex gap-2 mb-2">
+                  {[['amt','฿ จำนวนเงิน'],['pct','% เปอร์เซ็นต์']].map(([t,label]) => (
+                    <button
+                      key={t}
+                      onClick={() => { setDiscountType(t); setDiscountRaw('') }}
+                      className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all
+                        ${discountType === t
+                          ? 'bg-cocoa-50 border-cocoa-400 text-cocoa-700'
+                          : 'bg-white border-gray-200 text-gray-500'}`}
+                    >{label}</button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    value={discountRaw}
+                    onChange={e => setDiscountRaw(e.target.value)}
+                    placeholder="0"
+                    className="flex-1 px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-cocoa-400"
+                  />
+                  <span className="text-sm text-gray-400 w-5 shrink-0">{discountType === 'pct' ? '%' : '฿'}</span>
+                </div>
+              </div>
+
+              {/* ── ยอดรวม ──────────────────────────────────── */}
               {selectedPlat && (
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-sm text-gray-600 font-medium">ยอดรวม</span>
-                  <span className="text-xl font-bold text-cocoa-700">{fmt(totalAmount)}</span>
+                <div className="mb-4 space-y-1">
+                  {discountValue > 0 && (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-gray-400">ยอดก่อนส่วนลด</span>
+                        <span className="text-sm text-gray-400">{fmt(totalAmount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-red-500 font-medium">ส่วนลด</span>
+                        <span className="text-sm text-red-500 font-medium">-{fmt(discountValue)}</span>
+                      </div>
+                    </>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600 font-medium">ยอดสุทธิ</span>
+                    <span className="text-xl font-bold text-cocoa-700">{fmt(finalTotal)}</span>
+                  </div>
                 </div>
               )}
               {saveError && (

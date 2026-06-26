@@ -184,7 +184,7 @@ export default function SalesEntryPage() {
       // Query POS orders สำหรับ date+platform นี้ (notes IS NOT NULL = POS order)
       const { data: posOrdersData } = await supabase
         .from('orders')
-        .select('id')
+        .select('id, discount')
         .eq('date', date)
         .eq('platform', platform)
         .not('notes', 'is', null)
@@ -285,7 +285,9 @@ export default function SalesEntryPage() {
         })
       } else {
         setExistingWarning(false)
-        setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
+        // รวม discount จากทุก POS order ใน date+platform นี้
+        const totalPosDiscount = (posOrdersData ?? []).reduce((s, o) => s + (o.discount ?? 0), 0)
+        setCosts({ menu_discount: totalPosDiscount, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
       }
 
       // ── Auto-import order_items จาก POS ──────────────────────────
