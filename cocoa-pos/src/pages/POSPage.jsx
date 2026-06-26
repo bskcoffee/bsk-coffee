@@ -125,6 +125,15 @@ export default function POSPage() {
   const catDrag  = useDragSort()   // { draggingIdx, startDrag }
   const menuDrag = useDragSort()   // { draggingIdx, startDrag }
 
+  // ── Auto-persist catOrder to localStorage on every change ──
+  const catOrderInitRef = useRef(false)
+  useEffect(() => {
+    if (!catOrderInitRef.current) { catOrderInitRef.current = true; return }
+    const orderToSave = catOrder.filter(c => c !== 'ทั้งหมด')
+    if (orderToSave.length === 0) return
+    try { localStorage.setItem('pos_cat_order_local', JSON.stringify(orderToSave)) } catch {}
+  }, [catOrder])
+
   // ── Clock ──
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 30000)
