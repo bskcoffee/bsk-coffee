@@ -94,7 +94,8 @@ export default function POSPage() {
   const [menuEditMode, setMenuEditMode] = useState(false)
   const [catOrder,     setCatOrder]     = useState([])  // custom category order
   const [menuOrder,    setMenuOrder]    = useState([])  // current view menu order (ids)
-  const [savingLayout, setSavingLayout] = useState(false)
+  const [savingLayout,  setSavingLayout]  = useState(false)
+  const [layoutSaveErr, setLayoutSaveErr] = useState(null)
   // snapshots for cancel
   const catOrderSnap  = useRef([])
   const menuOrderSnap = useRef([])
@@ -154,18 +155,31 @@ export default function POSPage() {
       })
 
       const mainMenus = allMenuList.filter(m => !HIDDEN_CATS.includes(m.category))
+
+      // Apply saved menu order from localStorage (fallback เมื่อ Supabase sort_order ไม่ได้รับสิทธิ์ write)
+      const localMenuOrderStr = (() => { try { return localStorage.getItem('pos_menu_order_local') } catch { return null } })()
+      if (localMenuOrderStr) {
+        try {
+          const localOrder = JSON.parse(localMenuOrderStr)
+          const orderMap = Object.fromEntries(localOrder.map((id, i) => [id, i]))
+          mainMenus.sort((a, b) => (orderMap[a.id] ?? 9999) - (orderMap[b.id] ?? 9999))
+        } catch {}
+      }
+
       setMenus(mainMenus)
       setAddonMenus(allMenuList.filter(m => ADDON_CATS.includes(m.category)))
       setRefillMenus(allMenuList.filter(m => REFILL_CATS.includes(m.category)))
 
-      // Load custom category order
+      // Load custom category order — Supabase first, localStorage fallback
       const settings = settingsRes.data ?? []
       const catOrderRow = settings.find(r => r.key === 'pos_cat_order')
-      if (catOrderRow) {
+      const localCatStr = (() => { try { return localStorage.getItem('pos_cat_order_local') } catch { return null } })()
+      const savedCatStr = catOrderRow?.value ?? localCatStr
+
+      if (savedCatStr) {
         try {
-          const saved = JSON.parse(catOrderRow.value)
+          const saved = JSON.parse(savedCatStr)
           const rawCats = [...new Set(mainMenus.map(m => m.category).filter(Boolean))]
-          // Merge saved order with new categories
           const ordered = [...saved.filter(c => rawCats.includes(c)), ...rawCats.filter(c => !saved.includes(c))]
           setCatOrder(['ทั้งหมด', ...ordered])
         } catch { _buildDefaultCatOrder(mainMenus) }
@@ -229,12 +243,24 @@ export default function POSPage() {
   }
   const saveCatOrder = async () => {
     setSavingLayout(true)
+    setLayoutSaveErr(null)
     try {
       const orderToSave = catOrder.filter(c => c !== 'ทั้งหมด')
-      await supabase.from('settings')
-        .upsert({ key: 'pos_cat_order', value: JSON.stringify(orderToSave) }, { onConflict: 'key' })
+      const valueStr    = JSON.stringify(orderToSave)
+
+      // บันทึก localStorage เสมอ (ทำงานแน่นอน ไม่ขึ้นกับ RLS)
+      try { localStorage.setItem('pos_cat_order_local', valueStr) } catch {}
+
+      // ลองบันทึก Supabase (cross-device sync)
+      const { error: supErr } = await supabase.from('settings')
+        .upsert({ key: 'pos_cat_order', value: valueStr }, { onConflict: 'key' })
+      if (supErr) console.warn('settings upsert:', supErr.message)
+
       setCatEditMode(false)
-    } catch (err) { console.error(err) }
+    } catch (err) {
+      console.error(err)
+      setLayoutSaveErr(err.message)
+    }
     setSavingLayout(false)
   }
 
@@ -249,19 +275,30 @@ export default function POSPage() {
   }
   const saveMenuOrder = async () => {
     setSavingLayout(true)
+    setLayoutSaveErr(null)
     try {
-      // Batch update sort_order for each menu
-      const updates = menuOrder.map((id, idx) =>
-        supabase.from('menus').update({ sort_order: idx * 10 }).eq('id', id)
+      // บันทึก localStorage ก่อน (cross-browser fallback)
+      try { localStorage.setItem('pos_menu_order_local', JSON.stringify(menuOrder)) } catch {}
+
+      // Update sort_order ใน Supabase (ต้องการสิทธิ์ write menus)
+      const results = await Promise.all(
+        menuOrder.map((id, idx) =>
+          supabase.from('menus').update({ sort_order: idx * 10 }).eq('id', id)
+        )
       )
-      await Promise.all(updates)
-      // Update local menus sort_order
+      const firstErr = results.find(r => r.error)?.error
+      if (firstErr) console.warn('menu sort_order update:', firstErr.message)
+
+      // อัปเดต local state เสมอ (ไม่ว่า Supabase จะสำเร็จหรือไม่)
       setMenus(prev => {
         const orderMap = Object.fromEntries(menuOrder.map((id, i) => [id, i * 10]))
         return [...prev].sort((a, b) => (orderMap[a.id] ?? 999) - (orderMap[b.id] ?? 999))
       })
       setMenuEditMode(false)
-    } catch (err) { console.error(err) }
+    } catch (err) {
+      console.error(err)
+      setLayoutSaveErr(err.message)
+    }
     setSavingLayout(false)
   }
 
