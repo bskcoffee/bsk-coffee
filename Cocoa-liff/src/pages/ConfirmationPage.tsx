@@ -144,6 +144,23 @@ function Card({ title, count, children }: { title: string; count?: string; child
 }
 
 function AddressDisplay({ address, deliveryFee }: { address: any; deliveryFee: number }) {
+  if (address.zone === 'metro') return (
+    <div>
+      <span className="text-xs bg-green-100 text-green-700 font-semibold px-2 py-0.5 rounded-full">🏘️ The Metro</span>
+      <p className="text-sm font-medium text-gray-900 mt-2">{address.house_number} ซอย {address.soi}</p>
+      {address.note && <p className="text-xs text-gray-400 mt-0.5">{address.note}</p>}
+      <p className="text-xs text-green-500 font-medium mt-0.5">จัดส่งฟรี</p>
+    </div>
+  )
+  if (address.zone === 'tu') return (
+    <div>
+      <span className="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded-full">🎓 TU</span>
+      <p className="text-sm font-medium text-gray-900 mt-2">{address.recipient_name}</p>
+      <p className="text-xs text-gray-400 mt-0.5">Thammasat University</p>
+      <p className="text-xs text-green-500 font-medium mt-0.5">จัดส่งฟรี</p>
+    </div>
+  )
+  // zone === 'other'
   return (
     <div>
       <span className="text-xs bg-orange-100 text-orange-700 font-semibold px-2 py-0.5 rounded-full">📍 ที่อื่น</span>

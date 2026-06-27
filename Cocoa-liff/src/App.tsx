@@ -120,6 +120,7 @@ export default function App() {
         cartItems={items}
         cartTotal={total}
         deliveryFee={deliveryFee}
+        selectedZone={zoneSelection.zone}
         distanceKm={zoneSelection.distanceKm}
         storeStatus={storeStatus}
         isOpen={isOpen}
@@ -137,6 +138,7 @@ export default function App() {
         items={items}
         subtotal={total}
         deliveryFee={deliveryFee}
+        selectedZone={zoneSelection.zone}
         distanceKm={zoneSelection.distanceKm}
         onUpdateQuantity={updateQuantity}
         onBack={() => setScreen('menu')}
@@ -148,6 +150,7 @@ export default function App() {
   if (screen === 'delivery' && zoneSelection) {
     return (
       <DeliveryPage
+        zone={zoneSelection.zone}
         userLat={zoneSelection.lat}
         userLng={zoneSelection.lng}
         distanceKm={zoneSelection.distanceKm}

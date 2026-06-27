@@ -44,17 +44,21 @@ export interface CartItem {
 }
 
 // ------------------------------------------------------------
-// Addon (นม) — fetch จาก menus WHERE category = 'Addon'
-// ------------------------------------------------------------
-export interface Addon {
-  id: string
-  name: string
-}
-
-// ------------------------------------------------------------
 // Delivery
 // ------------------------------------------------------------
-export type DeliveryZone = 'other'
+export type DeliveryZone = 'metro' | 'tu' | 'other'
+
+export interface DeliveryAddressMetro {
+  zone: 'metro'
+  house_number: string
+  soi: string
+  note?: string
+}
+
+export interface DeliveryAddressTU {
+  zone: 'tu'
+  recipient_name: string
+}
 
 export interface DeliveryAddressOther {
   zone: 'other'
@@ -65,7 +69,10 @@ export interface DeliveryAddressOther {
   note?: string
 }
 
-export type DeliveryAddress = DeliveryAddressOther
+export type DeliveryAddress =
+  | DeliveryAddressMetro
+  | DeliveryAddressTU
+  | DeliveryAddressOther
 
 // ------------------------------------------------------------
 // Payment

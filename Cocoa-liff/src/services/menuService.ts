@@ -1,33 +1,6 @@
 // src/services/menuService.ts
 import { supabase } from '../lib/supabase'
-import type { MenuCategory, MenuItem, MenuItemOption, Addon } from '../types'
-
-const DEFAULT_OPTIONS: MenuItemOption[] = [
-  {
-    label: 'ความหวาน',
-    choices: ['0%', '10%', '25%', '50%', '100%'],
-    required: false,
-    default: '100%',
-  },
-  {
-    label: 'บรรจุภัณฑ์',
-    choices: ['พร้อมดื่ม', 'แยกน้ำแข็ง'],
-    required: true,
-    default: 'พร้อมดื่ม',
-  },
-]
-
-/** ดึง Addons (ชนิดนม) จาก menus WHERE category = 'Addon' */
-export async function getAddons(): Promise<Addon[]> {
-  const { data, error } = await supabase
-    .from('menus')
-    .select('id, name, sort_order')
-    .in('category', ['Addon', 'addon', 'ADDON'])
-    .eq('is_active', true)
-    .order('sort_order')
-  if (error) throw error
-  return (data ?? []).map((m) => ({ id: m.id as string, name: m.name as string }))
-}
+import type { MenuCategory, MenuItem } from '../types'
 
 /** ดึง categories จาก unique values ของ menus.category */
 export async function getCategories(): Promise<MenuCategory[]> {
@@ -37,12 +10,7 @@ export async function getCategories(): Promise<MenuCategory[]> {
     .eq('is_active', true)
   if (error) throw error
 
-  // กรอง Addon/Refill ออก — ไม่แสดงเป็น category เมนู
-  const HIDDEN = ['Addon', 'addon', 'ADDON', 'Refill', 'refill', 'REFILL']
-  const unique = [...new Set((data ?? [])
-    .map((m) => m.category as string)
-    .filter((c) => !HIDDEN.includes(c))
-  )]
+  const unique = [...new Set((data ?? []).map((m) => m.category as string))]
   return unique.map((name, i) => ({ id: name, name, sort_order: i }))
 }
 
@@ -74,7 +42,7 @@ export async function getMenuItems(): Promise<MenuItem[]> {
       price: priceMap.get(m.id)!,
       category_id: m.category as string,
       image_url: m.image_url ?? null,
-      options: DEFAULT_OPTIONS,
+      options: [],
       available: !m.is_sold_out,
     }))
 }
