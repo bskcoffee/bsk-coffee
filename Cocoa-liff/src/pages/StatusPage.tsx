@@ -1,10 +1,12 @@
 // src/pages/StatusPage.tsx
+import { useEffect } from 'react'
 import { useOrder } from '../hooks/useOrder'
 import type { OrderStatus } from '../types'
 
 interface StatusPageProps {
   orderId: string
   onNewOrder: () => void
+  onOrderDone?: () => void  // callback เมื่อ order completed/cancelled
 }
 
 const STATUS_STEPS: { key: OrderStatus; icon: string; label: string }[] = [
@@ -18,8 +20,15 @@ const STATUS_ORDER: Record<OrderStatus, number> = {
   pending: 0, confirmed: 1, out_for_delivery: 2, completed: 3, cancelled: -1,
 }
 
-export function StatusPage({ orderId, onNewOrder }: StatusPageProps) {
+export function StatusPage({ orderId, onNewOrder, onOrderDone }: StatusPageProps) {
   const { order, loading, error } = useOrder(orderId)
+
+  // เมื่อ order จบ → clear localStorage
+  useEffect(() => {
+    if (order && (order.order_status === 'completed' || order.order_status === 'cancelled')) {
+      onOrderDone?.()
+    }
+  }, [order?.order_status])
 
   if (loading) {
     return (
@@ -40,7 +49,9 @@ export function StatusPage({ orderId, onNewOrder }: StatusPageProps) {
   }
 
   const currentStep = STATUS_ORDER[order.order_status] ?? 0
-  const orderNum = String(order.order_number).padStart(4, '0')
+  const orderNum = order.order_number
+    ? String(order.order_number).padStart(4, '0')
+    : order.id.slice(-6).toUpperCase()
   const isCancelled = order.order_status === 'cancelled'
 
   return (

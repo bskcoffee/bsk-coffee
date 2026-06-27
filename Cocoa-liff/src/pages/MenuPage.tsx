@@ -1,7 +1,7 @@
 // src/pages/MenuPage.tsx
 import { useState, useEffect } from 'react'
-import { getCategories, getMenuItems } from '../services/menuService'
-import type { MenuCategory, MenuItem, CartItem, SelectedOptions, DeliveryZone, StoreStatus } from '../types'
+import { getCategories, getMenuItems, getAddons } from '../services/menuService'
+import type { MenuCategory, MenuItem, CartItem, SelectedOptions, StoreStatus, Addon } from '../types'
 import { MenuItemCard } from '../components/MenuItemCard'
 import { OptionModal } from '../components/OptionModal'
 import { StoreClosedBanner } from '../components/StoreClosedBanner'
@@ -11,8 +11,8 @@ interface MenuPageProps {
   cartItems: CartItem[]
   cartTotal: number
   deliveryFee: number
-  selectedZone: DeliveryZone
   distanceKm: number
+  locationStatus: string
   storeStatus: StoreStatus | null
   isOpen: boolean
   scheduledAt: Date | null
@@ -23,12 +23,13 @@ interface MenuPageProps {
 
 export function MenuPage({
   cartItems, cartTotal, deliveryFee,
-  selectedZone, distanceKm,
+  distanceKm, locationStatus,
   storeStatus, isOpen, scheduledAt,
   onAddItem, onGoToCart, onSchedule,
 }: MenuPageProps) {
   const [categories, setCategories] = useState<MenuCategory[]>([])
   const [menuItems, setMenuItems] = useState<MenuItem[]>([])
+  const [addons, setAddons] = useState<Addon[]>([])
   const [activeCategory, setActiveCategory] = useState<string | null>(null)
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null)
   const [loading, setLoading] = useState(true)
@@ -36,9 +37,14 @@ export function MenuPage({
   useEffect(() => {
     async function load() {
       try {
-        const [cats, items] = await Promise.all([getCategories(), getMenuItems()])
+        const [cats, items, addonList] = await Promise.all([
+          getCategories(),
+          getMenuItems(),
+          getAddons(),
+        ])
         setCategories(cats)
         setMenuItems(items)
+        setAddons(addonList)
         if (cats.length > 0) setActiveCategory(cats[0].id)
       } finally {
         setLoading(false)
@@ -53,12 +59,11 @@ export function MenuPage({
 
   const cartCount = cartItems.reduce((s, ci) => s + ci.quantity, 0)
 
-  // Zone badge config
-  const zoneBadge = {
-    metro: { label: '🏘️ The Metro', cls: 'bg-green-100 text-green-700' },
-    tu: { label: '🎓 TU', cls: 'bg-blue-100 text-blue-700' },
-    other: { label: `📍 ${distanceKm.toFixed(1)} กม.`, cls: 'bg-orange-100 text-orange-700' },
-  }[selectedZone]
+  const zoneBadge = locationStatus === 'ok' && distanceKm > 0
+    ? { label: `📍 ${distanceKm.toFixed(1)} กม.`, cls: 'bg-orange-100 text-orange-700' }
+    : locationStatus === 'loading' || locationStatus === 'idle'
+      ? { label: '📍 กำลังระบุ...', cls: 'bg-gray-100 text-gray-400' }
+      : { label: '📍 ตรวจสอบตำแหน่ง', cls: 'bg-red-50 text-red-400' }
 
   if (loading) {
     return (
@@ -124,23 +129,13 @@ export function MenuPage({
       {/* Bottom bar */}
       <div className="bg-white border-t px-4 pb-safe pt-3 space-y-2">
 
-        {/* Delivery info / nudge */}
-        {selectedZone === 'other' && cartCount > 0 ? (
+        {cartCount > 0 && (
           <FreeShipNudge
             total={cartTotal}
             minOrder={249}
             deliveryFee={deliveryFee}
             distanceKm={distanceKm}
           />
-        ) : (
-          /* Metro / TU — ฟรีทันที */
-          cartCount > 0 && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-50 border border-green-200">
-              <span className="text-base">🎉</span>
-              <p className="text-xs font-semibold text-green-700 flex-1">จัดส่งฟรี!</p>
-              <span className="text-xs text-green-600 font-bold">ฟรี</span>
-            </div>
-          )
         )}
 
         {/* Cart button */}
@@ -162,8 +157,9 @@ export function MenuPage({
       {selectedItem && (
         <OptionModal
           item={selectedItem}
+          addons={addons}
           onClose={() => setSelectedItem(null)}
-          onAdd={(options: import('../types').SelectedOptions) => {
+          onAdd={(options) => {
             onAddItem(selectedItem, options)
             setSelectedItem(null)
           }}
