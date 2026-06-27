@@ -1,12 +1,11 @@
 // src/pages/CartPage.tsx
-import type { CartItem, DeliveryZone } from '../types'
+import type { CartItem } from '../types'
 import { FreeShipNudge } from '../components/FreeShipNudge'
 
 interface CartPageProps {
   items: CartItem[]
   subtotal: number
   deliveryFee: number
-  selectedZone: DeliveryZone
   distanceKm: number
   onUpdateQuantity: (id: string, qty: number) => void
   onBack: () => void
@@ -15,11 +14,11 @@ interface CartPageProps {
 
 export function CartPage({
   items, subtotal, deliveryFee,
-  selectedZone, distanceKm,
+  distanceKm,
   onUpdateQuantity, onBack, onNext,
 }: CartPageProps) {
   const total = subtotal + deliveryFee
-  const freeShipping = selectedZone !== 'other' || subtotal >= 249
+  const freeShipping = subtotal >= 249
 
   const btnLabel = freeShipping
     ? 'เลือกที่อยู่จัดส่ง →'
@@ -36,17 +35,14 @@ export function CartPage({
         </span>
       </header>
 
-      {/* Free Ship Nudge — เฉพาะ zone อื่น */}
-      {selectedZone === 'other' && (
-        <div className="px-4 pt-3">
-          <FreeShipNudge
-            total={subtotal}
-            minOrder={249}
-            deliveryFee={deliveryFee}
-            distanceKm={distanceKm}
-          />
-        </div>
-      )}
+      <div className="px-4 pt-3">
+        <FreeShipNudge
+          total={subtotal}
+          minOrder={249}
+          deliveryFee={deliveryFee}
+          distanceKm={distanceKm}
+        />
+      </div>
 
       {/* Items */}
       <div className="flex-1 overflow-y-auto">

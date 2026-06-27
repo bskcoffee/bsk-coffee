@@ -155,8 +155,6 @@ function Row({ label, value, valueClass = 'text-gray-700', bold = false }: {
 }
 
 function getAddressLabel(addr: DeliveryAddress): string {
-  if (addr.zone === 'metro') return `${addr.house_number} ซอย ${addr.soi} · The Metro`
-  if (addr.zone === 'tu') return `${addr.recipient_name} · Thammasat University`
   return `GPS · ห่างร้าน ${addr.distance_km.toFixed(1)} กม.`
 }
 

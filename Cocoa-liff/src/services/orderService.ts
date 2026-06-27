@@ -73,7 +73,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
     unit_gp_cost: 0,
     is_campaign: paymentMethod === 'campaign_6040',
     item_options: {
-      milk: null,
+      milk: parseMilk(ci.selectedOptions['__milk__']),
       sweetness: mapSweetness(ci.selectedOptions['ความหวาน']),
       refill: null,
       packaging: (ci.selectedOptions['บรรจุภัณฑ์'] as 'พร้อมดื่ม' | 'แยกน้ำแข็ง') ?? null,
@@ -86,6 +86,16 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
   }
 
   return order
+}
+
+function parseMilk(raw?: string): { id: string; name: string; price: number } | null {
+  if (!raw) return null
+  try {
+    const obj = JSON.parse(raw)
+    return { id: obj.id, name: obj.name, price: 0 }
+  } catch {
+    return null
+  }
 }
 
 function mapSweetness(val?: string): number {
