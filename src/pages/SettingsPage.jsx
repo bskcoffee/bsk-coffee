@@ -1,7 +1,160 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase, getSetting, setSetting, getCurrentCostSettings, updateCostSettings, getCostSettingsHistory } from '../lib/supabase'
 import { COST_KEY_LABELS, formatBaht } from '../utils/calculations'
-import { Save, AlertTriangle, History, Pencil, GripVertical, X, Plus } from 'lucide-react'
+import { Save, AlertTriangle, History, Pencil, GripVertical, X, Plus, Eye, EyeOff, RefreshCw, Loader2 } from 'lucide-react'
+
+// ─── LIFF Config Section ───────────────────────────────────────────────────
+
+const LIFF_FIELDS = [
+  { key: 'promptpay_qr_url',    label: 'URL รูป QR PromptPay',    placeholder: '/promptpay-qr.png',           type: 'text'   },
+  { key: 'line_oa_url',         label: 'LINE OA URL (Add Friend)', placeholder: 'https://line.me/R/ti/p/@...', type: 'text'   },
+  { key: 'delivery_radius_km',  label: 'รัศมีจัดส่ง (กม.)',        placeholder: '3',                           type: 'number' },
+  { key: 'delivery_fee_per_km', label: 'ค่าส่งต่อ กม. (฿)',        placeholder: '15',                          type: 'number' },
+  { key: 'free_delivery_min',   label: 'ยอดสั่งฟรีค่าส่ง (฿)',     placeholder: '249',                         type: 'number' },
+  { key: 'store_status',        label: 'สถานะร้าน',                 placeholder: '',                            type: 'select',
+    options: [{ value: 'open', label: '🟢 เปิดร้าน' }, { value: 'closed', label: '🔴 ปิดร้าน' }] },
+]
+
+function LiffConfigSection() {
+  const [config,  setConfig]  = useState({})
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+  const [status,  setStatus]  = useState('')
+
+  useEffect(() => {
+    supabase.from('liff_config').select('key, value')
+      .then(({ data }) => {
+        setConfig(Object.fromEntries((data ?? []).map(r => [r.key, r.value])))
+        setLoading(false)
+      })
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    const upserts = Object.entries(config).map(([key, value]) => ({ key, value }))
+    const { error } = await supabase.from('liff_config').upsert(upserts, { onConflict: 'key' })
+    setSaving(false)
+    setStatus(error ? 'เกิดข้อผิดพลาด' : 'บันทึกสำเร็จ!')
+    setTimeout(() => setStatus(''), 3000)
+  }
+
+  if (loading) return <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-cocoa-400" /></div>
+
+  return (
+    <div className="space-y-4">
+      {LIFF_FIELDS.map(f => (
+        <div key={f.key}>
+          <label className="block text-sm font-semibold text-gray-700 mb-1.5">{f.label}</label>
+          {f.type === 'select' ? (
+            <select
+              value={config[f.key] ?? 'open'}
+              onChange={e => setConfig(p => ({ ...p, [f.key]: e.target.value }))}
+              className="input"
+            >
+              {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          ) : (
+            <input
+              type={f.type}
+              value={config[f.key] ?? ''}
+              onChange={e => setConfig(p => ({ ...p, [f.key]: e.target.value }))}
+              placeholder={f.placeholder}
+              className="input"
+            />
+          )}
+        </div>
+      ))}
+      <div className="flex items-center gap-3">
+        <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">
+          {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+          {saving ? 'กำลังบันทึก...' : 'บันทึก'}
+        </button>
+        {status && <p className={`text-sm ${status.includes('สำเร็จ') ? 'text-green-600' : 'text-red-600'}`}>{status}</p>}
+      </div>
+    </div>
+  )
+}
+
+// ─── Menu Categories Section ───────────────────────────────────────────────
+
+function MenuCategoriesSection() {
+  const [cats,    setCats]    = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+  const [status,  setStatus]  = useState('')
+  const dragItem = useRef(null)
+  const [dragOver, setDragOver] = useState(null)
+
+  const loadCats = () => {
+    setLoading(true)
+    supabase.from('menu_categories').select('id, name, sort_order, is_visible').order('sort_order')
+      .then(({ data }) => { setCats(data ?? []); setLoading(false) })
+  }
+  useEffect(() => { loadCats() }, [])
+
+  const onDragStart = (i) => { dragItem.current = i }
+  const onDragOver  = (e, i) => { e.preventDefault(); setDragOver(i) }
+  const onDrop      = (i) => {
+    const from = dragItem.current
+    if (from === null || from === i) { dragItem.current = null; setDragOver(null); return }
+    const next = [...cats]
+    const [moved] = next.splice(from, 1)
+    next.splice(i, 0, moved)
+    setCats(next)
+    dragItem.current = null
+    setDragOver(null)
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    const upserts = cats.map((c, i) => ({ id: c.id, name: c.name, sort_order: i + 1, is_visible: c.is_visible }))
+    const { error } = await supabase.from('menu_categories').upsert(upserts, { onConflict: 'id' })
+    setSaving(false)
+    setStatus(error ? 'เกิดข้อผิดพลาด' : 'บันทึกสำเร็จ!')
+    setTimeout(() => setStatus(''), 3000)
+  }
+
+  if (loading) return <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-cocoa-400" /></div>
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-gray-400">ลากเพื่อเรียงลำดับ • กดปุ่มตาเพื่อซ่อน/แสดง</p>
+      {cats.map((cat, i) => (
+        <div
+          key={cat.id}
+          draggable
+          onDragStart={() => onDragStart(i)}
+          onDragOver={e => onDragOver(e, i)}
+          onDrop={() => onDrop(i)}
+          onDragEnd={() => { dragItem.current = null; setDragOver(null) }}
+          className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all cursor-grab active:cursor-grabbing
+            ${dragOver === i ? 'border-cocoa-400 bg-cocoa-50' : 'border-gray-200 bg-white'}
+            ${!cat.is_visible ? 'opacity-50' : ''}`}
+        >
+          <GripVertical size={16} className="text-gray-300 shrink-0" />
+          <span className="flex-1 text-sm font-semibold text-gray-800">{cat.name}</span>
+          <span className="text-xs text-gray-400 w-5 text-center">{i + 1}</span>
+          <button
+            onClick={() => setCats(prev => prev.map(c => c.id === cat.id ? { ...c, is_visible: !c.is_visible } : c))}
+            className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            {cat.is_visible ? <Eye size={16} className="text-green-500" /> : <EyeOff size={16} className="text-gray-400" />}
+          </button>
+        </div>
+      ))}
+      <div className="flex items-center gap-3">
+        <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">
+          {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+          {saving ? 'กำลังบันทึก...' : 'บันทึก'}
+        </button>
+        <button onClick={loadCats} className="btn-secondary flex items-center gap-2">
+          <RefreshCw size={14} /> รีเฟรช
+        </button>
+        {status && <p className={`text-sm ${status.includes('สำเร็จ') ? 'text-green-600' : 'text-red-600'}`}>{status}</p>}
+      </div>
+    </div>
+  )
+}
 
 async function getLatestFeeUpdatedAt(feeKeys) {
   const { data } = await supabase
@@ -257,6 +410,18 @@ export default function SettingsPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-5">
       <h1 className="text-xl font-bold text-gray-900">ตั้งค่า</h1>
+
+      {/* ── 0. LIFF / LINE@ Config ─────────────────────────────── */}
+      <div className="card space-y-4">
+        <h2 className="font-semibold text-gray-800">📱 LINE@ / LIFF Config</h2>
+        <LiffConfigSection />
+      </div>
+
+      {/* ── 0b. Menu Categories ────────────────────────────────── */}
+      <div className="card space-y-4">
+        <h2 className="font-semibold text-gray-800">📂 หมวดหมู่เมนู (LINE@ Order)</h2>
+        <MenuCategoriesSection />
+      </div>
 
       {/* ── 1. Platform Fee % ──────────────────────────────────── */}
       <div className="card space-y-4">
