@@ -9,10 +9,10 @@ import { getLiffConfig, type LiffConfig } from './services/configService'
 import { calcDeliveryFee } from './types'
 import type { DeliveryAddress, PaymentMethod, Order } from './types'
 import type { ZoneSelection } from './pages/ZonePage'
-import { MenuPage } from './pages/MenuPage'
 
 const ORDER_KEY = 'cocoa_last_order_id'
 const DONE_STATUSES = new Set(['completed', 'cancelled'])
+import { MenuPage } from './pages/MenuPage'
 import { CartPage } from './pages/CartPage'
 import { DeliveryPage } from './pages/DeliveryPage'
 import { PaymentPage } from './pages/PaymentPage'
@@ -138,7 +138,7 @@ export default function App() {
       alert('ตำแหน่งของคุณอยู่นอกรัศมีจัดส่ง 3 กม.')
       return
     }
-    if (location.status === 'error' || location.status === 'denied') {
+    if (location.status === 'unavailable' || location.status === 'denied') {
       alert('ไม่สามารถระบุตำแหน่งได้ กรุณาอนุญาต GPS แล้วลองใหม่')
       return
     }

@@ -55,7 +55,7 @@ export interface Addon {
 // ------------------------------------------------------------
 // Delivery
 // ------------------------------------------------------------
-export type DeliveryZone = 'other'
+export type DeliveryZone = 'metro' | 'tu' | 'other'
 
 export interface DeliveryAddressOther {
   zone: 'other'
