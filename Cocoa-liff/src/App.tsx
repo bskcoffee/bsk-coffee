@@ -8,12 +8,11 @@ import { createOrder, getOrderById } from './services/orderService'
 import { getLiffConfig, type LiffConfig } from './services/configService'
 import { calcDeliveryFee } from './types'
 import type { DeliveryAddress, PaymentMethod, Order } from './types'
+import type { ZoneSelection } from './pages/ZonePage'
+import { MenuPage } from './pages/MenuPage'
 
 const ORDER_KEY = 'cocoa_last_order_id'
 const DONE_STATUSES = new Set(['completed', 'cancelled'])
-
-import type { ZoneSelection } from './pages/ZonePage'
-import { MenuPage } from './pages/MenuPage'
 import { CartPage } from './pages/CartPage'
 import { DeliveryPage } from './pages/DeliveryPage'
 import { PaymentPage } from './pages/PaymentPage'
