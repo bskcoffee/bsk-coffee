@@ -358,7 +358,6 @@ function AppInner() {
   const [showPrintModal, setShowPrintModal] = useState(false)
   const [showLogModal,   setShowLogModal]   = useState(false)
   const [printLog,       setPrintLog]       = useState([])
-  const [posDate,        setPosDate]        = useState(initDate ?? todayStr())
 
   const addPrintLog    = (entry)       => setPrintLog(prev => [entry, ...prev])
   const updatePrintLog = (id, status)  => setPrintLog(prev => prev.map(e => e.id === id ? { ...e, status } : e))
@@ -373,6 +372,7 @@ function AppInner() {
   const initHighlight = params.get('highlight') ?? null
 
   const [activeTab, setActiveTab] = useState(initTab)
+  const [posDate,   setPosDate]   = useState(initDate ?? todayStr())
 
   if (loading) {
     return (
