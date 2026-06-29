@@ -185,6 +185,12 @@ function thaiMonthYear(ym) {
   return `${names[m - 1]} ${y + 543}`
 }
 function monthFirstDay(ym) { return `${ym}-01` }
+function monthLastDay(ym) {
+  const [y, m] = ym.split('-').map(Number)
+  const lastDay = new Date(y, m, 0).getDate()
+  return `${ym}-${String(lastDay).padStart(2, '0')}`
+}
+function todayStr() { return new Date().toISOString().slice(0, 10) }
 
 function MonthPicker({ month, onChange }) {
   return (
@@ -335,15 +341,17 @@ export default function SettingsPage() {
   useEffect(() => {
     const load = async () => {
       setMonthLoading(true)
-      const firstDay = monthFirstDay(selectedMonth)
+      const firstDay  = monthFirstDay(selectedMonth)
+      // Use today for current month (catches mid-month changes), last day for past months
+      const queryDate = isCurrentMonth ? todayStr() : monthLastDay(selectedMonth)
 
       const [platConfig, latestFeeAt, cs, latestCostRes] = await Promise.all([
         getPlatformConfigForMonth(selectedMonth),
         getLatestFeeUpdatedAt([`platform_config_${selectedMonth}`, 'platform_config']),
-        getCostSettingsForDate(firstDay),
+        getCostSettingsForDate(queryDate),
         supabase.from('cost_settings')
           .select('effective_from')
-          .lte('effective_from', firstDay)
+          .lte('effective_from', queryDate)
           .order('effective_from', { ascending: false })
           .limit(1).single(),
       ])
