@@ -40,8 +40,9 @@ function LiffConfigSection() {
     const upserts = Object.entries(config).map(([key, value]) => ({ key, value }))
     const { error } = await supabase.from('liff_config').upsert(upserts, { onConflict: 'key' })
     setSaving(false)
-    setStatus(error ? 'เกิดข้อผิดพลาด' : 'บันทึกสำเร็จ!')
-    setTimeout(() => setStatus(''), 3000)
+    const msg = error ? 'เกิดข้อผิดพลาด — กรุณาลองอีกครั้ง' : 'บันทึกสำเร็จ!'
+    setStatus(msg)
+    if (!error) setTimeout(() => setStatus(''), 3000)
   }
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-cocoa-400" /></div>
@@ -116,8 +117,9 @@ function MenuCategoriesSection() {
     const upserts = cats.map((c, i) => ({ id: c.id, name: c.name, sort_order: i + 1, is_visible: c.is_visible }))
     const { error } = await supabase.from('menu_categories').upsert(upserts, { onConflict: 'id' })
     setSaving(false)
-    setStatus(error ? 'เกิดข้อผิดพลาด' : 'บันทึกสำเร็จ!')
-    setTimeout(() => setStatus(''), 3000)
+    const msg = error ? 'เกิดข้อผิดพลาด — กรุณาลองอีกครั้ง' : 'บันทึกสำเร็จ!'
+    setStatus(msg)
+    if (!error) setTimeout(() => setStatus(''), 3000)
   }
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-cocoa-400" /></div>
@@ -142,7 +144,8 @@ function MenuCategoriesSection() {
           <span className="text-xs text-gray-400 w-5 text-center">{i + 1}</span>
           <button
             onClick={() => setCats(prev => prev.map(c => c.id === cat.id ? { ...c, is_visible: !c.is_visible } : c))}
-            className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+            aria-label={cat.is_visible ? `ซ่อน ${cat.name}` : `แสดง ${cat.name}`}
+            className="p-2.5 rounded-lg hover:bg-gray-100 transition-colors"
           >
             {cat.is_visible ? <Eye size={16} className="text-green-500" /> : <EyeOff size={16} className="text-gray-400" />}
           </button>
@@ -189,7 +192,7 @@ function MonthPicker({ month, onChange }) {
       <div className="flex items-center gap-0.5 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
         <button
           onClick={() => onChange(prevMonth(month))}
-          className="p-1 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-900 transition-colors"
+          className="p-2 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-900 transition-colors"
           aria-label="เดือนก่อน"
         >
           <ChevronLeft size={16} />
@@ -198,7 +201,7 @@ function MonthPicker({ month, onChange }) {
         <button
           onClick={() => onChange(nextMonth(month))}
           disabled={month >= TODAY_MONTH}
-          className="p-1 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          className="p-2 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           aria-label="เดือนถัดไป"
         >
           <ChevronRight size={16} />
@@ -264,7 +267,10 @@ function EditBadge({ editing, onEdit, disabled }) {
 
 function ReadOnlyBadge() {
   return (
-    <span className="text-xs bg-gray-100 text-gray-500 border border-gray-200 px-2.5 py-1 rounded-full">
+    <span
+      title="แก้ไขได้เฉพาะเดือนปัจจุบัน"
+      className="text-xs bg-gray-100 text-gray-500 border border-gray-200 px-2.5 py-1 rounded-full cursor-default"
+    >
       ดูได้อย่างเดียว
     </span>
   )
@@ -276,6 +282,16 @@ export default function SettingsPage() {
   // ── Month navigation ──────────────────────────────────────────
   const [selectedMonth, setSelectedMonth] = useState(TODAY_MONTH)
   const isCurrentMonth = selectedMonth === TODAY_MONTH
+
+  // ─── Month change guard ───────────────────────────────────────
+  const [monthLoading, setMonthLoading] = useState(false)
+
+  const handleMonthChange = (newMonth) => {
+    if (feeEditing || overheadEditing || costEditing) {
+      if (!window.confirm('มีการแก้ไขที่ยังไม่ได้บันทึก\nต้องการเปลี่ยนเดือนหรือไม่?')) return
+    }
+    setSelectedMonth(newMonth)
+  }
 
   // ─── Platform Fee (dynamic) ───────────────────────────────────
   const [platforms, setPlatforms]           = useState(LEGACY_PLATFORMS)
@@ -318,6 +334,7 @@ export default function SettingsPage() {
   // Load platform fee + cost settings per selected month
   useEffect(() => {
     const load = async () => {
+      setMonthLoading(true)
       const firstDay = monthFirstDay(selectedMonth)
 
       const [platConfig, latestFeeAt, cs, latestCostRes] = await Promise.all([
@@ -353,6 +370,7 @@ export default function SettingsPage() {
       setFeeEditing(false)
       setOverheadEditing(false)
       setCostEditing(false)
+      setMonthLoading(false)
     }
     load()
   }, [selectedMonth])
@@ -360,17 +378,19 @@ export default function SettingsPage() {
   // ─── Platform Fee handlers ────────────────────────────────────
   const savePlatformSettings = async () => {
     setSaving(true)
+    let success = false
     try {
       await savePlatformConfigForMonth(selectedMonth, platforms, isCurrentMonth)
       setFeeUpdatedAt(new Date())
       setSavedPlatforms([...platforms])
       setFeeEditing(false)
       setFeeStatus('บันทึกสำเร็จ!')
+      success = true
     } catch {
-      setFeeStatus('เกิดข้อผิดพลาด')
+      setFeeStatus('เกิดข้อผิดพลาด — กรุณาลองอีกครั้ง')
     }
     setSaving(false)
-    setTimeout(() => setFeeStatus(''), 3000)
+    if (success) setTimeout(() => setFeeStatus(''), 3000)
   }
 
   const cancelFeeEdit = () => {
@@ -404,6 +424,7 @@ export default function SettingsPage() {
     setSavingOverhead(true)
     const overheadNew   = Object.fromEntries(OVERHEAD_KEYS.map(k => [k, costValues[k]      ?? 0]))
     const overheadSaved = Object.fromEntries(OVERHEAD_KEYS.map(k => [k, savedCostValues[k] ?? 0]))
+    let autoFade = true
     try {
       const result = await updateCostSettings(overheadNew, overheadSaved, monthFirstDay(selectedMonth))
       if (result.changed === 0) {
@@ -415,10 +436,11 @@ export default function SettingsPage() {
         setOverheadStatus(`บันทึกสำเร็จ! (${result.changed} รายการ)`)
       }
     } catch {
-      setOverheadStatus('เกิดข้อผิดพลาด')
+      setOverheadStatus('เกิดข้อผิดพลาด — กรุณาลองอีกครั้ง')
+      autoFade = false
     }
     setSavingOverhead(false)
-    setTimeout(() => setOverheadStatus(''), 3000)
+    if (autoFade) setTimeout(() => setOverheadStatus(''), 3000)
   }
 
   const cancelOverheadEdit = () => {
@@ -433,6 +455,7 @@ export default function SettingsPage() {
   // ─── Global Cost (packaging + shared via schema) handlers ────
   const saveGlobalCosts = async () => {
     setSavingCost(true)
+    let autoFade = true
     try {
       // Save schema (labels + structure)
       await saveCostSchema(draftSchema)
@@ -454,10 +477,11 @@ export default function SettingsPage() {
         setCostStatus(`บันทึกสำเร็จ!${result.changed > 0 ? ` (${result.changed} รายการ)` : ''}`)
       }
     } catch {
-      setCostStatus('เกิดข้อผิดพลาด')
+      setCostStatus('เกิดข้อผิดพลาด — กรุณาลองอีกครั้ง')
+      autoFade = false
     }
     setSavingCost(false)
-    setTimeout(() => setCostStatus(''), 3000)
+    if (autoFade) setTimeout(() => setCostStatus(''), 3000)
   }
 
   const cancelCostEdit = () => {
@@ -566,8 +590,9 @@ export default function SettingsPage() {
           <div className="flex items-center gap-2">
             <Calendar size={16} className="text-gray-400" />
             <span className="text-sm text-gray-600 font-medium">ดูข้อมูลตามเดือน</span>
+            {monthLoading && <Loader2 size={14} className="animate-spin text-gray-400" />}
           </div>
-          <MonthPicker month={selectedMonth} onChange={setSelectedMonth} />
+          <MonthPicker month={selectedMonth} onChange={handleMonthChange} />
         </div>
         {!isCurrentMonth && (
           <p className="text-xs text-gray-400 mt-2">
@@ -651,7 +676,7 @@ export default function SettingsPage() {
                     disabled={platforms.length <= 1}
                     aria-label={`ลบ ${p.name || `Platform ${i + 1}`}`}
                     title={platforms.length <= 1 ? 'ต้องมีอย่างน้อย 1 Platform' : `ลบ ${p.name}`}
-                    className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors p-1 shrink-0"
+                    className="text-gray-300 hover:text-red-500 disabled:opacity-20 transition-colors p-2.5 shrink-0"
                   >
                     <X size={16} aria-hidden="true" />
                   </button>
@@ -714,8 +739,9 @@ export default function SettingsPage() {
             <div className="grid grid-cols-2 gap-3">
               {OVERHEAD_KEYS.map(key => (
                 <div key={key}>
-                  <label className="text-xs text-gray-500">{COST_KEY_LABELS[key] ?? key} (%)</label>
+                  <label htmlFor={`overhead-${key}`} className="text-xs text-gray-500">{COST_KEY_LABELS[key] ?? key} (%)</label>
                   <input
+                    id={`overhead-${key}`}
                     type="number" min="0" step="0.5" className="input text-right"
                     value={costValues[key] ?? 0}
                     onChange={e => setCostValues(v => ({ ...v, [key]: parseFloat(e.target.value) || 0 }))}
@@ -750,7 +776,7 @@ export default function SettingsPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={toggleCostHistory} className="text-xs text-cocoa-600 hover:underline flex items-center gap-1">
+            <button onClick={toggleCostHistory} aria-expanded={showCostHistory} className="text-xs text-cocoa-600 hover:underline flex items-center gap-1">
               <History size={13} />{showCostHistory ? 'ซ่อนประวัติ' : 'ดูประวัติ'}
             </button>
             {isCurrentMonth
@@ -801,8 +827,9 @@ export default function SettingsPage() {
                     {draftSchema.sections.length > 1 && (
                       <button
                         onClick={() => removeSection(section.id)}
-                        className="text-gray-300 hover:text-red-500 transition-colors p-1"
+                        className="text-gray-300 hover:text-red-500 transition-colors p-2.5"
                         title="ลบหมวดนี้"
+                        aria-label={`ลบหมวด ${section.title}`}
                       >
                         <X size={15} />
                       </button>
@@ -820,6 +847,7 @@ export default function SettingsPage() {
                       />
                       <input
                         type="number" min="0" step="0.01"
+                        aria-label={`มูลค่า ${label} (บาท)`}
                         className="input w-24 text-right text-sm py-1.5 shrink-0"
                         value={costValues[key] ?? 0}
                         onChange={e => setCostValues(v => ({ ...v, [key]: parseFloat(e.target.value) || 0 }))}
@@ -827,7 +855,7 @@ export default function SettingsPage() {
                       <span className="text-xs text-gray-400 w-3 shrink-0">฿</span>
                       <button
                         onClick={() => removeItemFromSection(section.id, key)}
-                        className="text-gray-300 hover:text-red-500 transition-colors p-1 shrink-0"
+                        className="text-gray-300 hover:text-red-500 transition-colors p-2.5 shrink-0"
                         aria-label={`ลบ ${label}`}
                       >
                         <X size={14} />
@@ -912,4 +940,3 @@ export default function SettingsPage() {
     </div>
   )
 }
-                                                
