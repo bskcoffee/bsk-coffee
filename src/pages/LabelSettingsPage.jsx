@@ -482,9 +482,10 @@ export default function LabelSettingsPage() {
     try {
       const res = await fetch(`http://${printerIp}:${printerPort}/health`, { signal: AbortSignal.timeout(5000) })
       const d = await res.json()
-      if (d.status === 'ok' && d.printerOnline) {
+      const isOnline = d.printerOnline || d.printerFound || false
+      if (d.status === 'ok' && isOnline) {
         setTestStatus('ok')
-      } else if (d.status === 'ok' && !d.printerOnline) {
+      } else if (d.status === 'ok' && !isOnline) {
         setTestStatus('printer_offline')   // server รัน แต่ printer ไม่ตอบ
       } else {
         setTestStatus('error')
