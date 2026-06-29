@@ -31,20 +31,51 @@ const PRINTER_IP   = process.env.PRINTER_IP   || '192.168.1.100'
 const PRINTER_PORT = parseInt(process.env.PRINTER_PORT || '9100')
 const SERVER_PORT  = parseInt(process.env.SERVER_PORT  || '3001')
 
-// ─── Send raw bytes to printer via TCP ───────────────────────────────────────
-function printRaw(buffer) {
+// ─── Test TCP reachability to printer ────────────────────────────────────────
+function testPrinterTcp(timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
     const socket = new net.Socket()
-    socket.setTimeout(5000)
+    socket.setTimeout(timeoutMs)
     socket.connect(PRINTER_PORT, PRINTER_IP, () => {
-      socket.write(buffer, () => {
-        socket.end()
-        resolve()
-      })
+      socket.destroy()
+      resolve()
     })
     socket.on('error', (err) => { socket.destroy(); reject(err) })
-    socket.on('timeout', () => { socket.destroy(); reject(new Error('Printer connection timed out')) })
+    socket.on('timeout', () => { socket.destroy(); reject(new Error('Printer TCP timeout')) })
   })
+}
+
+// ─── Send raw bytes to printer via TCP (with 1 auto-retry) ───────────────────
+function printRaw(buffer) {
+  const attempt = (retriesLeft) =>
+    new Promise((resolve, reject) => {
+      const socket = new net.Socket()
+      socket.setTimeout(8000)
+      socket.connect(PRINTER_PORT, PRINTER_IP, () => {
+        socket.write(buffer)
+      })
+      socket.on('drain', () => socket.end())
+      socket.on('close', () => resolve())
+      socket.on('error', (err) => {
+        socket.destroy()
+        if (retriesLeft > 0) {
+          console.warn(`[PRINT] error — retrying in 2s (${retriesLeft} left): ${err.message}`)
+          setTimeout(() => attempt(retriesLeft - 1).then(resolve).catch(reject), 2000)
+        } else {
+          reject(err)
+        }
+      })
+      socket.on('timeout', () => {
+        socket.destroy()
+        if (retriesLeft > 0) {
+          console.warn(`[PRINT] timeout — retrying in 2s (${retriesLeft} left)`)
+          setTimeout(() => attempt(retriesLeft - 1).then(resolve).catch(reject), 2000)
+        } else {
+          reject(new Error('Printer connection timed out'))
+        }
+      })
+    })
+  return attempt(1)
 }
 
 // ─── TSPL constants ───────────────────────────────────────────────────────────
@@ -333,8 +364,21 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', printer: `${PRINTER_IP}:${PRINTER_PORT}` })
+app.get('/health', async (req, res) => {
+  let printerOnline = false
+  let printerError  = null
+  try {
+    await testPrinterTcp()
+    printerOnline = true
+  } catch (err) {
+    printerError = err.message
+  }
+  res.json({
+    status: 'ok',
+    printer: `${PRINTER_IP}:${PRINTER_PORT}`,
+    printerOnline,
+    ...(printerError ? { printerError } : {}),
+  })
 })
 
 app.post('/print', async (req, res) => {

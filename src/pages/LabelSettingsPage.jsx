@@ -480,11 +480,19 @@ export default function LabelSettingsPage() {
   const handleTest = async (e) => {
     testRipple.trigger(e); setTestStatus('testing')
     try {
-      const res = await fetch(`http://${printerIp}:${printerPort}/health`, { signal: AbortSignal.timeout(4000) })
+      const res = await fetch(`http://${printerIp}:${printerPort}/health`, { signal: AbortSignal.timeout(5000) })
       const d = await res.json()
-      setTestStatus(d.status === 'ok' ? 'ok' : 'error')
-    } catch { setTestStatus('error') }
-    setTimeout(() => setTestStatus('idle'), 4000)
+      if (d.status === 'ok' && d.printerOnline) {
+        setTestStatus('ok')
+      } else if (d.status === 'ok' && !d.printerOnline) {
+        setTestStatus('printer_offline')   // server รัน แต่ printer ไม่ตอบ
+      } else {
+        setTestStatus('error')
+      }
+    } catch {
+      setTestStatus('error')               // server ไม่รัน / เข้าไม่ถึง
+    }
+    setTimeout(() => setTestStatus('idle'), 6000)
   }
 
   if (loading) return (
@@ -666,13 +674,21 @@ export default function LabelSettingsPage() {
               </span>
             </p>
             <button ref={testRipple.ref} onClick={handleTest} disabled={testStatus === 'testing'}
-              className="relative overflow-hidden flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50">
-              {testStatus === 'testing' && <RefreshCw size={14} className="animate-spin" />}
-              {testStatus === 'ok'      && <CheckCircle size={14} className="text-green-600" />}
-              {testStatus === 'error'   && <Wifi size={14} className="text-red-500" />}
-              {testStatus === 'idle'    && <Wifi size={14} />}
-              {testStatus === 'testing' ? 'กำลังทดสอบ...' : testStatus === 'ok' ? 'เชื่อมต่อสำเร็จ ✓'
-                : testStatus === 'error' ? 'เชื่อมต่อไม่ได้ ✗' : 'ทดสอบการเชื่อมต่อ'}
+              className={`relative overflow-hidden flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium transition-colors disabled:opacity-50
+                ${testStatus === 'ok'             ? 'border-green-300 bg-green-50 text-green-700'
+                : testStatus === 'printer_offline' ? 'border-amber-300 bg-amber-50 text-amber-700'
+                : testStatus === 'error'           ? 'border-red-300 bg-red-50 text-red-600'
+                : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}>
+              {testStatus === 'testing'        && <RefreshCw size={14} className="animate-spin" />}
+              {testStatus === 'ok'             && <CheckCircle size={14} className="text-green-600" />}
+              {testStatus === 'printer_offline' && <Wifi size={14} className="text-amber-500" />}
+              {testStatus === 'error'          && <Wifi size={14} className="text-red-500" />}
+              {testStatus === 'idle'           && <Wifi size={14} />}
+              {testStatus === 'testing'         ? 'กำลังทดสอบ...'
+                : testStatus === 'ok'           ? 'เชื่อมต่อสำเร็จ ✓'
+                : testStatus === 'printer_offline' ? 'Server OK · Printer ออฟไลน์ ⚠'
+                : testStatus === 'error'        ? 'Server เชื่อมต่อไม่ได้ ✗'
+                : 'ทดสอบการเชื่อมต่อ'}
             </button>
           </div>
         </div>
