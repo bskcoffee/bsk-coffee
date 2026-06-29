@@ -464,30 +464,3 @@ app.listen(SERVER_PORT, '0.0.0.0', () => {
   console.log(`  Printer   : ${PRINTER_IP}:${PRINTER_PORT}`)
   console.log(`\nรอรับ print job จาก Cocoa POS...\n`)
 })
-          const buf = labelSettings.layout
-            ? buildLabelFromLayout(refillItem, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
-            : buildLabel(refillItem, orderId, platform, labelIdx, totalLabels, labelSettings, storeName)
-          buffers.push(buf)
-        }
-        labelIdx++
-      }
-    }
-  }
-
-  try {
-    await printRaw(Buffer.concat(buffers))
-    console.log(`[PRINT] order=${orderId} platform=${platform} labels=${buffers.length}`)
-    res.json({ success: true, labelsCount: buffers.length })
-  } catch (err) {
-    console.error('[PRINT ERROR]', err.message)
-    res.status(500).json({ error: err.message })
-  }
-})
-
-// ─── Start ────────────────────────────────────────────────────────────────────
-app.listen(SERVER_PORT, '0.0.0.0', () => {
-  console.log(`\nCocoa Print Server (TSPL mode)`)
-  console.log(`  Listening : http://0.0.0.0:${SERVER_PORT}`)
-  console.log(`  Printer   : ${PRINTER_IP}:${PRINTER_PORT}`)
-  console.log(`\nรอรับ print job จาก Cocoa POS...\n`)
-})
