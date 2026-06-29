@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { supabase, getSetting, setSetting } from '../lib/supabase'
+import { supabase, getSetting, setSetting, getCostSchema } from '../lib/supabase'
 import {
   calcPlatformProfit, calcDayTotal, calcMenuCostBreakdown, formatBaht, formatPct, changePct,
   CAMPAIGN_GP_PCT,
@@ -462,7 +462,7 @@ export default function DashboardPage() {
 
   const fetchData = async (s, e) => {
     const today = new Date().toISOString().slice(0, 10)
-    const [ordersRes, itemsRes, costsRes, settingsRes, costSettingsRes, menuCostsRes] = await Promise.all([
+    const [ordersRes, itemsRes, costsRes, settingsRes, costSettingsRes, menuCostsRes, costSchema] = await Promise.all([
       supabase.from('orders').select('*').gte('date', s).lte('date', e),
       supabase.from('order_items')
         .select('*, menus(name, category), orders!inner(date, platform, notes)')
@@ -476,6 +476,7 @@ export default function DashboardPage() {
         .or(`effective_to.is.null,effective_to.gt.${today}`)
         .order('effective_from', { ascending: false }),
       supabase.from('menu_costs').select('*').is('effective_to', null),
+      getCostSchema(),
     ])
     // กรอง order_items — ป้องกัน double-count ระหว่าง POS กับ SalesEntry
     // กฎ: ถ้าวัน+platform นั้นมี POS data อยู่แล้ว → ใช้เฉพาะ POS (notes != null)
@@ -536,6 +537,7 @@ export default function DashboardPage() {
       platFees,
       costSettings: cs,
       menuCostMap,
+      costSchema,
     }
   }
 
@@ -560,7 +562,7 @@ export default function DashboardPage() {
   // Aggregate data
   const aggregated = (() => {
     if (!data) return null
-    const { orders, items, costs, platList, platFees, costSettings, menuCostMap } = data
+    const { orders, items, costs, platList, platFees, costSettings, menuCostMap, costSchema } = data
 
     // Apply platform filter (null = all platforms)
     const effectivePlats = selectedPlatforms ?? platList
@@ -643,7 +645,7 @@ export default function DashboardPage() {
     for (const id of Object.keys(menuSales)) {
       const mc = menuCostMap[id]
       if (!mc) continue
-      const bd = calcMenuCostBreakdown(mc, costSettings, 0, 0)
+      const bd = calcMenuCostBreakdown(mc, costSettings, 0, 0, costSchema)
       menuMatCostPerUnit[id] = bd?.materialCost ?? 0
     }
 
@@ -725,7 +727,7 @@ export default function DashboardPage() {
     const totalMatCost = filteredItems.reduce((sum, item) => {
       const mc = menuCostMap[item.menu_id]
       if (!mc) return sum
-      const bd = calcMenuCostBreakdown(mc, costSettings, 0, 0)
+      const bd = calcMenuCostBreakdown(mc, costSettings, 0, 0, costSchema)
       return sum + (item.quantity * (bd?.materialCost ?? 0))
     }, 0)
 

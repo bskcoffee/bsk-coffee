@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase, updateMenuCost, getMenuCostHistory } from '../lib/supabase'
-import { calcMenuCostBreakdown, PKG_KEYS, COST_KEY_LABELS, formatBaht, formatPct } from '../utils/calculations'
+import { supabase, updateMenuCost, getMenuCostHistory, getCostSchema } from '../lib/supabase'
+import { calcMenuCostBreakdown, buildDynamicLookups, formatBaht, formatPct } from '../utils/calculations'
 import { Calculator, X, Save, History, ChevronRight, AlertTriangle, Settings2, Info } from 'lucide-react'
 
 const PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
@@ -63,7 +63,7 @@ function ProfitBadge({ pct }) {
 
 // ─── Cost Editor Modal ───────────────────────────────────────
 
-function CostEditorModal({ menu, costSettings, platformFees, onClose, onSave }) {
+function CostEditorModal({ menu, costSettings, costSchema, platformFees, onClose, onSave }) {
   const [form, setForm] = useState({
     main_ingredient: 0,
     milk_condensed:  0,
@@ -126,8 +126,8 @@ function CostEditorModal({ menu, costSettings, platformFees, onClose, onSave }) 
   // Live breakdown
   const bd = useMemo(() => {
     const feePct = platformFees[platform] ?? 0
-    return calcMenuCostBreakdown(form, costSettings, price, feePct)
-  }, [form, costSettings, price, platform, platformFees])
+    return calcMenuCostBreakdown(form, costSettings, price, feePct, costSchema)
+  }, [form, costSettings, price, platform, platformFees, costSchema])
 
   const loadHistory = async () => {
     const hist = await getMenuCostHistory(menu.id)
@@ -157,7 +157,7 @@ function CostEditorModal({ menu, costSettings, platformFees, onClose, onSave }) 
       }
       return Number(prices['GRAB'] ?? 0)
     })()
-    const grabBd = calcMenuCostBreakdown(form, costSettings, grabPrice, 0)
+    const grabBd = calcMenuCostBreakdown(form, costSettings, grabPrice, 0, costSchema)
     if (grabBd) {
       await supabase.from('menus').update({ gp_cost: grabBd.gpCost }).eq('id', menu.id)
     }
@@ -392,18 +392,20 @@ function CostEditorModal({ menu, costSettings, platformFees, onClose, onSave }) 
                 </>
               )}
 
-              <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">
-                ⚙️ ค่ากลาง
-              </p>
-              <div className="flex justify-between text-gray-600">
-                <span>วัสดุสิ้นเปลือง</span>
-                <span>{formatBaht(Number(costSettings.consumables) || 0, 2)}</span>
-              </div>
-              <div className="flex justify-between text-gray-600">
-                <span>ค่าน้ำค่าไฟ</span>
-                <span>{formatBaht(Number(costSettings.operation_cost) || 0, 2)}</span>
-              </div>
-              <div className="border-t border-gray-200 my-1" />
+              {(bd?.sharedBreakdown?.length ?? 0) > 0 && (
+                <>
+                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">
+                    ⚙️ ต้นทุนร่วม
+                  </p>
+                  {bd.sharedBreakdown.map(item => (
+                    <div key={item.key} className="flex justify-between text-gray-600">
+                      <span>{item.label}</span>
+                      <span>{formatBaht(item.value, 2)}</span>
+                    </div>
+                  ))}
+                  <div className="border-t border-gray-200 my-1" />
+                </>
+              )}
               <div className="flex justify-between text-gray-600">
                 <span>ค่าแรง {costSettings.labor_pct ?? 0}% × {formatBaht(price)}</span>
                 <span>{formatBaht(bd?.laborCost ?? 0, 2)}</span>
@@ -540,6 +542,7 @@ function CostEditorModal({ menu, costSettings, platformFees, onClose, onSave }) 
 export default function MenuCostPage() {
   const [menus, setMenus] = useState([])
   const [costSettings, setCostSettings] = useState({})
+  const [costSchema, setCostSchema] = useState(null)
   const [platformFees, setPlatformFees] = useState({ GRAB: 30, LINE: 30, SHOPEE: 30, 'The metro': 0, TU: 0 })
   const [loading, setLoading] = useState(true)
   const [filterCategory, setFilterCategory] = useState('all')
@@ -550,7 +553,7 @@ export default function MenuCostPage() {
     setLoading(true)
     const today = new Date().toISOString().slice(0, 10)
 
-    const [menusRes, costRes, settingsRes, menuCostsRes] = await Promise.all([
+    const [menusRes, costRes, settingsRes, menuCostsRes, schema] = await Promise.all([
       supabase
         .from('menus')
         .select('*, menu_prices(platform, price, effective_from, effective_to)')
@@ -565,6 +568,7 @@ export default function MenuCostPage() {
         .order('effective_from', { ascending: false }),
       supabase.from('settings').select('key, value'),
       supabase.from('menu_costs').select('*').is('effective_to', null),
+      getCostSchema(),
     ])
 
     // Build cost settings map (latest per key)
@@ -573,15 +577,24 @@ export default function MenuCostPage() {
       if (!(row.key in cs)) cs[row.key] = Number(row.value)
     }
     setCostSettings(cs)
+    setCostSchema(schema)
 
-    // Build platform fees
+    // Build platform fees — prefer platform_config JSON, fallback to legacy keys
     const pf = { GRAB: 30, LINE: 30, SHOPEE: 30, 'The metro': 0, TU: 0 }
-    for (const row of settingsRes.data ?? []) {
-      if (row.key === 'grab_fee_pct')       pf.GRAB          = parseFloat(row.value) || 0
-      if (row.key === 'line_fee_pct')       pf.LINE          = parseFloat(row.value) || 0
-      if (row.key === 'shopee_fee_pct')     pf.SHOPEE        = parseFloat(row.value) || 0
-      if (row.key === 'the_metro_fee_pct')  pf['The metro']  = parseFloat(row.value) || 0
-      if (row.key === 'tu_fee_pct')         pf.TU            = parseFloat(row.value) || 0
+    const platConfigRow = (settingsRes.data ?? []).find(r => r.key === 'platform_config')
+    if (platConfigRow?.value) {
+      try {
+        const arr = JSON.parse(platConfigRow.value)
+        for (const p of arr) pf[p.name] = p.fee ?? 0
+      } catch { /* ignore */ }
+    } else {
+      for (const row of settingsRes.data ?? []) {
+        if (row.key === 'grab_fee_pct')       pf.GRAB          = parseFloat(row.value) || 0
+        if (row.key === 'line_fee_pct')       pf.LINE          = parseFloat(row.value) || 0
+        if (row.key === 'shopee_fee_pct')     pf.SHOPEE        = parseFloat(row.value) || 0
+        if (row.key === 'the_metro_fee_pct')  pf['The metro']  = parseFloat(row.value) || 0
+        if (row.key === 'tu_fee_pct')         pf.TU            = parseFloat(row.value) || 0
+      }
     }
     setPlatformFees(pf)
 
@@ -609,7 +622,7 @@ export default function MenuCostPage() {
     if (!menu.currentCost) return null
     const price = getPrices(menu)['GRAB'] ?? 0
     if (!price) return null
-    return calcMenuCostBreakdown(menu.currentCost, costSettings, price, platformFees.GRAB)
+    return calcMenuCostBreakdown(menu.currentCost, costSettings, price, platformFees.GRAB, costSchema)
   }
 
   // Get margin tier for a menu based on GRAB
@@ -749,7 +762,7 @@ export default function MenuCostPage() {
                       const price = prices[p] ?? 0
                       if (!price) return null
                       const bd = hasCost
-                        ? calcMenuCostBreakdown(menu.currentCost, costSettings, price, platformFees[p] ?? 0)
+                        ? calcMenuCostBreakdown(menu.currentCost, costSettings, price, platformFees[p] ?? 0, costSchema)
                         : null
                       return { platform: p, price, bd }
                     })
@@ -882,6 +895,7 @@ export default function MenuCostPage() {
         <CostEditorModal
           menu={editMenu}
           costSettings={costSettings}
+          costSchema={costSchema}
           platformFees={platformFees}
           onClose={() => setEditMenu(null)}
           onSave={() => { setEditMenu(null); loadData() }}

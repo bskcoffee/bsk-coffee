@@ -50,6 +50,73 @@ export async function updateMenuPrice(menuId, platform, newPrice, effectiveFrom 
 
 // ─── Settings (Platform Fees + Misc) ─────────────────────────
 
+// ── Default cost schema (used as fallback / first-run seed) ──
+export const DEFAULT_COST_SCHEMA = {
+  sections: [
+    {
+      id: 'bev',
+      title: '🧋 บรรจุภัณฑ์เครื่องดื่ม',
+      pkg_type: 'beverage',
+      items: [
+        { key: 'packaging_bev_cup',     label: 'แก้ว + ฝา' },
+        { key: 'packaging_bev_sticker', label: 'สติกเกอร์' },
+        { key: 'packaging_bev_straw',   label: 'หลอด' },
+        { key: 'packaging_bev_seal',    label: 'ปิดฝาแก้ว' },
+        { key: 'packaging_bev_bag',     label: 'ถุงใส่' },
+      ],
+    },
+    {
+      id: 'bun',
+      title: '🍞 บรรจุภัณฑ์ขนมปัง',
+      pkg_type: 'bun',
+      items: [
+        { key: 'packaging_bun_box',     label: 'กล่อง' },
+        { key: 'packaging_bun_sticker', label: 'สติกเกอร์' },
+        { key: 'packaging_bun_bag',     label: 'ถุงใส่' },
+      ],
+    },
+    {
+      id: 'shared',
+      title: '⚡ ต้นทุนร่วม',
+      pkg_type: 'shared',
+      items: [
+        { key: 'consumables',    label: 'วัสดุสิ้นเปลือง' },
+        { key: 'operation_cost', label: 'ค่าน้ำค่าไฟ' },
+      ],
+    },
+  ],
+}
+
+export async function getCostSchema() {
+  const raw = await getSetting('cost_schema')
+  if (raw) {
+    try { return JSON.parse(raw) } catch { /* fall through */ }
+  }
+  return DEFAULT_COST_SCHEMA
+}
+
+export async function saveCostSchema(schema) {
+  return setSetting('cost_schema', JSON.stringify(schema))
+}
+
+// ── Platform config — monthly versioning ─────────────────────
+export async function getPlatformConfigForMonth(month) {
+  // Try monthly key first (e.g. platform_config_2026-06)
+  const monthly = await getSetting(`platform_config_${month}`)
+  if (monthly) { try { return JSON.parse(monthly) } catch { /* ignore */ } }
+  // Fallback to current/latest
+  const current = await getSetting('platform_config')
+  if (current) { try { return JSON.parse(current) } catch { /* ignore */ } }
+  return null
+}
+
+export async function savePlatformConfigForMonth(month, config, isCurrentMonth) {
+  const json = JSON.stringify(config)
+  const promises = [setSetting(`platform_config_${month}`, json)]
+  if (isCurrentMonth) promises.push(setSetting('platform_config', json))
+  await Promise.all(promises)
+}
+
 export async function getSetting(key) {
   const { data } = await supabase
     .from('settings')

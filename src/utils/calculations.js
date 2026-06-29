@@ -138,14 +138,14 @@ export function calcPeriodSummary(dayResults) {
 
 // ─── Per-Menu Cost Breakdown (Version-Based) ─────────────────
 
-// Packaging item keys by type
+// Default (hardcoded) packaging keys — used when no schema is provided
 export const PKG_KEYS = {
   beverage: ['packaging_bev_cup', 'packaging_bev_sticker', 'packaging_bev_straw', 'packaging_bev_seal', 'packaging_bev_bag'],
   bun:      ['packaging_bun_box', 'packaging_bun_sticker', 'packaging_bun_bag'],
   none:     [],
 }
 
-// Human-readable labels for each cost key
+// Default labels — used when no schema is provided
 export const COST_KEY_LABELS = {
   packaging_bev_cup:     'แก้ว + ฝา',
   packaging_bev_sticker: 'สติกเกอร์',
@@ -162,17 +162,48 @@ export const COST_KEY_LABELS = {
 }
 
 /**
+ * Build dynamic PKG_KEYS and COST_KEY_LABELS from a cost schema.
+ * Returns { pkgKeys, costKeyLabels, sharedKeys }
+ */
+export function buildDynamicLookups(costSchema) {
+  if (!costSchema?.sections) return { pkgKeys: PKG_KEYS, costKeyLabels: COST_KEY_LABELS, sharedKeys: ['consumables', 'operation_cost'] }
+
+  const pkgKeys = { none: [] }
+  const costKeyLabels = { labor_pct: 'ค่าแรง', marketing_pct: 'Marketing' }
+  const sharedKeys = []
+
+  for (const section of costSchema.sections) {
+    for (const item of section.items ?? []) {
+      costKeyLabels[item.key] = item.label
+    }
+    if (section.pkg_type === 'shared') {
+      for (const item of section.items ?? []) sharedKeys.push(item.key)
+    } else if (section.pkg_type) {
+      pkgKeys[section.pkg_type] = (section.items ?? []).map(i => i.key)
+    }
+  }
+
+  // Ensure 'beverage' and 'bun' always have an entry (fallback empty)
+  if (!pkgKeys.beverage) pkgKeys.beverage = PKG_KEYS.beverage
+  if (!pkgKeys.bun)      pkgKeys.bun      = PKG_KEYS.bun
+
+  return { pkgKeys, costKeyLabels, sharedKeys }
+}
+
+/**
  * Calculate full cost breakdown for a menu item.
  *
- * @param {object} menuCost      - Row from menu_costs table
- * @param {object} costSettings  - Map of key→value from cost_settings (for effective date)
- * @param {number} price         - Selling price on this platform
+ * @param {object} menuCost       - Row from menu_costs table
+ * @param {object} costSettings   - Map of key→value from cost_settings (for effective date)
+ * @param {number} price          - Selling price on this platform
  * @param {number} platformFeePct - Platform fee % (0-100)
+ * @param {object} [costSchema]   - Dynamic schema from cost_schema setting (optional)
  * @returns {object|null} Full cost breakdown
  */
-export function calcMenuCostBreakdown(menuCost, costSettings, price = 0, platformFeePct = 0) {
+export function calcMenuCostBreakdown(menuCost, costSettings, price = 0, platformFeePct = 0, costSchema = null) {
   if (!menuCost || !costSettings) return null
 
+  const { pkgKeys, costKeyLabels, sharedKeys } = buildDynamicLookups(costSchema)
   const pkgType = menuCost.packaging_type || 'beverage'
 
   // 1. Ingredient cost
@@ -181,15 +212,22 @@ export function calcMenuCostBreakdown(menuCost, costSettings, price = 0, platfor
                          (Number(menuCost.milk_mixed)      || 0) +
                          (Number(menuCost.milk_fresh)      || 0)
 
-  // 2. Packaging breakdown (from cost_settings)
-  const packagingBreakdown = (PKG_KEYS[pkgType] || []).map(key => ({
+  // 2. Packaging breakdown (from cost_settings, dynamic per schema)
+  const packagingBreakdown = (pkgKeys[pkgType] || []).map(key => ({
     key,
-    label: COST_KEY_LABELS[key] || key,
+    label: costKeyLabels[key] || key,
     value: Number(costSettings[key]) || 0,
   }))
   const packagingCost = packagingBreakdown.reduce((s, i) => s + i.value, 0)
 
-  // 3. Shared costs
+  // 3. Shared costs (dynamic from schema's shared section)
+  const sharedBreakdown = sharedKeys.map(key => ({
+    key,
+    label: costKeyLabels[key] || key,
+    value: Number(costSettings[key]) || 0,
+  }))
+  const sharedCost = sharedBreakdown.reduce((s, i) => s + i.value, 0)
+  // Keep legacy aliases for backwards-compat
   const consumables   = Number(costSettings.consumables)    || 0
   const operationCost = Number(costSettings.operation_cost) || 0
 
@@ -198,7 +236,7 @@ export function calcMenuCostBreakdown(menuCost, costSettings, price = 0, platfor
   const customCostTotal = customCostRows.reduce((s, c) => s + (Number(c.amount) || 0), 0)
 
   // 5. Material Cost = ingredients + packaging + shared + custom
-  const materialCost = ingredientCost + packagingCost + consumables + operationCost + customCostTotal
+  const materialCost = ingredientCost + packagingCost + sharedCost + customCostTotal
 
   // 5. Labor (% of price)
   const laborPct  = Number(costSettings.labor_pct) || 0
@@ -223,6 +261,8 @@ export function calcMenuCostBreakdown(menuCost, costSettings, price = 0, platfor
     ingredientCost,
     packagingBreakdown,
     packagingCost,
+    sharedBreakdown,
+    sharedCost,
     consumables,
     operationCost,
     customCostRows,

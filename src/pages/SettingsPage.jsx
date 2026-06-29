@@ -1,7 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
-import { supabase, getSetting, setSetting, getCurrentCostSettings, updateCostSettings, getCostSettingsHistory } from '../lib/supabase'
+import {
+  supabase,
+  updateCostSettings, getCostSettingsHistory,
+  getCostSettingsForDate, getCostSchema, saveCostSchema,
+  getPlatformConfigForMonth, savePlatformConfigForMonth,
+  DEFAULT_COST_SCHEMA,
+} from '../lib/supabase'
 import { COST_KEY_LABELS, formatBaht } from '../utils/calculations'
-import { Save, AlertTriangle, History, Pencil, GripVertical, X, Plus, Eye, EyeOff, RefreshCw, Loader2 } from 'lucide-react'
+import { Save, AlertTriangle, History, Pencil, GripVertical, X, Plus, Eye, EyeOff, RefreshCw, Loader2, ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
 
 // ─── LIFF Config Section ───────────────────────────────────────────────────
 
@@ -156,6 +162,59 @@ function MenuCategoriesSection() {
   )
 }
 
+// ─── Month helpers ─────────────────────────────────────────────────────────
+
+const TODAY_MONTH = new Date().toISOString().slice(0, 7) // "2026-06"
+
+function prevMonth(ym) {
+  const [y, m] = ym.split('-').map(Number)
+  if (m === 1) return `${y - 1}-12`
+  return `${y}-${String(m - 1).padStart(2, '0')}`
+}
+function nextMonth(ym) {
+  const [y, m] = ym.split('-').map(Number)
+  if (m === 12) return `${y + 1}-01`
+  return `${y}-${String(m + 1).padStart(2, '0')}`
+}
+function thaiMonthYear(ym) {
+  const [y, m] = ym.split('-').map(Number)
+  const names = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.']
+  return `${names[m - 1]} ${y + 543}`
+}
+function monthFirstDay(ym) { return `${ym}-01` }
+
+function MonthPicker({ month, onChange }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex items-center gap-0.5 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
+        <button
+          onClick={() => onChange(prevMonth(month))}
+          className="p-1 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-900 transition-colors"
+          aria-label="เดือนก่อน"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <span className="font-medium text-sm min-w-[96px] text-center px-1">{thaiMonthYear(month)}</span>
+        <button
+          onClick={() => onChange(nextMonth(month))}
+          disabled={month >= TODAY_MONTH}
+          className="p-1 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          aria-label="เดือนถัดไป"
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
+      {month === TODAY_MONTH && (
+        <span className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full font-medium">
+          เดือนนี้
+        </span>
+      )}
+    </div>
+  )
+}
+
+// ─── Misc helpers ──────────────────────────────────────────────────────────
+
 async function getLatestFeeUpdatedAt(feeKeys) {
   const { data } = await supabase
     .from('settings')
@@ -167,7 +226,6 @@ async function getLatestFeeUpdatedAt(feeKeys) {
   return data?.updated_at ? new Date(data.updated_at) : null
 }
 
-// Fallback defaults for migration from old individual fee settings
 const LEGACY_PLATFORMS = [
   { name: 'GRAB',      fee: 30 },
   { name: 'LINE',      fee: 30 },
@@ -179,21 +237,6 @@ const LEGACY_PLATFORMS = [
 
 const OVERHEAD_KEYS = ['labor_pct', 'marketing_pct']
 
-const PACKAGING_SECTIONS = [
-  {
-    title: '🧋 บรรจุภัณฑ์เครื่องดื่ม',
-    keys: ['packaging_bev_cup', 'packaging_bev_sticker', 'packaging_bev_straw', 'packaging_bev_seal', 'packaging_bev_bag'],
-  },
-  {
-    title: '🍞 บรรจุภัณฑ์ขนมปัง',
-    keys: ['packaging_bun_box', 'packaging_bun_sticker', 'packaging_bun_bag'],
-  },
-  {
-    title: '⚡ ต้นทุนร่วม',
-    keys: ['consumables', 'operation_cost'],
-  },
-]
-
 function thaiDate(dateStr) {
   if (!dateStr) return '—'
   try {
@@ -203,11 +246,12 @@ function thaiDate(dateStr) {
   }
 }
 
-function EditBadge({ editing, onEdit }) {
+function EditBadge({ editing, onEdit, disabled }) {
   return !editing ? (
     <button
       onClick={onEdit}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 transition-colors"
+      disabled={disabled}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
     >
       <Pencil size={14} /> แก้ไข
     </button>
@@ -218,19 +262,33 @@ function EditBadge({ editing, onEdit }) {
   )
 }
 
+function ReadOnlyBadge() {
+  return (
+    <span className="text-xs bg-gray-100 text-gray-500 border border-gray-200 px-2.5 py-1 rounded-full">
+      ดูได้อย่างเดียว
+    </span>
+  )
+}
+
+// ─── Main Settings Page ────────────────────────────────────────────────────
+
 export default function SettingsPage() {
+  // ── Month navigation ──────────────────────────────────────────
+  const [selectedMonth, setSelectedMonth] = useState(TODAY_MONTH)
+  const isCurrentMonth = selectedMonth === TODAY_MONTH
+
   // ─── Platform Fee (dynamic) ───────────────────────────────────
-  const [platforms, setPlatforms]         = useState(LEGACY_PLATFORMS)
+  const [platforms, setPlatforms]           = useState(LEGACY_PLATFORMS)
   const [savedPlatforms, setSavedPlatforms] = useState(null)
-  const [feeEditing, setFeeEditing]       = useState(false)
-  const [feeUpdatedAt, setFeeUpdatedAt]   = useState(null)
-  const [saving, setSaving]               = useState(false)
-  const [feeStatus, setFeeStatus]         = useState('')
-  const platDragItem                      = useRef(null)
-  const [platDragOver, setPlatDragOver]   = useState(null)
+  const [feeEditing, setFeeEditing]         = useState(false)
+  const [feeUpdatedAt, setFeeUpdatedAt]     = useState(null)
+  const [saving, setSaving]                 = useState(false)
+  const [feeStatus, setFeeStatus]           = useState('')
+  const platDragItem                        = useRef(null)
+  const [platDragOver, setPlatDragOver]     = useState(null)
 
   // ─── Overhead Cost (labor_pct, marketing_pct) ────────────────
-  const [overheadEditing, setOverheadEditing]   = useState(false)
+  const [overheadEditing, setOverheadEditing]     = useState(false)
   const [overheadUpdatedAt, setOverheadUpdatedAt] = useState(null)
   const [savingOverhead, setSavingOverhead]       = useState(false)
   const [overheadStatus, setOverheadStatus]       = useState('')
@@ -245,34 +303,35 @@ export default function SettingsPage() {
   const [costHistory, setCostHistory]         = useState([])
   const [showCostHistory, setShowCostHistory] = useState(false)
 
+  // ─── Cost Schema (structure + labels) ────────────────────────
+  const [costSchema, setCostSchema]     = useState(null)
+  const [draftSchema, setDraftSchema]   = useState(null)
+
+  // Load schema once (not month-specific)
+  useEffect(() => {
+    getCostSchema().then(s => {
+      setCostSchema(s)
+      setDraftSchema(s)
+    })
+  }, [])
+
+  // Load platform fee + cost settings per selected month
   useEffect(() => {
     const load = async () => {
-      const [platConfigRaw, latestFeeAt, cs, latestCostRes] = await Promise.all([
-        getSetting('platform_config'),
-        getLatestFeeUpdatedAt(['platform_config']),
-        getCurrentCostSettings(),
-        supabase.from('cost_settings').select('effective_from').is('effective_to', null)
-          .order('effective_from', { ascending: false }).limit(1).single(),
+      const firstDay = monthFirstDay(selectedMonth)
+
+      const [platConfig, latestFeeAt, cs, latestCostRes] = await Promise.all([
+        getPlatformConfigForMonth(selectedMonth),
+        getLatestFeeUpdatedAt([`platform_config_${selectedMonth}`, 'platform_config']),
+        getCostSettingsForDate(firstDay),
+        supabase.from('cost_settings')
+          .select('effective_from')
+          .lte('effective_from', firstDay)
+          .order('effective_from', { ascending: false })
+          .limit(1).single(),
       ])
 
-      let loadedPlatforms
-      if (platConfigRaw) {
-        loadedPlatforms = JSON.parse(platConfigRaw)
-      } else {
-        // Migrate from old individual fee settings
-        const [grabFee, lineFee, shopeeFee, themetroFee, tuFee] = await Promise.all([
-          getSetting('grab_fee_pct'), getSetting('line_fee_pct'),
-          getSetting('shopee_fee_pct'), getSetting('the_metro_fee_pct'), getSetting('tu_fee_pct'),
-        ])
-        loadedPlatforms = [
-          { name: 'GRAB',      fee: parseFloat(grabFee)     || 30 },
-          { name: 'LINE',      fee: parseFloat(lineFee)     || 30 },
-          { name: 'SHOPEE',    fee: parseFloat(shopeeFee)   || 30 },
-          { name: 'The metro', fee: parseFloat(themetroFee) || 0  },
-          { name: 'TU',        fee: parseFloat(tuFee)       || 0  },
-          { name: 'Other',     fee: 0 },
-        ]
-      }
+      const loadedPlatforms = platConfig ?? LEGACY_PLATFORMS
       setPlatforms(loadedPlatforms)
       setSavedPlatforms(loadedPlatforms)
       setFeeUpdatedAt(latestFeeAt)
@@ -284,17 +343,25 @@ export default function SettingsPage() {
       if (latestCostAt) {
         const d = new Date(latestCostAt)
         setCostUpdatedAt(d)
-        setOverheadUpdatedAt(d) // same table, same date initially
+        setOverheadUpdatedAt(d)
+      } else {
+        setCostUpdatedAt(null)
+        setOverheadUpdatedAt(null)
       }
+
+      // Close any open edits when navigating months
+      setFeeEditing(false)
+      setOverheadEditing(false)
+      setCostEditing(false)
     }
     load()
-  }, [])
+  }, [selectedMonth])
 
   // ─── Platform Fee handlers ────────────────────────────────────
   const savePlatformSettings = async () => {
     setSaving(true)
     try {
-      await setSetting('platform_config', JSON.stringify(platforms))
+      await savePlatformConfigForMonth(selectedMonth, platforms, isCurrentMonth)
       setFeeUpdatedAt(new Date())
       setSavedPlatforms([...platforms])
       setFeeEditing(false)
@@ -335,10 +402,10 @@ export default function SettingsPage() {
   // ─── Overhead Cost handlers ───────────────────────────────────
   const saveOverhead = async () => {
     setSavingOverhead(true)
-    const overheadNew   = Object.fromEntries(OVERHEAD_KEYS.map(k => [k, costValues[k]   ?? 0]))
+    const overheadNew   = Object.fromEntries(OVERHEAD_KEYS.map(k => [k, costValues[k]      ?? 0]))
     const overheadSaved = Object.fromEntries(OVERHEAD_KEYS.map(k => [k, savedCostValues[k] ?? 0]))
     try {
-      const result = await updateCostSettings(overheadNew, overheadSaved)
+      const result = await updateCostSettings(overheadNew, overheadSaved, monthFirstDay(selectedMonth))
       if (result.changed === 0) {
         setOverheadStatus('ไม่มีอะไรเปลี่ยนแปลง')
       } else {
@@ -363,22 +430,28 @@ export default function SettingsPage() {
     setOverheadStatus('')
   }
 
-  // ─── Global Cost (packaging) handlers ────────────────────────
+  // ─── Global Cost (packaging + shared via schema) handlers ────
   const saveGlobalCosts = async () => {
     setSavingCost(true)
-    // Only save non-overhead keys
-    const packagingKeys = PACKAGING_SECTIONS.flatMap(s => s.keys)
-    const packagingNew   = Object.fromEntries(packagingKeys.map(k => [k, costValues[k]      ?? 0]))
-    const packagingSaved = Object.fromEntries(packagingKeys.map(k => [k, savedCostValues[k] ?? 0]))
     try {
-      const result = await updateCostSettings(packagingNew, packagingSaved)
-      if (result.changed === 0) {
+      // Save schema (labels + structure)
+      await saveCostSchema(draftSchema)
+      setCostSchema(draftSchema)
+
+      // Save all values for keys in draftSchema sections
+      const allKeys = (draftSchema?.sections ?? []).flatMap(s => (s.items ?? []).map(i => i.key))
+      const newVals   = Object.fromEntries(allKeys.map(k => [k, costValues[k]      ?? 0]))
+      const savedVals = Object.fromEntries(allKeys.map(k => [k, savedCostValues[k] ?? 0]))
+      const result = await updateCostSettings(newVals, savedVals, monthFirstDay(selectedMonth))
+
+      const schemaChanged = JSON.stringify(draftSchema) !== JSON.stringify(costSchema)
+      if (result.changed === 0 && !schemaChanged) {
         setCostStatus('ไม่มีอะไรเปลี่ยนแปลง')
       } else {
-        setSavedCostValues(prev => ({ ...prev, ...packagingNew }))
+        setSavedCostValues(prev => ({ ...prev, ...newVals }))
         setCostUpdatedAt(new Date())
         setCostEditing(false)
-        setCostStatus(`บันทึกสำเร็จ! (${result.changed} รายการ)`)
+        setCostStatus(`บันทึกสำเร็จ!${result.changed > 0 ? ` (${result.changed} รายการ)` : ''}`)
       }
     } catch {
       setCostStatus('เกิดข้อผิดพลาด')
@@ -388,11 +461,12 @@ export default function SettingsPage() {
   }
 
   const cancelCostEdit = () => {
-    const packagingKeys = PACKAGING_SECTIONS.flatMap(s => s.keys)
+    const allKeys = (costSchema?.sections ?? []).flatMap(s => (s.items ?? []).map(i => i.key))
     setCostValues(prev => ({
       ...prev,
-      ...Object.fromEntries(packagingKeys.map(k => [k, savedCostValues[k] ?? 0])),
+      ...Object.fromEntries(allKeys.map(k => [k, savedCostValues[k] ?? 0])),
     }))
+    setDraftSchema(costSchema)
     setCostEditing(false)
     setCostStatus('')
   }
@@ -405,7 +479,70 @@ export default function SettingsPage() {
     setShowCostHistory(v => !v)
   }
 
+  // ─── Schema mutation helpers ──────────────────────────────────
+  const addItemToSection = (sectionId) => {
+    const newKey = `custom_${Date.now()}`
+    setDraftSchema(prev => ({
+      ...prev,
+      sections: prev.sections.map(s =>
+        s.id === sectionId
+          ? { ...s, items: [...(s.items ?? []), { key: newKey, label: 'รายการใหม่' }] }
+          : s
+      ),
+    }))
+    setCostValues(prev => ({ ...prev, [newKey]: 0 }))
+  }
+
+  const removeItemFromSection = (sectionId, key) => {
+    setDraftSchema(prev => ({
+      ...prev,
+      sections: prev.sections.map(s =>
+        s.id === sectionId
+          ? { ...s, items: (s.items ?? []).filter(i => i.key !== key) }
+          : s
+      ),
+    }))
+  }
+
+  const updateItemLabel = (sectionId, key, label) => {
+    setDraftSchema(prev => ({
+      ...prev,
+      sections: prev.sections.map(s =>
+        s.id === sectionId
+          ? { ...s, items: (s.items ?? []).map(i => i.key === key ? { ...i, label } : i) }
+          : s
+      ),
+    }))
+  }
+
+  const updateSectionTitle = (sectionId, title) => {
+    setDraftSchema(prev => ({
+      ...prev,
+      sections: prev.sections.map(s => s.id === sectionId ? { ...s, title } : s),
+    }))
+  }
+
+  const addSection = () => {
+    const newId = `section_${Date.now()}`
+    setDraftSchema(prev => ({
+      ...prev,
+      sections: [
+        ...prev.sections,
+        { id: newId, title: '🆕 หมวดใหม่', pkg_type: newId, items: [] },
+      ],
+    }))
+  }
+
+  const removeSection = (sectionId) => {
+    setDraftSchema(prev => ({
+      ...prev,
+      sections: prev.sections.filter(s => s.id !== sectionId),
+    }))
+  }
+
   const fmt = (val, isPct) => isPct ? `${val ?? 0}%` : formatBaht(val ?? 0, 2)
+
+  const activeSchema = costSchema ?? DEFAULT_COST_SCHEMA
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
@@ -423,6 +560,22 @@ export default function SettingsPage() {
         <MenuCategoriesSection />
       </div>
 
+      {/* ── Month picker ───────────────────────────────────────── */}
+      <div className="card py-3 px-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Calendar size={16} className="text-gray-400" />
+            <span className="text-sm text-gray-600 font-medium">ดูข้อมูลตามเดือน</span>
+          </div>
+          <MonthPicker month={selectedMonth} onChange={setSelectedMonth} />
+        </div>
+        {!isCurrentMonth && (
+          <p className="text-xs text-gray-400 mt-2">
+            กำลังดูข้อมูล {thaiMonthYear(selectedMonth)} — แก้ไขได้เฉพาะเดือนปัจจุบัน
+          </p>
+        )}
+      </div>
+
       {/* ── 1. Platform Fee % ──────────────────────────────────── */}
       <div className="card space-y-4">
         <div className="flex items-center justify-between">
@@ -434,7 +587,10 @@ export default function SettingsPage() {
               </p>
             )}
           </div>
-          <EditBadge editing={feeEditing} onEdit={() => setFeeEditing(true)} />
+          {isCurrentMonth
+            ? <EditBadge editing={feeEditing} onEdit={() => setFeeEditing(true)} />
+            : <ReadOnlyBadge />
+          }
         </div>
 
         {!feeEditing && (
@@ -532,7 +688,10 @@ export default function SettingsPage() {
               </p>
             )}
           </div>
-          <EditBadge editing={overheadEditing} onEdit={() => setOverheadEditing(true)} />
+          {isCurrentMonth
+            ? <EditBadge editing={overheadEditing} onEdit={() => setOverheadEditing(true)} />
+            : <ReadOnlyBadge />
+          }
         </div>
 
         {!overheadEditing && (
@@ -594,20 +753,23 @@ export default function SettingsPage() {
             <button onClick={toggleCostHistory} className="text-xs text-cocoa-600 hover:underline flex items-center gap-1">
               <History size={13} />{showCostHistory ? 'ซ่อนประวัติ' : 'ดูประวัติ'}
             </button>
-            <EditBadge editing={costEditing} onEdit={() => setCostEditing(true)} />
+            {isCurrentMonth
+              ? <EditBadge editing={costEditing} onEdit={() => setCostEditing(true)} />
+              : <ReadOnlyBadge />
+            }
           </div>
         </div>
 
-        {/* Read-only */}
+        {/* Read-only: render from costSchema */}
         {!costEditing && (
           <div className="space-y-4">
-            {PACKAGING_SECTIONS.map(({ title, keys }) => (
-              <div key={title}>
+            {activeSchema.sections.map(({ id, title, items }) => (
+              <div key={id ?? title}>
                 <h3 className="text-sm font-semibold text-gray-600 mb-2">{title}</h3>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {keys.map(key => (
+                  {(items ?? []).map(({ key, label }) => (
                     <div key={key} className="bg-gray-50 rounded-xl px-3 py-2.5 text-center">
-                      <p className="text-xs text-gray-500 mb-1">{COST_KEY_LABELS[key] ?? key}</p>
+                      <p className="text-xs text-gray-500 mb-1">{label}</p>
                       <p className="text-lg font-bold text-gray-800">{formatBaht(costValues[key] ?? 0, 2)}</p>
                     </div>
                   ))}
@@ -617,30 +779,81 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Edit */}
-        {costEditing && (
+        {/* Edit: schema editor */}
+        {costEditing && draftSchema && (
           <>
             <p className="text-xs text-amber-600 flex items-start gap-1">
               <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-              การบันทึกจะสร้าง Version ใหม่ — ไม่กระทบการคำนวณต้นทุนย้อนหลัง
+              แก้ไขชื่อ/เพิ่มรายการได้เลย — การบันทึกสร้าง Version ใหม่ ไม่กระทบย้อนหลัง
             </p>
-            {PACKAGING_SECTIONS.map(({ title, keys }) => (
-              <div key={title}>
-                <h3 className="text-sm font-semibold text-gray-600 mb-2">{title}</h3>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {keys.map(key => (
-                    <div key={key}>
-                      <label className="text-xs text-gray-500">{COST_KEY_LABELS[key] ?? key} (฿)</label>
+
+            <div className="space-y-5">
+              {draftSchema.sections.map((section) => (
+                <div key={section.id} className="border border-gray-100 rounded-xl p-3 space-y-2">
+                  {/* Section header */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      className="input flex-1 text-sm font-semibold py-1.5"
+                      value={section.title}
+                      onChange={e => updateSectionTitle(section.id, e.target.value)}
+                      placeholder="ชื่อหมวด"
+                    />
+                    {draftSchema.sections.length > 1 && (
+                      <button
+                        onClick={() => removeSection(section.id)}
+                        className="text-gray-300 hover:text-red-500 transition-colors p-1"
+                        title="ลบหมวดนี้"
+                      >
+                        <X size={15} />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Items */}
+                  {(section.items ?? []).map(({ key, label }) => (
+                    <div key={key} className="flex items-center gap-2">
                       <input
-                        type="number" min="0" step="0.01" className="input text-right"
+                        className="input flex-1 text-sm py-1.5 min-w-0"
+                        value={label}
+                        placeholder="ชื่อรายการ"
+                        onChange={e => updateItemLabel(section.id, key, e.target.value)}
+                      />
+                      <input
+                        type="number" min="0" step="0.01"
+                        className="input w-24 text-right text-sm py-1.5 shrink-0"
                         value={costValues[key] ?? 0}
                         onChange={e => setCostValues(v => ({ ...v, [key]: parseFloat(e.target.value) || 0 }))}
                       />
+                      <span className="text-xs text-gray-400 w-3 shrink-0">฿</span>
+                      <button
+                        onClick={() => removeItemFromSection(section.id, key)}
+                        className="text-gray-300 hover:text-red-500 transition-colors p-1 shrink-0"
+                        aria-label={`ลบ ${label}`}
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
                   ))}
+
+                  {/* Add item */}
+                  <button
+                    onClick={() => addItemToSection(section.id)}
+                    className="flex items-center gap-1.5 text-xs text-cocoa-600 hover:text-cocoa-800 font-medium px-1 py-1"
+                  >
+                    <Plus size={13} /> เพิ่มรายการ
+                  </button>
                 </div>
-              </div>
-            ))}
+              ))}
+
+              {/* Add section */}
+              <button
+                onClick={addSection}
+                className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-600 border border-dashed border-gray-300 hover:border-gray-400 rounded-xl px-4 py-3 w-full justify-center transition-colors"
+              >
+                <Plus size={15} /> เพิ่มหมวดใหม่
+              </button>
+            </div>
+
             <div className="flex gap-2">
               <button onClick={saveGlobalCosts} disabled={savingCost} className="btn-primary flex items-center gap-2">
                 <Save size={16} />{savingCost ? 'กำลังบันทึก...' : 'บันทึก'}
@@ -655,6 +868,13 @@ export default function SettingsPage() {
           </>
         )}
 
+        {/* Show status when read-only */}
+        {!costEditing && costStatus && (
+          <p className={`text-sm ${costStatus.includes('สำเร็จ') ? 'text-green-600' : costStatus.includes('ไม่มี') ? 'text-gray-500' : 'text-red-600'}`}>
+            {costStatus}
+          </p>
+        )}
+
         {showCostHistory && (
           <div className="border-t pt-4">
             <h3 className="text-sm font-semibold text-gray-700 mb-3">📋 ประวัติการแก้ไขค่าใช้จ่ายส่วนกลาง</h3>
@@ -662,20 +882,28 @@ export default function SettingsPage() {
               <p className="text-sm text-gray-400 text-center py-4">ยังไม่มีประวัติ</p>
             ) : (
               <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                {costHistory.map(h => (
-                  <div key={h.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 text-sm">
-                    <span className="text-gray-400 text-xs w-20 shrink-0">{thaiDate(h.effective_from)}</span>
-                    <span className="flex-1 text-gray-700 font-medium px-2">{COST_KEY_LABELS[h.key] ?? h.key}</span>
-                    <div className="flex items-center gap-2">
-                      <span className={`font-semibold ${h.effective_to ? 'text-gray-400' : 'text-cocoa-700'}`}>
-                        {h.key.endsWith('_pct') ? `${h.value}%` : formatBaht(h.value, 2)}
-                      </span>
-                      {!h.effective_to && (
-                        <span className="text-xs bg-green-50 text-green-600 border border-green-200 px-1.5 py-0.5 rounded-full">ปัจจุบัน</span>
-                      )}
+                {costHistory.map(h => {
+                  // Find label from costSchema
+                  let label = h.key
+                  for (const sec of activeSchema.sections) {
+                    const found = (sec.items ?? []).find(i => i.key === h.key)
+                    if (found) { label = found.label; break }
+                  }
+                  return (
+                    <div key={h.id ?? `${h.key}-${h.effective_from}`} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 text-sm">
+                      <span className="text-gray-400 text-xs w-20 shrink-0">{thaiDate(h.effective_from)}</span>
+                      <span className="flex-1 text-gray-700 font-medium px-2">{label}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-semibold ${h.effective_to ? 'text-gray-400' : 'text-cocoa-700'}`}>
+                          {h.key.endsWith('_pct') ? `${h.value}%` : formatBaht(h.value, 2)}
+                        </span>
+                        {!h.effective_to && (
+                          <span className="text-xs bg-green-50 text-green-600 border border-green-200 px-1.5 py-0.5 rounded-full">ปัจจุบัน</span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
@@ -684,3 +912,4 @@ export default function SettingsPage() {
     </div>
   )
 }
+                                                
