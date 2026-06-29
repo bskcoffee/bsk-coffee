@@ -127,7 +127,7 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
     try {
       const { data: ordersData, error: ordersError } = await supabase
         .from('orders')
-        .select('id, platform, date, status, notes, created_at')
+        .select('id, platform, date, status, notes, discount, created_at')
         .eq('date', date)
         .order('created_at', { ascending: false })
 
@@ -155,7 +155,8 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
           setOrders(withStatus.map(o => ({
             ...o,
             items: byOrder2[o.id] ?? [],
-            total: (byOrder2[o.id] ?? []).reduce((s, i) => s + i.quantity * i.unit_price, 0),
+            discount: o.discount ?? 0,
+            total: (byOrder2[o.id] ?? []).reduce((s, i) => s + i.quantity * i.unit_price, 0) - (o.discount ?? 0),
             itemCount: (byOrder2[o.id] ?? []).reduce((s, i) => s + i.quantity, 0),
           })))
           return
@@ -182,7 +183,8 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
         ...o,
         status: o.status ?? 'preparing',
         items: byOrder[o.id] ?? [],
-        total: (byOrder[o.id] ?? []).reduce((s, i) => s + i.quantity * i.unit_price, 0),
+        discount: o.discount ?? 0,
+        total: (byOrder[o.id] ?? []).reduce((s, i) => s + i.quantity * i.unit_price, 0) - (o.discount ?? 0),
         itemCount: (byOrder[o.id] ?? []).reduce((s, i) => s + i.quantity, 0),
       })))
     } catch (err) { console.error(err) }
@@ -665,6 +667,9 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
                   <div className="flex items-center justify-between mt-2">
                     <div>
                       <p className="text-xs text-gray-500">{order.itemCount} รายการ</p>
+                      {order.discount > 0 && (
+                        <p className="text-xs text-red-400 font-medium">ส่วนลด -{fmt(order.discount)}</p>
+                      )}
                       <p className="text-base font-bold text-gray-900">{fmt(order.total)}</p>
                     </div>
                     <p className="text-[10px] text-gray-400">

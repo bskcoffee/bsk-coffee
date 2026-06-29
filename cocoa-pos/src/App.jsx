@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { format } from 'date-fns'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import LoginPage       from './pages/LoginPage'
 import POSPage         from './pages/POSPage'
@@ -283,6 +284,8 @@ function PrintLogModal({ printLog, onUpdateLog, onClear, onClose }) {
   )
 }
 
+const todayStr = () => format(new Date(), 'yyyy-MM-dd')
+
 const TABS = [
   { key: 'pos',    label: 'POS',        icon: ShoppingCart  },
   { key: 'orders', label: 'ออเดอร์',   icon: ClipboardList },
@@ -355,6 +358,7 @@ function AppInner() {
   const [showPrintModal, setShowPrintModal] = useState(false)
   const [showLogModal,   setShowLogModal]   = useState(false)
   const [printLog,       setPrintLog]       = useState([])
+  const [posDate,        setPosDate]        = useState(initDate ?? todayStr())
 
   const addPrintLog    = (entry)       => setPrintLog(prev => [entry, ...prev])
   const updatePrintLog = (id, status)  => setPrintLog(prev => prev.map(e => e.id === id ? { ...e, status } : e))
@@ -453,8 +457,8 @@ function AppInner() {
 
       {/* Page content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'pos'    && <POSPage />}
-        {activeTab === 'orders' && <OrderManagePage initialDate={initDate} highlightRef={initHighlight} onAddLog={addPrintLog} />}
+        {activeTab === 'pos'    && <POSPage onDateChange={setPosDate} />}
+        {activeTab === 'orders' && <OrderManagePage initialDate={posDate} highlightRef={initHighlight} onAddLog={addPrintLog} />}
       </div>
 
       {/* Passkey Modal */}

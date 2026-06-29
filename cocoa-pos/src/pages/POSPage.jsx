@@ -74,7 +74,7 @@ function useDragSort() {
 }
 
 // ══════════════════════════════════════════════════════════════
-export default function POSPage() {
+export default function POSPage({ onDateChange }) {
   const { signOut } = useAuth()
 
   // ── Remote data ──
@@ -132,6 +132,9 @@ export default function POSPage() {
     if (catOrder.length === 0) return
     try { localStorage.setItem('pos_cat_order_local', JSON.stringify(catOrder)) } catch {}
   }, [catOrder])
+
+  // ── Report orderDate to parent (App.jsx) for tab sync ──
+  useEffect(() => { onDateChange?.(orderDate) }, [orderDate, onDateChange])
 
   // ── Clock ──
   useEffect(() => {
@@ -501,6 +504,40 @@ export default function POSPage() {
       resetOrder(); setShowConfirm(false); setOrderRef(''); setOrderDate(todayStr())
       setTimeout(() => setSavedMsg(null), 6000)
 
+      // ── Sync menu_discount ไปยัง platform_costs (fire-and-forget) ──
+      ;(async () => {
+        try {
+          // Sum discount ทุก order ของวัน+platform นี้
+          const { data: allOrders } = await supabase
+            .from('orders')
+            .select('discount')
+            .eq('date', date)
+            .eq('platform', selectedPlat)
+          const totalDiscount = (allOrders ?? []).reduce((s, o) => s + (o.discount ?? 0), 0)
+          if (totalDiscount <= 0) return
+
+          // Update ถ้ามี row อยู่แล้ว, Insert ถ้ายังไม่มี
+          const { data: existingRow } = await supabase
+            .from('platform_costs')
+            .select('id')
+            .eq('date', date)
+            .eq('platform', selectedPlat)
+            .maybeSingle()
+
+          if (existingRow) {
+            await supabase.from('platform_costs')
+              .update({ menu_discount: totalDiscount })
+              .eq('date', date)
+              .eq('platform', selectedPlat)
+          } else {
+            await supabase.from('platform_costs')
+              .insert({ date, platform: selectedPlat, menu_discount: totalDiscount })
+          }
+        } catch (err) {
+          console.warn('menu_discount sync failed:', err.message)
+        }
+      })()
+
       // ── Auto-print: ส่งไป print server (fire-and-forget, ไม่ block UX) ──
       try {
         const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
@@ -615,18 +652,29 @@ export default function POSPage() {
                 {/* Backdrop */}
                 <div className="fixed inset-0 z-40" onClick={() => setShowDatePicker(false)} />
                 {/* Dropdown */}
-                <div className="absolute right-0 top-full mt-1 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 w-36">
-                  {Array.from({ length: 7 }, (_, i) => {
-                    const d = format(subDays(new Date(), i), 'yyyy-MM-dd')
-                    const label = i === 0 ? 'วันนี้' : i === 1 ? 'เมื่อวาน' : format(subDays(new Date(), i), 'EEE d MMM', { locale: th })
-                    return (
-                      <button key={d} onClick={() => { setOrderDate(d); setShowDatePicker(false) }}
-                        className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-semibold transition-colors
-                          ${orderDate === d ? 'bg-cocoa-700 text-white' : 'text-gray-700 hover:bg-gray-100'}`}>
-                        {label}
-                      </button>
-                    )
-                  })}
+                <div className="absolute right-0 top-full mt-1 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 w-44">
+                  {/* Shortcuts */}
+                  {[
+                    { d: todayStr(), label: 'วันนี้' },
+                    { d: format(subDays(new Date(), 1), 'yyyy-MM-dd'), label: 'เมื่อวาน' },
+                  ].map(({ d, label }) => (
+                    <button key={d} onClick={() => { setOrderDate(d); setShowDatePicker(false) }}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-semibold transition-colors
+                        ${orderDate === d ? 'bg-cocoa-700 text-white' : 'text-gray-700 hover:bg-gray-100'}`}>
+                      {label}
+                    </button>
+                  ))}
+                  {/* Free date input */}
+                  <div className="border-t border-gray-100 pt-2 mt-1 px-1">
+                    <p className="text-[10px] text-gray-400 mb-1.5">เลือกวันย้อนหลัง</p>
+                    <input
+                      type="date"
+                      max={todayStr()}
+                      value={orderDate}
+                      onChange={e => { if (e.target.value) { setOrderDate(e.target.value); setShowDatePicker(false) } }}
+                      className="w-full px-2 py-2 border border-gray-200 rounded-xl text-xs outline-none focus:border-cocoa-400 bg-gray-50"
+                    />
+                  </div>
                 </div>
               </>
             )}
