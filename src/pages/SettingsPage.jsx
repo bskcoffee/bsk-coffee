@@ -595,8 +595,8 @@ export default function SettingsPage() {
           <MonthPicker month={selectedMonth} onChange={handleMonthChange} />
         </div>
         {!isCurrentMonth && (
-          <p className="text-xs text-gray-400 mt-2">
-            กำลังดูข้อมูล {thaiMonthYear(selectedMonth)} — แก้ไขได้เฉพาะเดือนปัจจุบัน
+          <p className="text-xs text-amber-600 mt-2">
+            กำลังดูข้อมูล {thaiMonthYear(selectedMonth)} — บันทึกจะบันทึกย้อนหลังไปเดือนนั้น
           </p>
         )}
       </div>
@@ -612,10 +612,7 @@ export default function SettingsPage() {
               </p>
             )}
           </div>
-          {isCurrentMonth
-            ? <EditBadge editing={feeEditing} onEdit={() => setFeeEditing(true)} />
-            : <ReadOnlyBadge />
-          }
+          <EditBadge editing={feeEditing} onEdit={() => setFeeEditing(true)} />
         </div>
 
         {!feeEditing && (
@@ -713,10 +710,7 @@ export default function SettingsPage() {
               </p>
             )}
           </div>
-          {isCurrentMonth
-            ? <EditBadge editing={overheadEditing} onEdit={() => setOverheadEditing(true)} />
-            : <ReadOnlyBadge />
-          }
+          <EditBadge editing={overheadEditing} onEdit={() => setOverheadEditing(true)} />
         </div>
 
         {!overheadEditing && (
@@ -779,10 +773,7 @@ export default function SettingsPage() {
             <button onClick={toggleCostHistory} aria-expanded={showCostHistory} className="text-xs text-cocoa-600 hover:underline flex items-center gap-1">
               <History size={13} />{showCostHistory ? 'ซ่อนประวัติ' : 'ดูประวัติ'}
             </button>
-            {isCurrentMonth
-              ? <EditBadge editing={costEditing} onEdit={() => setCostEditing(true)} />
-              : <ReadOnlyBadge />
-            }
+            <EditBadge editing={costEditing} onEdit={() => setCostEditing(true)} />
           </div>
         </div>
 
