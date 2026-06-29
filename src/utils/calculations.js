@@ -35,8 +35,13 @@ export function calcPlatformProfit({ items = [], costs = {}, platformFeePct = 0 
   const menuDiscount = costs.menu_discount ?? 0
   const grossSales   = Math.max(0, sales - menuDiscount)
 
-  // Layer 3 — gp_cost per item already baked with correct fee (5% or normal)
-  const grossProfit = grossSales - gpCostTotal
+  // Layer 3 — GP ต้องคำนวณบน grossSales (หลังหัก menu_discount) ไม่ใช่ยอดเต็ม
+  // ตัวอย่าง: sales=500, discount=76, fee=10% → gpCost=42.4 (ไม่ใช่ 50)
+  const discountRatio      = sales > 0 ? grossSales / sales : 1
+  const grossNormalSales   = normalSales   * discountRatio
+  const grossCampaignSales = campaignSales * discountRatio
+  const gpCostAdjusted     = gpCostTotal   * discountRatio   // GP บนยอดสุทธิ
+  const grossProfit        = grossSales    - gpCostAdjusted
 
   // Layer 4
   const campaign         = costs.campaign          ?? 0
@@ -57,6 +62,9 @@ export function calcPlatformProfit({ items = [], costs = {}, platformFeePct = 0 
     menuDiscount,
     grossSales,
     gpCostTotal,
+    gpCostAdjusted,
+    grossNormalSales,
+    grossCampaignSales,
     grossProfit,
     campaign,
     marketingFee,

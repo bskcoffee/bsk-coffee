@@ -704,14 +704,15 @@ export default function DashboardPage() {
     const totalMarketingFee    = Object.values(platformTotals).reduce((s, p) => s + p.marketingFee,       0)
     const totalDeliveryDiscount= Object.values(platformTotals).reduce((s, p) => s + p.deliveryDiscount,   0)
 
-    // GP Cost = (normalSales × platFee%) + (campaignSales × CAMPAIGN_GP_PCT%)
-    // Campaign items (is_campaign=true) use 5% flat rate instead of platform fee
+    // GP Cost = (grossNormalSales × platFee%) + (grossCampaignSales × CAMPAIGN_GP_PCT%)
+    // ใช้ grossNormalSales/grossCampaignSales (หลังหัก menu_discount ตามสัดส่วน)
+    // เพื่อให้ GP คำนวณบนยอดสุทธิ ไม่ใช่ยอดก่อนหักส่วนลด
     const totalGpCost = platList.reduce((s, p) => {
       const pt = platformTotals[p]
       if (!pt) return s
       const feePct = platFees[p] ?? 0
-      const normalGp   = (pt.normalSales   ?? pt.sales) * feePct         / 100
-      const campaignGp = (pt.campaignSales ?? 0)        * CAMPAIGN_GP_PCT / 100
+      const normalGp   = (pt.grossNormalSales   ?? pt.normalSales   ?? pt.sales) * feePct         / 100
+      const campaignGp = (pt.grossCampaignSales ?? pt.campaignSales ?? 0)        * CAMPAIGN_GP_PCT / 100
       return s + normalGp + campaignGp
     }, 0)
 
@@ -753,8 +754,8 @@ export default function DashboardPage() {
     for (const p of platList) {
       const pt = platformTotals[p]
       const feePct = platFees[p] ?? 0
-      const gpCostP = ((pt?.normalSales ?? pt?.sales ?? 0) * feePct         / 100)
-                    + ((pt?.campaignSales ?? 0)            * CAMPAIGN_GP_PCT / 100)
+      const gpCostP = ((pt?.grossNormalSales   ?? pt?.normalSales   ?? pt?.sales ?? 0) * feePct         / 100)
+                    + ((pt?.grossCampaignSales ?? pt?.campaignSales ?? 0)              * CAMPAIGN_GP_PCT / 100)
       platformProfitBeforeMat[p] = (pt?.sales ?? 0) - gpCostP
         - (pt?.menuDiscount ?? 0) - (pt?.campaign ?? 0)
         - (pt?.marketingFee ?? 0) - (pt?.deliveryDiscount ?? 0)
