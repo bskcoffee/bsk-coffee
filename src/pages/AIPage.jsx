@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import {
   Brain, CheckCircle, SkipForward, TrendingUp, TrendingDown,
   Minus, ChevronDown, ChevronUp, RefreshCw, Store, AlertCircle,
-  RotateCcw,
+  RotateCcw, CalendarOff,
 } from 'lucide-react'
 
 const TYPE_LABELS = { daily: 'รายวัน', weekly: 'รายสัปดาห์', monthly: 'รายเดือน' }
@@ -251,12 +251,18 @@ function AICard({ record, onActionTaken, onMarkClosed }) {
 }
 
 // ─── Close Day Modal ──────────────────────────────────────────────────────────
-function CloseDayModal({ date, onConfirm, onClose }) {
+// date = null → แสดง date picker (retroactive mode)
+// date = 'YYYY-MM-DD' → วันที่กำหนดมาแล้ว (จาก card หรือ today banner)
+function CloseDayModal({ date: initialDate, onConfirm, onClose }) {
+  const today  = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })
+  const [date, setDate]     = useState(initialDate ?? today)
   const [reason, setReason] = useState('ร้านปิด')
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState(null)
+  const isRetroactive       = !initialDate  // เปิดจากปุ่ม retroactive
 
   async function handleConfirm() {
+    if (!date) { setError('กรุณาเลือกวันที่'); return }
     setSaving(true)
     setError(null)
     try {
@@ -274,13 +280,32 @@ function CloseDayModal({ date, onConfirm, onClose }) {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm space-y-4 p-5">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center shrink-0">
-            <Store size={20} className="text-orange-600" aria-hidden="true" />
+            <CalendarOff size={20} className="text-orange-600" aria-hidden="true" />
           </div>
           <div>
-            <h2 id="close-modal-title" className="font-bold text-gray-900">ร้านปิดวันที่ {date}</h2>
+            <h2 id="close-modal-title" className="font-bold text-gray-900">
+              {isRetroactive ? 'บันทึกวันปิดร้านย้อนหลัง' : `ร้านปิดวันที่ ${date}`}
+            </h2>
             <p className="text-xs text-gray-500">AI จะข้ามวันนี้ในการวิเคราะห์ trend</p>
           </div>
         </div>
+
+        {/* Date picker — แสดงเฉพาะ retroactive mode */}
+        {isRetroactive && (
+          <div>
+            <label htmlFor="close-date" className="text-sm font-medium text-gray-700 block mb-1.5">
+              วันที่ปิดร้าน
+            </label>
+            <input
+              id="close-date"
+              type="date"
+              value={date}
+              max={today}
+              onChange={e => setDate(e.target.value)}
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+            />
+          </div>
+        )}
 
         <div>
           <label htmlFor="close-reason" className="text-sm font-medium text-gray-700 block mb-1.5">
@@ -367,8 +392,9 @@ export default function AIPage() {
   const [loading, setLoading]       = useState(true)
   const [filter, setFilter]         = useState('all')
   const [stats, setStats]           = useState({ done: 0, skipped: 0, pending: 0 })
-  const [closeDayTarget, setCloseDayTarget] = useState(null) // date string for modal
-  const [todayClosed, setTodayClosed]       = useState(false)
+  const [closeDayTarget, setCloseDayTarget]       = useState(null)  // date string → from card
+  const [showRetroModal, setShowRetroModal]       = useState(false) // null date → date picker
+  const [todayClosed, setTodayClosed]             = useState(false)
   const [todayClosedSaving, setTodayClosedSaving] = useState(false)
 
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })
@@ -462,14 +488,24 @@ export default function AIPage() {
               <Brain size={22} className="text-purple-600" aria-hidden="true" />
               <h1 className="text-xl font-bold text-gray-900">AI Memory</h1>
             </div>
-            <button
-              onClick={load}
-              disabled={loading}
-              aria-label="รีเฟรชข้อมูล"
-              className="p-2.5 rounded-xl hover:bg-gray-100 text-gray-500 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
-            >
-              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowRetroModal(true)}
+                aria-label="บันทึกวันปิดร้านย้อนหลัง"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
+              >
+                <CalendarOff size={15} aria-hidden="true" />
+                ย้อนหลัง
+              </button>
+              <button
+                onClick={load}
+                disabled={loading}
+                aria-label="รีเฟรชข้อมูล"
+                className="p-2.5 rounded-xl hover:bg-gray-100 text-gray-500 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
+              >
+                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
+              </button>
+            </div>
           </div>
 
           {/* Today closed banner */}
@@ -553,12 +589,21 @@ export default function AIPage() {
         </div>
       </div>
 
-      {/* Close Day Modal */}
+      {/* Close Day Modal — from card (date fixed) */}
       {closeDayTarget && (
         <CloseDayModal
           date={closeDayTarget}
           onConfirm={handleCloseDayConfirm}
           onClose={() => setCloseDayTarget(null)}
+        />
+      )}
+
+      {/* Retroactive Close Day Modal — date picker */}
+      {showRetroModal && (
+        <CloseDayModal
+          date={null}
+          onConfirm={date => { setShowRetroModal(false); load() }}
+          onClose={() => setShowRetroModal(false)}
         />
       )}
     </>
