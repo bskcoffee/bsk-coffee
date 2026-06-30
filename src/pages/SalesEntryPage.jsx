@@ -1171,20 +1171,37 @@ export default function SalesEntryPage() {
                 <p className="text-gray-400 text-sm">ยังไม่มีรายการขาย</p>
               )}
             </div>
-            <button
-              onClick={handleSave}
-              disabled={saveStatus === 'saving'}
-              className="btn-primary flex items-center gap-2 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {saveStatus === 'saving' && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              {saveStatus === 'success' && <CheckCircle size={16} />}
-              {saveStatus === 'error' && <AlertCircle size={16} />}
-              <Save size={16} />
-              {saveStatus === 'saving' ? 'กำลังบันทึก...'
-                : saveStatus === 'success' ? 'บันทึกแล้ว!'
-                : saveStatus === 'error' ? 'เกิดข้อผิดพลาด'
-                : 'บันทึก'}
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={handleSendReport}
+                disabled={reportStatus === 'sending'}
+                aria-label="ส่ง AI Report ไป LINE"
+                className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 bg-indigo-600 hover:bg-indigo-700 text-white"
+              >
+                {reportStatus === 'sending' && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                {reportStatus === 'sent'    && <CheckCircle size={15} />}
+                {reportStatus === 'error'   && <AlertCircle size={15} />}
+                {reportStatus === 'idle'    && <Send size={15} />}
+                {reportStatus === 'sending' ? 'กำลังส่ง...'
+                  : reportStatus === 'sent' ? 'ส่งแล้ว!'
+                  : reportStatus === 'error' ? 'ส่งไม่สำเร็จ'
+                  : 'AI Report'}
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saveStatus === 'saving'}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saveStatus === 'saving' && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                {saveStatus === 'success' && <CheckCircle size={16} />}
+                {saveStatus === 'error' && <AlertCircle size={16} />}
+                <Save size={16} />
+                {saveStatus === 'saving' ? 'กำลังบันทึก...'
+                  : saveStatus === 'success' ? 'บันทึกแล้ว!'
+                  : saveStatus === 'error' ? 'เกิดข้อผิดพลาด'
+                  : 'บันทึก'}
+              </button>
+            </div>
           </div>
 
           {/* 5-layer breakdown */}
@@ -1217,26 +1234,6 @@ export default function SalesEntryPage() {
           </details>
         </div>
       )}
-
-      {/* ── Send AI Report button ──────────────────────────────────────── */}
-      <div className="mt-4 flex justify-end">
-        <button
-          onClick={handleSendReport}
-          disabled={reportStatus === 'sending'}
-          aria-label="ส่ง AI Report ไป LINE"
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50
-            bg-indigo-600 hover:bg-indigo-700 text-white shadow"
-        >
-          {reportStatus === 'sending' && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-          {reportStatus === 'sent'    && <CheckCircle size={16} />}
-          {reportStatus === 'error'   && <AlertCircle size={16} />}
-          {reportStatus === 'idle'    && <Send size={16} />}
-          {reportStatus === 'sending' ? 'กำลังส่ง...'
-            : reportStatus === 'sent' ? 'ส่งแล้ว!'
-            : reportStatus === 'error' ? 'ส่งไม่สำเร็จ'
-            : 'ส่ง AI Report ไป LINE'}
-        </button>
-      </div>
 
       {/* Bottom padding */}
       <div className="h-4" />
