@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network, Brain } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
@@ -60,10 +60,11 @@ const ALL_NAV = [
   { to: '/users',    iconName: 'Users',           label: 'การจัดการผู้ใช้งาน', adminOnly: true  },
   { to: '/import',    iconName: 'FileUp',          label: 'นำเข้าข้อมูล',        adminOnly: true  },
   { to: '/cashflow',  iconName: 'Wallet',          label: 'รายรับรายจ่าย',       adminOnly: false },
+  { to: '/ai',        iconName: 'Brain',           label: 'AI Memory',           adminOnly: true  },
   { to: '/system',    iconName: 'Network',         label: 'System Architecture', adminOnly: true  },
 ]
 
-const ICON_MAP = { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, FileUp, Wallet, Printer, Tablet, Network }
+const ICON_MAP = { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, FileUp, Wallet, Printer, Tablet, Network, Brain }
 const STORAGE_KEY = 'cocoa-nav-order'
 
 function applyOrder(order) {

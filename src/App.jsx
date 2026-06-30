@@ -17,6 +17,7 @@ import ImportPage from './pages/ImportPage'
 import CashFlowPage from './pages/CashFlowPage'
 import LabelSettingsPage from './pages/LabelSettingsPage'
 import SystemPage from './pages/SystemPage'
+import AIPage from './pages/AIPage'
 
 // ── Route Guards ─────────────────────────────────────────────────────────────
 
@@ -152,6 +153,7 @@ const router = createBrowserRouter([
       { path: 'cashflow',  element: <CashFlowPage /> },
       { path: 'label-settings', element: <AdminRoute><LabelSettingsPage /></AdminRoute> },
       { path: 'system',  element: <SuperAdminRoute><SystemPage /></SuperAdminRoute> },
+      { path: 'ai',      element: <AdminRoute><AIPage /></AdminRoute> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },

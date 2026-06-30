@@ -108,6 +108,109 @@ async function upsertSetting(key, value) {
   })
 }
 
+// ─── AI Memory (A) ───────────────────────────────────────────────────────────
+async function fetchAIMemory(reportType, limit = 4) {
+  try {
+    return await sb('ai_memory',
+      `?report_type=eq.${reportType}&order=report_date.desc&limit=${limit}&select=report_date,recommendations,key_metrics`)
+  } catch { return [] }
+}
+
+async function saveAIMemory(reportType, reportDate, recommendations, keyMetrics = {}) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/ai_memory`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify({ report_type: reportType, report_date: reportDate,
+        recommendations, key_metrics: keyMetrics }),
+    })
+  } catch (e) { console.warn('[AI Memory] save failed:', e.message) }
+}
+
+function buildMemoryContext(memories, reportType) {
+  if (!memories || memories.length === 0) return ''
+  const lines = memories.map(m => {
+    const d = m.report_date
+    const km = m.key_metrics ?? {}
+    const salesStr = km.totalSales ? ` | ยอด ฿${fmt(km.totalSales)}` : ''
+    const profitStr = km.netProfitPct != null ? ` | Profit ${fmtPct(km.netProfitPct)}` : ''
+    return `  [${d}${salesStr}${profitStr}]\n  แนะนำ: ${(m.recommendations ?? '').slice(0, 200).replace(/\n/g, ' ')}`
+  }).join('\n')
+  return `\n═══ ความจำ AI — ${reportType === 'daily' ? '4 วัน' : reportType === 'weekly' ? '4 สัปดาห์' : '4 เดือน'}ย้อนหลัง ═══\n${lines}\n(ใช้ความจำนี้ดูว่าแนะนำอะไรไปแล้ว ผลเป็นอย่างไร และพัฒนาคำแนะนำให้ดีขึ้น)\n`
+}
+
+// ─── Closed Day helpers ───────────────────────────────────────────────────────
+function closedKey(dateStr) { return `closed_${dateStr}` }
+
+async function isClosedDay(dateStr) {
+  try {
+    const val = await getSetting(closedKey(dateStr))
+    return val === 'true'
+  } catch { return false }
+}
+
+async function markClosedDay(dateStr, reason = 'ร้านปิด') {
+  await upsertSetting(closedKey(dateStr), 'true')
+  // บันทึก memory ด้วย เพื่อให้ AI รู้ว่าวันนั้นปิด
+  await saveAIMemory('daily', dateStr,
+    `ร้านปิด — ${reason} (ไม่นับในการวิเคราะห์ trend และ outcome)`,
+    { closed: true, reason })
+}
+
+// ─── D: Outcome Tracking ─────────────────────────────────────────────────────
+async function saveOutcome(reportDate, outcomeText) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/ai_memory?report_type=eq.daily&report_date=eq.${reportDate}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ outcome: outcomeText }),
+    })
+  } catch (e) { console.warn('[Outcome] save failed:', e.message) }
+}
+
+function buildOutcomeText(todayMetrics, yesterdayMemory) {
+  if (!yesterdayMemory?.key_metrics) return null
+  // ข้ามถ้าเมื่อวานร้านปิด
+  if (yesterdayMemory.key_metrics?.closed) return null
+  const km = yesterdayMemory.key_metrics
+  const salesDiff  = todayMetrics.totalSales - (km.totalSales ?? 0)
+  const profitDiff = todayMetrics.netProfitPct - (km.netProfitPct ?? 0)
+  const salesSign  = salesDiff >= 0 ? '↑' : '↓'
+  const profitSign = profitDiff >= 0 ? '+' : ''
+  const salesIcon  = salesDiff >= 0 ? '✅' : '🔴'
+  const profitIcon = profitDiff >= 0.5 ? '✅' : profitDiff <= -0.5 ? '🔴' : '🟡'
+  return `${salesIcon} ยอดขาย ${salesSign}฿${fmt(Math.abs(salesDiff))} vs วันก่อน | ${profitIcon} Profit ${profitSign}${profitDiff.toFixed(1)}pp`
+}
+
+// ─── F: Day-of-week Baseline ─────────────────────────────────────────────────
+async function fetchDayOfWeekBaseline(todayStr) {
+  try {
+    const dow = new Date(todayStr + 'T12:00:00').getDay() // 0=Sun
+    const dates = [-7, -14, -21, -28].map(d => offsetDate(todayStr, d))
+    const orders = await Promise.all(dates.map(d =>
+      sb('orders', `?date=eq.${d}&status=eq.delivered&select=order_items(quantity,unit_price)`)
+        .catch(() => [])
+    ))
+    // exclude closed days
+    const closedFlags = await Promise.all(dates.map(d => isClosedDay(d).catch(() => false)))
+    const daySales = orders
+      .map((dayOrders, i) => closedFlags[i] ? null :
+        dayOrders.reduce((t, o) =>
+          t + (o.order_items ?? []).reduce((s, i2) => s + Number(i2.quantity ?? 0) * Number(i2.unit_price ?? 0), 0), 0))
+      .filter(s => s != null && s > 0)
+    if (daySales.length === 0) return null
+    const avg = daySales.reduce((a, b) => a + b, 0) / daySales.length
+    const dayNames = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์']
+    return { avg, dayName: dayNames[dow], samples: daySales.length }
+  } catch { return null }
+}
+
 // ─── Deduplication via Supabase ───────────────────────────────────────────────
 async function alreadySentToday() {
   try {
@@ -255,19 +358,45 @@ async function fetchWeeklyMetrics(yesterday) {
            dayCount: daysBetween(monday, yesterday) + 1, weekStart: monday, weekEnd: yesterday }
 }
 
+// ─── 4-Week Trend (B) ────────────────────────────────────────────────────────
+async function fetch4WeekTrend(todayStr) {
+  try {
+    const from   = offsetDate(todayStr, -27)
+    const orders = await sb('orders',
+      `?date=gte.${from}&date=lte.${todayStr}&status=eq.delivered&select=date,platform,order_items(quantity,unit_price)`)
+    const weeks  = [{}, {}, {}, {}]
+    for (const o of orders) {
+      const daysAgo = daysBetween(o.date, todayStr)
+      const wi      = Math.min(3, Math.floor(daysAgo / 7))
+      const wk      = weeks[wi]
+      const sales   = (o.order_items ?? []).reduce(
+        (t, i) => t + Number(i.quantity ?? 0) * Number(i.unit_price ?? 0), 0)
+      wk.sales  = (wk.sales  ?? 0) + sales
+      wk.orders = (wk.orders ?? 0) + 1
+      const plat  = (o.platform ?? 'other').toUpperCase()
+      if (!wk.plat) wk.plat = {}
+      wk.plat[plat] = (wk.plat[plat] ?? 0) + sales
+    }
+    // weeks[0]=สัปดาห์นี้ (ถึงวันนี้), weeks[1]=สัปดาห์ก่อน, ...
+    const labels = ['สัปดาห์นี้', '1 สัปดาห์ก่อน', '2 สัปดาห์ก่อน', '3 สัปดาห์ก่อน']
+    return weeks.map((w, i) => ({
+      label:  labels[i],
+      sales:  w.sales  ?? 0,
+      orders: w.orders ?? 0,
+      plat:   w.plat   ?? {},
+    }))
+  } catch { return [] }
+}
+
 // ─── AI analysis ─────────────────────────────────────────────────────────────
-async function getAIInsights(today, lastWeek, weekly) {
+async function getAIInsights(today, lastWeek, weekly, memory = [], trend = [], baseline = null) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return '• (AI วิเคราะห์ไม่พร้อมใช้งาน — ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY)'
 
   const vsDay  = lastWeek
     ? `${((today.totalSales - lastWeek.totalSales) / (lastWeek.totalSales || 1) * 100).toFixed(1)}% vs 7 วันก่อน`
     : 'ไม่มีข้อมูลเปรียบเทียบ'
-  const vsWeek = weekly?.lastWeekSales > 0
-    ? `${((weekly.thisWeekSales - weekly.lastWeekSales) / weekly.lastWeekSales * 100).toFixed(1)}% vs สัปดาห์ก่อน`
-    : 'ไม่มีข้อมูลเปรียบเทียบ'
 
-  // menu margin lines สำหรับ AI (รวม campaign discount%)
   const menuMarginLines = today.top3.map(m => {
     const tag      = m.margin >= 35 ? '✅ Push ได้' : m.margin >= 25 ? '🟡 ระวัง discount' : '🔴 ตรวจต้นทุน'
     const discNote = m.discPct > 0
@@ -286,49 +415,55 @@ async function getAIInsights(today, lastWeek, weekly) {
       return `  • ${plat}: ฿${fmt(sales)}${vsStr}`
     }).join('\n')
 
-  const matCostPct = today.grossSales > 0 ? (today.matCost / today.grossSales * 100) : 0
-
-  // traffic light ตรวจเกณฑ์
-  const checkProfit     = today.netProfitPct >= 20 ? '✅' : today.netProfitPct >= 15 ? '🟡' : '🔴'
-  const checkMat        = matCostPct <= 30 ? '✅' : matCostPct <= 35 ? '🟡' : '🔴'
-  const checkMarketing  = today.marketingFeePct <= 20 ? '✅' : today.marketingFeePct <= 25 ? '🟡' : '🔴'
-
-  const profitDelta   = lastWeek ? (today.netProfitPct - lastWeek.netProfitPct).toFixed(1) : null
-  const trendNote     = profitDelta
+  const matCostPct     = today.grossSales > 0 ? (today.matCost / today.grossSales * 100) : 0
+  const checkProfit    = today.netProfitPct >= 20 ? '✅' : today.netProfitPct >= 15 ? '🟡' : '🔴'
+  const checkMat       = matCostPct <= 30 ? '✅' : matCostPct <= 35 ? '🟡' : '🔴'
+  const checkMarketing = today.marketingFeePct <= 20 ? '✅' : today.marketingFeePct <= 25 ? '🟡' : '🔴'
+  const profitDelta    = lastWeek ? (today.netProfitPct - lastWeek.netProfitPct).toFixed(1) : null
+  const trendNote      = profitDelta
     ? (Number(profitDelta) > 0 ? `ดีขึ้น +${profitDelta}pp` : `แย่ลง ${profitDelta}pp`) + ' จาก 7 วันก่อน'
     : 'ไม่มีข้อมูลเปรียบเทียบ'
 
-  const prompt = `คุณคือ CFO ส่วนตัวของร้าน Cocoa House (เครื่องดื่ม/เบเกอรี่ ขายผ่าน delivery platform)
-หน้าที่: วิเคราะห์สุขภาพธุรกิจวันนี้ให้เจ้าของร้านอ่านเข้าใจใน 30 วินาที
+  // (B) 4-week trend summary
+  const trendLines = trend.length > 0
+    ? trend.map(w => `  • ${w.label}: ฿${fmt(w.sales)} / ${w.orders} ออเดอร์`).join('\n')
+    : ''
 
-═══ ข้อมูลประจำวัน ═══
+  // (F) day-of-week baseline
+  const baselineNote = baseline
+    ? `ค่าเฉลี่ยวัน${baseline.dayName} (${baseline.samples} สัปดาห์ก่อน): ฿${fmt(Math.round(baseline.avg))} | วันนี้ ${today.totalSales >= baseline.avg ? `สูงกว่า +฿${fmt(Math.round(today.totalSales - baseline.avg))} ✅` : `ต่ำกว่า -฿${fmt(Math.round(baseline.avg - today.totalSales))} ⚠️`}`
+    : ''
+
+  // (A) memory context
+  const memoryBlock = buildMemoryContext(memory, 'daily')
+
+  const prompt = `คุณคือ CMO+CFO ส่วนตัวของร้าน Cocoa House (เครื่องดื่ม/เบเกอรี่ delivery)
+หน้าที่: วิเคราะห์วันนี้ วางแผนการตลาด และแนะนำเพื่อเพิ่ม Profit ให้ร้านอย่างเป็นรูปธรรม${memoryBlock}
+═══ ข้อมูลวันนี้ ═══
 ยอดขาย       ฿${fmt(today.totalSales)}  (${vsDay})
-Net Profit    ฿${fmt(today.netProfit)} = ${fmtPct(today.netProfitPct)}  [เป้า >20%]  ${trendNote}
+Net Profit    ${fmtPct(today.netProfitPct)}  [เป้า >20%]  ${trendNote}
 Mat Cost      ${fmtPct(matCostPct)}  [เป้า ≤30%]
-Marketing Fee ${fmtPct(today.marketingFeePct)}  (menu discount + campaign + advert + delivery discount)  [เป้า ≤20%]
-GP Rate       ${fmtPct(today.gpRate)}  [ปกติ 32.1% — ถ้าต่ำกว่านี้มาจาก 60/40 campaign หรือ direct sales เช่น Metro, TU]
-Platform Mix  ${platLines || 'ไม่มีข้อมูล'}
-ออเดอร์       ${today.orderCount} รายการ
-Top menu + Margin:
+Marketing Fee ${fmtPct(today.marketingFeePct)}  [เป้า ≤20%]
+GP Rate       ${fmtPct(today.gpRate)}  [ปกติ 32.1%]
+Platform Mix:
+${platLines || 'ไม่มีข้อมูล'}
+Top Menu + Margin:
 ${menuMarginLines || 'ไม่มีข้อมูล'}
+${checkProfit} Net Profit  ${checkMat} Mat Cost  ${checkMarketing} Marketing Fee
+${today.gpRate < 30 ? '⚠️ GP Rate ต่ำ — ตรวจ 60/40 หรือ direct sales' : '✅ GP Rate ปกติ'}
+${trendLines ? `\n═══ Trend 4 สัปดาห์ ═══\n${trendLines}` : ''}
+${baselineNote ? `\n═══ เทียบ Day-of-Week ═══\n${baselineNote}` : ''}
+═══ วิเคราะห์ 4 ข้อ ═══
+ข้อ 1 — ภาพรวมวันนี้: ผ่านเกณฑ์ไหม และ trend 4 สัปดาห์บอกอะไร
+ข้อ 2 — Root cause: หาต้นตอหลัก 1 อย่างจากความสัมพันธ์ของตัวเลข (อย่าพูดแค่อาการ)
+ข้อ 3 — Action 48 ชม.: แนะนำ 1 action ที่ทำได้จริงทันที เช่น ขึ้นราคาเมนูใด/ลด campaign platform ใด/เพิ่ม push เมนูไหน พร้อมระบุตัวเลขที่คาดหวัง
+ข้อ 4 — Campaign/Pricing: ถ้ามี 🏷 ประเมินว่าคุ้มไหม ถ้าไม่มี แนะนำ 1 ไอเดียเพิ่ม Profit เช่น ปรับราคาเมนู margin สูง หรือ bundle ที่เพิ่ม AOV
 
-═══ ผลตรวจเกณฑ์ ═══
-${checkProfit}  Net Profit ${fmtPct(today.netProfitPct)}
-${checkMat}  Mat Cost ${fmtPct(matCostPct)}
-${checkMarketing}  Marketing Fee ${fmtPct(today.marketingFeePct)}
-${today.gpRate < 30 ? '⚠️' : '✅'}  GP Rate ${fmtPct(today.gpRate)} ${today.gpRate < 30 ? '(ต่ำกว่าปกติ — ตรวจ 60/40 หรือ direct sales)' : '(ปกติ)'}
-
-═══ วิเคราะห์ 3 ข้อ ═══
-ข้อ 1 — "วันนี้เป็นอย่างไร": สรุปภาพรวมสุขภาพร้านในประโยคเดียว ระบุว่าผ่าน/ไม่ผ่านเกณฑ์ไหน
-ข้อ 2 — "เพราะอะไร": หา root cause หลัก 1 อย่าง โดยดูความสัมพันธ์ระหว่าง Marketing Fee + GP Rate + mat cost + sales volume + platform mix อย่าพูดแค่อาการ ให้หาต้นตอ (ถ้า GP Rate ต่ำกว่า 32.1% ให้ระบุว่าอาจมาจาก 60/40 campaign หรือ direct sales Metro/TU)
-ข้อ 3 — "ทำอะไรได้เลย": แนะนำ 1 action ที่ทำได้จริงภายใน 48 ชั่วโมง ระบุให้ชัดเจน (เช่น "ลด campaign LINE วันพฤหัส" ดีกว่า "ควรลดต้นทุน")
-ข้อ 4 — "แคมเปญเมนู": ถ้ามีเมนูที่ลดราคาอยู่ (มี 🏷) ให้ประเมินว่าแคมเปญนั้นคุ้มไหม — volume ขายเพิ่มขึ้นพอชดเชย margin ที่หายไปหรือเปล่า ถ้าไม่มีแคมเปญ แนะนำ 1 ไอเดียที่เหมาะกับ margin เมนูที่เห็น
-
-กฎ: ภาษาไทย พูดตรงๆ ไม่ใช้ศัพท์วิชาการ แต่ละข้อขึ้นต้นด้วย "• " ขึ้นบรรทัดใหม่ทุกข้อ`
+กฎ: ภาษาไทย ตรงๆ ระบุตัวเลขจริง แต่ละข้อขึ้นต้น "• " ขึ้นบรรทัดใหม่ ห้ามพูดกว้างๆ`
 
   const ai  = new Anthropic({ apiKey })
   const msg = await ai.messages.create({
-    model: 'claude-haiku-4-5-20251001', max_tokens: 450,
+    model: 'claude-sonnet-4-6', max_tokens: 600,
     messages: [{ role: 'user', content: prompt }],
   })
   return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้ในขณะนี้'
@@ -641,7 +776,7 @@ async function fetchMonthlyMenuMetrics(year, month) {
 }
 
 // ─── Weekly AI insights ───────────────────────────────────────────────────────
-async function getWeeklyAIInsights(weekData, monday, sunday) {
+async function getWeeklyAIInsights(weekData, monday, sunday, memory = []) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return '• (AI ไม่พร้อมใช้งาน)'
   const salesChange = weekData.lastSales > 0
@@ -650,36 +785,37 @@ async function getWeeklyAIInsights(weekData, monday, sunday) {
   const topMenuLines = Object.values(weekData.thisAgg)
     .sort((a, b) => b.qty - a.qty).slice(0, 5)
     .map(m => {
-      const last = weekData.lastAgg[Object.keys(weekData.lastAgg).find(k => weekData.lastAgg[k].name === m.name)]
+      const last = Object.values(weekData.lastAgg).find(x => x.name === m.name)
       const vs   = last ? ` (${((m.qty - last.qty) / (last.qty || 1) * 100).toFixed(0)}% vs สัปดาห์ก่อน)` : ''
-      const tag  = m.margin >= 35 ? '✅' : m.margin < 25 ? '🔴' : '🟡'
+      const tag  = m.margin >= 35 ? '✅ Push' : m.margin < 25 ? '🔴 ตรวจต้นทุน' : '🟡 ระวัง'
       return `  • ${m.name}: ×${m.qty}${vs} | Margin ${m.margin.toFixed(1)}% ${tag}`
     }).join('\n')
-  const prompt = `คุณคือ CFO ร้าน Cocoa House — วิเคราะห์ผลประจำสัปดาห์ให้เจ้าของอ่านใน 30 วินาที
-
+  const memoryBlock = buildMemoryContext(memory, 'weekly')
+  const prompt = `คุณคือ CMO+CFO ร้าน Cocoa House — วิเคราะห์สัปดาห์ที่ผ่านมาและวางแผนการตลาดสัปดาห์หน้า${memoryBlock}
 ═══ ผลสัปดาห์ ${monday} ถึง ${sunday} ═══
-ยอดขายสัปดาห์นี้  ฿${fmt(weekData.thisSales)}  ${salesChange ? `(${Number(salesChange) > 0 ? '↑' : '↓'}${Math.abs(salesChange)}% vs สัปดาห์ก่อน)` : ''}
+ยอดขายสัปดาห์นี้  ฿${fmt(weekData.thisSales)}  ${salesChange ? `(${Number(salesChange) >= 0 ? '↑' : '↓'}${Math.abs(salesChange)}% vs สัปดาห์ก่อน)` : ''}
 ยอดขายสัปดาห์ก่อน ฿${fmt(weekData.lastSales)}
 
-Top เมนู + Margin:
+Top 5 เมนู + Margin:
 ${topMenuLines || 'ไม่มีข้อมูล'}
 
-═══ วิเคราะห์ 3 ข้อ ═══
-ข้อ 1 — สัปดาห์นี้เป็นอย่างไร: สรุปภาพรวมในประโยคเดียว
-ข้อ 2 — แคมเปญสัปดาห์ที่ผ่านมาได้ผลไหม: ดูจากยอดขายและ volume เมนู เปรียบเทียบกับสัปดาห์ก่อน
-ข้อ 3 — แผนแคมเปญสัปดาห์หน้า: แนะนำ 1 ไอเดียที่เหมาะกับ margin เมนูที่เห็น (push เมนู margin สูง / ปรับราคา / bundle) ระบุให้ชัด
+═══ วิเคราะห์ 4 ข้อ ═══
+ข้อ 1 — ผลสัปดาห์นี้: ยอดโต/ลด เมนูไหนขับเคลื่อน trend เป็นอย่างไร
+ข้อ 2 — แคมเปญที่ผ่านมาได้ผลไหม: เปรียบ volume เมนูและยอดขาย vs สัปดาห์ก่อน (อ้างอิง memory ถ้ามี)
+ข้อ 3 — Pricing/Campaign สัปดาห์หน้า: แนะนำ 1 action ชัดเจน เช่น ขึ้นราคาเมนู X ฿Y บน platform Z หรือลดราคา % เพื่อเพิ่ม volume โดยระบุเป้าที่คาดหวัง
+ข้อ 4 — KPI เป้าสัปดาห์หน้า: ยอดขาย ฿X และ Profit %Y
 
-กฎ: ภาษาไทย ตรงๆ แต่ละข้อขึ้นต้น "• " ขึ้นบรรทัดใหม่`
+กฎ: ภาษาไทย ตรงๆ ระบุตัวเลขจริง แต่ละข้อขึ้นต้น "• " ขึ้นบรรทัดใหม่`
   const ai  = new Anthropic({ apiKey })
   const msg = await ai.messages.create({
-    model: 'claude-haiku-4-5-20251001', max_tokens: 400,
+    model: 'claude-sonnet-4-6', max_tokens: 600,
     messages: [{ role: 'user', content: prompt }],
   })
   return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้'
 }
 
-// ─── Monthly AI insights ──────────────────────────────────────────────────────
-async function getMonthlyAIInsights(monthData) {
+// ─── Monthly AI insights (C: Sonnet) ─────────────────────────────────────────
+async function getMonthlyAIInsights(monthData, memory = []) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return '• (AI ไม่พร้อมใช้งาน)'
   const top5Lines = monthData.top5.map(m => {
@@ -698,8 +834,8 @@ async function getMonthlyAIInsights(monthData) {
     ? ((monthData.thisAOV - monthData.lastAOV) / monthData.lastAOV * 100).toFixed(1)
     : null
   const aovLine = `฿${monthData.thisAOV.toFixed(0)}/ออเดอร์  (เดือนก่อน ฿${monthData.lastAOV.toFixed(0)}${aovChange !== null ? ` | ${Number(aovChange) >= 0 ? '↑' : '↓'}${Math.abs(aovChange)}%` : ''})`
-  const prompt = `คุณคือ CFO ร้าน Cocoa House — สรุปผลเดือนที่ผ่านมาและวางแผนเดือนหน้า
-
+  const memoryBlock = buildMemoryContext(memory, 'monthly')
+  const prompt = `คุณคือ CMO+CFO ร้าน Cocoa House — สรุปเดือนที่ผ่านมาและวางกลยุทธ์การตลาดเดือนหน้า${memoryBlock}
 ═══ ผลรวม ${monthData.monthName} ═══
 ยอดขายรวม    ฿${fmt(monthData.thisSales)}  (เดือนก่อน ฿${fmt(monthData.lastSales)})
 Net Profit    ${fmtPct(monthData.thisNetProfitPct)}  (เดือนก่อน ${fmtPct(monthData.lastNetProfitPct)})  [เป้า >20%]
@@ -714,16 +850,16 @@ Top 5 เมนู + Margin:
 ${top5Lines || 'ไม่มีข้อมูล'}
 
 ═══ วิเคราะห์ 5 ข้อ ═══
-ข้อ 1 — สรุปภาพรวม: ยอดขายโตหรือหด Marketing Fee คุ้มไหม เทียบเป้า
-ข้อ 2 — Platform Analysis: Platform ไหนเติบโต/หด ทำไม ควรลงทุนหรือลดต้นทุน Platform ไหน
-ข้อ 3 — AOV Analysis: ค่าเฉลี่ยต่อออเดอร์เพิ่มหรือลด แนะนำวิธี upsell/bundle เพิ่ม AOV เดือนหน้า
-ข้อ 4 — เมนู Strategy: เมนู margin สูงขายดีพอไหม เมนูไหนควรตัด/ปรับราคา/ยกระดับ
-ข้อ 5 — แผนเดือนหน้า: แนะนำ 1 กลยุทธ์หลัก (platform focus / pricing / bundle / ลด marketing fee) พร้อม target ที่วัดได้
+ข้อ 1 — สรุปภาพรวม: ยอดขายโตหรือหด Marketing Fee คุ้มไหม เทียบเป้า (อ้างอิง memory ถ้ามี)
+ข้อ 2 — Platform Strategy: Platform ไหนเติบโต/หด ควรเพิ่ม/ลดงบ ปรับราคาบน Platform ใด
+ข้อ 3 — AOV & Pricing: AOV เพิ่ม/ลด — แนะนำ pricing เมนูที่ควรปรับ (ขึ้น/ลง ฿เท่าไหร่) และ bundle ที่เพิ่ม AOV ได้จริง
+ข้อ 4 — Menu Optimization: เมนู margin สูงที่ควร push หนัก เมนูที่ควรปรับต้นทุนหรือตัดออก พร้อมเหตุผลจากตัวเลข
+ข้อ 5 — กลยุทธ์เดือนหน้า: 1 แผนหลักพร้อม KPI วัดได้ (ยอดขาย ฿X / Profit Y% / AOV ฿Z) และขั้นตอนที่ทำได้จริง
 
-กฎ: ภาษาไทย ตรงๆ แต่ละข้อขึ้นต้น "• " ขึ้นบรรทัดใหม่`
+กฎ: ภาษาไทย ตรงๆ ระบุตัวเลขจริงทุกข้อ แต่ละข้อขึ้นต้น "• " ขึ้นบรรทัดใหม่ ห้ามพูดกว้างๆ`
   const ai  = new Anthropic({ apiKey })
   const msg = await ai.messages.create({
-    model: 'claude-haiku-4-5-20251001', max_tokens: 450,
+    model: 'claude-sonnet-4-6', max_tokens: 700,
     messages: [{ role: 'user', content: prompt }],
   })
   return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้'
@@ -968,21 +1104,44 @@ async function runReport(targetDate, isManual = false) {
   }
 
   const lastWeekSame = offsetDate(targetDate, -7)
-  const [todayData, lastWeekData, weeklyData, monthlyData] = await Promise.all([
+  const [todayData, lastWeekData, weeklyData, monthlyData, memory, trend, baseline] = await Promise.all([
     fetchMetrics(targetDate),
     fetchMetrics(lastWeekSame).catch(() => null),
     fetchWeeklyMetrics(targetDate).catch(() => null),
     fetchMonthlyMetrics(targetDate).catch(() => null),
+    fetchAIMemory('daily', 5),
+    fetch4WeekTrend(targetDate).catch(() => []),
+    fetchDayOfWeekBaseline(targetDate).catch(() => null),
   ])
+
+  // เช็คว่าร้านปิดวันนี้ไหม
+  const closed = await isClosedDay(targetDate)
+  if (closed) {
+    console.log(`[AI Reporter] Shop closed on ${targetDate} — skip`)
+    return { skipped: true, reason: 'closed' }
+  }
 
   if (todayData.orderCount === 0 && !isManual) {
     console.log(`[AI Reporter] No orders for ${targetDate} — skip`)
     return { skipped: true, reason: 'no orders' }
   }
 
-  const aiText = await getAIInsights(todayData, lastWeekData, weeklyData)
+  // D: เขียน outcome ให้เมื่อวาน
+  const yesterday = offsetDate(targetDate, -1)
+  const yesterdayMemory = memory.find(m => m.report_date === yesterday) ?? null
+  const outcomeText = buildOutcomeText(todayData, yesterdayMemory)
+  if (outcomeText) await saveOutcome(yesterday, outcomeText)
+
+  const aiText = await getAIInsights(todayData, lastWeekData, weeklyData, memory, trend, baseline)
   const flex   = buildFlexMessage(targetDate, todayData, lastWeekData, weeklyData, monthlyData, aiText)
   await sendLine(flex)
+  // บันทึก memory สำหรับวันนี้
+  await saveAIMemory('daily', targetDate, aiText, {
+    totalSales:      todayData.totalSales,
+    netProfitPct:    todayData.netProfitPct,
+    marketingFeePct: todayData.marketingFeePct,
+    orderCount:      todayData.orderCount,
+  })
   console.log(`[AI Reporter] Sent report for ${targetDate}`)
   return { ok: true, date: targetDate }
 }
@@ -994,10 +1153,16 @@ export async function runWeeklyReport() {
   const today  = thaiDateStr(0)
   const monday = getMondayOf(today)
   const sunday = offsetDate(monday, 6)
-  const weekData = await fetchWeeklyMenuMetrics(monday, sunday)
-  const aiText   = await getWeeklyAIInsights(weekData, monday, sunday)
-  const flex     = buildWeeklyFlexMessage(monday, sunday, weekData, aiText)
+  const [weekData, memory] = await Promise.all([
+    fetchWeeklyMenuMetrics(monday, sunday),
+    fetchAIMemory('weekly', 4),
+  ])
+  const aiText = await getWeeklyAIInsights(weekData, monday, sunday, memory)
+  const flex   = buildWeeklyFlexMessage(monday, sunday, weekData, aiText)
   await sendLine(flex)
+  await saveAIMemory('weekly', monday, aiText, {
+    thisSales: weekData.thisSales, lastSales: weekData.lastSales,
+  })
   console.log(`[Weekly Report] Sent for ${monday} – ${sunday}`)
   return { ok: true, type: 'weekly', monday, sunday }
 }
@@ -1012,10 +1177,22 @@ export async function runMonthlyReport() {
   let year = d.getFullYear(), month = d.getMonth() + 1  // เดือนปัจจุบัน
   // ถ้ารันวันที่ 1 → สรุปเดือนที่แล้ว
   if (d.getDate() === 1) { month -= 1; if (month === 0) { month = 12; year -= 1 } }
-  const monthData = await fetchMonthlyMenuMetrics(year, month)
-  const aiText    = await getMonthlyAIInsights(monthData)
-  const flex      = buildMonthlyFlexMessage(monthData, aiText)
+  const [monthData, memory] = await Promise.all([
+    fetchMonthlyMenuMetrics(year, month),
+    fetchAIMemory('monthly', 4),
+  ])
+  const aiText = await getMonthlyAIInsights(monthData, memory)
+  const flex   = buildMonthlyFlexMessage(monthData, aiText)
   await sendLine(flex)
+  const reportDate = `${year}-${String(month).padStart(2, '0')}-01`
+  await saveAIMemory('monthly', reportDate, aiText, {
+    thisSales:        monthData.thisSales,
+    lastSales:        monthData.lastSales,
+    netProfitPct:     monthData.thisNetProfitPct,
+    marketingFeePct:  monthData.thisMktFeePct,
+    orderCount:       monthData.thisOrderCount,
+    aov:              monthData.thisAOV,
+  })
   console.log(`[Monthly Report] Sent for ${year}-${month}`)
   return { ok: true, type: 'monthly', year, month }
 }
@@ -1071,6 +1248,17 @@ export default async function handler(req, res) {
     if (type === 'monthly') {
       try { return res.status(200).json(await runMonthlyReport()) }
       catch (err) { return res.status(500).json({ error: err.message }) }
+    }
+    // mark a day as closed
+    if (type === 'close_day') {
+      const closeDate = req.body?.date
+      const reason    = req.body?.reason ?? 'ร้านปิด'
+      if (!closeDate || !/^\d{4}-\d{2}-\d{2}$/.test(closeDate))
+        return res.status(400).json({ error: 'date required' })
+      try {
+        await markClosedDay(closeDate, reason)
+        return res.status(200).json({ ok: true, date: closeDate, reason })
+      } catch (err) { return res.status(500).json({ error: err.message }) }
     }
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ error: 'date required (YYYY-MM-DD)' })

@@ -109,6 +109,15 @@ const APPS = [
         tables: ['orders', 'order_items', 'platform_costs', 'menus', 'menu_costs', 'cost_settings'],
         adminOnly: true,
       },
+      {
+        path: '/ai',
+        label: 'AIPage',
+        labelTh: 'AI Memory',
+        desc: 'ดูคำแนะนำ AI ย้อนหลัง ผล outcome และ action ทำแล้ว/ข้ามไป (admin)',
+        mode: 'readwrite',
+        tables: ['ai_memory'],
+        adminOnly: true,
+      },
     ],
   },
   {
