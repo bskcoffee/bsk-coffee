@@ -211,7 +211,7 @@ async function fetchMetrics(dateStr) {
     matCost, laborCost,
     netProfit, netProfitPct,
     orderCount: orders.length,
-    top3, catQty,
+    top3, catQty, platSales,
   }
 }
 
@@ -251,10 +251,24 @@ async function getAIInsights(today, lastWeek, weekly) {
     ? `${((weekly.thisWeekSales - weekly.lastWeekSales) / weekly.lastWeekSales * 100).toFixed(1)}% vs สัปดาห์ก่อน`
     : 'ไม่มีข้อมูลเปรียบเทียบ'
 
+  // Platform breakdown: sort by sales desc, compare vs last week
+  const platLines = Object.entries(today.platSales ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([plat, sales]) => {
+      const lastSales = lastWeek?.platSales?.[plat]
+      const vsStr = lastSales != null && lastSales > 0
+        ? ` (${((sales - lastSales) / lastSales * 100).toFixed(1)}% vs 7 วันก่อน)`
+        : ''
+      return `  • ${plat}: ฿${fmt(sales)}${vsStr}`
+    })
+    .join('\n')
+
   const prompt = `คุณเป็นที่ปรึกษาธุรกิจร้านเครื่องดื่มไทย วิเคราะห์ข้อมูลยอดขาย Cocoa House
 
 ข้อมูลเมื่อวาน:
 - ยอดขายรวม: ฿${fmt(today.totalSales)} (${vsDay})
+- ยอดขายแยก Platform:
+${platLines || '  • ไม่มีข้อมูล'}
 - Platform Fee: ฿${fmt(today.totalPlatFee)} (${fmtPct(today.platFeeRate)} ของยอดขาย${lastWeek ? `, ${(today.platFeeRate - lastWeek.platFeeRate).toFixed(1)}pp vs 7 วันก่อน` : ''})
 - Mat Cost: ฿${fmt(today.matCost)}
 - Labor Cost: ฿${fmt(today.laborCost)}
@@ -264,7 +278,10 @@ async function getAIInsights(today, lastWeek, weekly) {
 
 ยอดขายสัปดาห์นี้ (${weekly?.dayCount ?? 1} วัน): ฿${fmt(weekly?.thisWeekSales)} (${vsWeek})
 
-เขียนวิเคราะห์ 2-3 ข้อสั้นๆ แต่ละข้อไม่เกิน 2 ประโยค เน้นสิ่งที่น่าสนใจหรือควรระวัง
+เขียนวิเคราะห์ 2-4 ข้อสั้นๆ แต่ละข้อไม่เกิน 2 ประโยค
+- วิเคราะห์ platform ไหนดีขึ้น/ลงอย่างเห็นได้ชัด (ถ้ามีข้อมูลเปรียบเทียบ)
+- ถ้า Net Profit ติดลบหรือต่ำกว่า 10% ให้แจ้งเตือนและระบุสาเหตุที่น่าจะเป็น
+- เน้นสิ่งที่น่าสนใจหรือควรระวังอื่นๆ
 ตอบเป็นภาษาไทยเท่านั้น ไม่ต้องมีหัวข้อหรือ markdown แต่ละข้อขึ้นต้นด้วย "• "`
 
   const apiKey = process.env.ANTHROPIC_API_KEY
