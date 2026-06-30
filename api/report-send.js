@@ -578,8 +578,8 @@ async function fetchMonthlyMenuMetrics(year, month) {
   const lastMonth  = month === 1 ? `${year-1}-12-01` : `${year}-${String(month-1).padStart(2,'0')}-01`
   const lastEnd    = offsetDate(monthStart, -1)
   const [thisM, lastM, platCostsThis, platCostsLast] = await Promise.all([
-    sb('orders', `?date=gte.${monthStart}&status=eq.delivered&select=order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name))`),
-    sb('orders', `?date=gte.${lastMonth}&date=lte.${lastEnd}&status=eq.delivered&select=order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name))`),
+    sb('orders', `?date=gte.${monthStart}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name))`),
+    sb('orders', `?date=gte.${lastMonth}&date=lte.${lastEnd}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name))`),
     sb('platform_costs', `?date=gte.${monthStart}&select=campaign,marketing_fee,delivery_discount,advertisement,menu_discount`),
     sb('platform_costs', `?date=gte.${lastMonth}&date=lte.${lastEnd}&select=campaign,marketing_fee,delivery_discount,advertisement,menu_discount`),
   ])
@@ -604,10 +604,28 @@ async function fetchMonthlyMenuMetrics(year, month) {
     t + Number(r.campaign ?? 0) + Number(r.marketing_fee ?? 0)
       + Number(r.delivery_discount ?? 0) + Number(r.advertisement ?? 0)
       + Number(r.menu_discount ?? 0), 0)
-  const thisSales   = sumSales(thisM);  const thisGpCost = sumGpCost(thisM)
-  const lastSales   = sumSales(lastM);  const lastGpCost = sumGpCost(lastM)
-  const thisMktFee  = sumMktFee(platCostsThis)
-  const lastMktFee  = sumMktFee(platCostsLast)
+  const thisSales      = sumSales(thisM);   const thisGpCost = sumGpCost(thisM)
+  const lastSales      = sumSales(lastM);   const lastGpCost = sumGpCost(lastM)
+  const thisOrderCount = thisM.length
+  const lastOrderCount = lastM.length
+  const thisAOV        = thisOrderCount > 0 ? thisSales / thisOrderCount : 0
+  const lastAOV        = lastOrderCount > 0 ? lastSales / lastOrderCount : 0
+  // ── Platform breakdown ──
+  const aggByPlatform = (orders) => {
+    const agg = {}
+    for (const o of orders) {
+      const plat = o.platform ?? 'Other'
+      if (!agg[plat]) agg[plat] = { sales: 0, orders: 0 }
+      const s = (o.order_items ?? []).reduce((t, i) => t + Number(i.quantity ?? 0) * Number(i.unit_price ?? 0), 0)
+      agg[plat].sales  += s
+      agg[plat].orders += 1
+    }
+    return agg
+  }
+  const thisByPlatform = aggByPlatform(thisM)
+  const lastByPlatform = aggByPlatform(lastM)
+  const thisMktFee     = sumMktFee(platCostsThis)
+  const lastMktFee     = sumMktFee(platCostsLast)
   const thisNetProfit    = thisSales - thisGpCost - thisMktFee
   const thisNetProfitPct = thisSales > 0 ? thisNetProfit / thisSales * 100 : 0
   const lastNetProfitPct = lastSales > 0 ? (lastSales - lastGpCost - lastMktFee) / lastSales * 100 : 0
@@ -616,7 +634,10 @@ async function fetchMonthlyMenuMetrics(year, month) {
   const monthName = new Date(monthStart + 'T12:00:00').toLocaleDateString('th-TH', { month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' })
   const top5 = Object.values(aggMenu(thisM)).sort((a, b) => b.qty - a.qty).slice(0, 5)
   return { thisSales, lastSales, thisNetProfit, thisNetProfitPct, lastNetProfitPct,
-           thisMktFee, thisMktFeePct, lastMktFeePct, top5, monthName }
+           thisMktFee, thisMktFeePct, lastMktFeePct,
+           thisOrderCount, lastOrderCount, thisAOV, lastAOV,
+           thisByPlatform, lastByPlatform,
+           top5, monthName }
 }
 
 // ─── Weekly AI insights ───────────────────────────────────────────────────────
@@ -665,20 +686,39 @@ async function getMonthlyAIInsights(monthData) {
     const tag = m.margin >= 35 ? '✅ Push' : m.margin < 25 ? '🔴 ตรวจต้นทุน' : '🟡 ระวัง'
     return `  • ${m.name}: ×${m.qty} | Margin ${m.margin.toFixed(1)}% ${tag}`
   }).join('\n')
+  const platLines = Object.entries(monthData.thisByPlatform)
+    .sort((a, b) => b[1].sales - a[1].sales)
+    .map(([plat, d]) => {
+      const last    = monthData.lastByPlatform[plat]
+      const growth  = last?.sales > 0 ? ((d.sales - last.sales) / last.sales * 100).toFixed(1) : null
+      const pct     = monthData.thisSales > 0 ? (d.sales / monthData.thisSales * 100).toFixed(1) : 0
+      return `  • ${plat}: ฿${fmt(d.sales)} (${pct}%)${growth !== null ? `  ${Number(growth) >= 0 ? '↑' : '↓'}${Math.abs(growth)}% vs เดือนก่อน` : ' (ใหม่)'}`
+    }).join('\n')
+  const aovChange = monthData.lastAOV > 0
+    ? ((monthData.thisAOV - monthData.lastAOV) / monthData.lastAOV * 100).toFixed(1)
+    : null
+  const aovLine = `฿${monthData.thisAOV.toFixed(0)}/ออเดอร์  (เดือนก่อน ฿${monthData.lastAOV.toFixed(0)}${aovChange !== null ? ` | ${Number(aovChange) >= 0 ? '↑' : '↓'}${Math.abs(aovChange)}%` : ''})`
   const prompt = `คุณคือ CFO ร้าน Cocoa House — สรุปผลเดือนที่ผ่านมาและวางแผนเดือนหน้า
 
 ═══ ผลรวม ${monthData.monthName} ═══
 ยอดขายรวม    ฿${fmt(monthData.thisSales)}  (เดือนก่อน ฿${fmt(monthData.lastSales)})
 Net Profit    ${fmtPct(monthData.thisNetProfitPct)}  (เดือนก่อน ${fmtPct(monthData.lastNetProfitPct)})  [เป้า >20%]
 Marketing Fee ${fmtPct(monthData.thisMktFeePct)}  (เดือนก่อน ${fmtPct(monthData.lastMktFeePct)})  [เป้า ≤20%]
+จำนวนออเดอร์  ${monthData.thisOrderCount} ออเดอร์  (เดือนก่อน ${monthData.lastOrderCount} ออเดอร์)
+AOV ต่อออเดอร์ ${aovLine}
+
+ยอดขายแยก Platform:
+${platLines || 'ไม่มีข้อมูล'}
 
 Top 5 เมนู + Margin:
 ${top5Lines || 'ไม่มีข้อมูล'}
 
-═══ วิเคราะห์ 3 ข้อ ═══
-ข้อ 1 — สรุปเดือนที่ผ่านมา: Marketing Fee คุ้มไหม ยอดขายโตหรือหด เทียบเป้า
-ข้อ 2 — เมนู Strategy: เมนู margin สูงขายดีพอไหม เมนูไหนควรตัด/ปรับราคา/ยกระดับ
-ข้อ 3 — แผนเดือนหน้า: แนะนำ 1 กลยุทธ์หลัก (pricing / bundle / platform mix / ลด marketing fee) พร้อม target ที่วัดได้
+═══ วิเคราะห์ 5 ข้อ ═══
+ข้อ 1 — สรุปภาพรวม: ยอดขายโตหรือหด Marketing Fee คุ้มไหม เทียบเป้า
+ข้อ 2 — Platform Analysis: Platform ไหนเติบโต/หด ทำไม ควรลงทุนหรือลดต้นทุน Platform ไหน
+ข้อ 3 — AOV Analysis: ค่าเฉลี่ยต่อออเดอร์เพิ่มหรือลด แนะนำวิธี upsell/bundle เพิ่ม AOV เดือนหน้า
+ข้อ 4 — เมนู Strategy: เมนู margin สูงขายดีพอไหม เมนูไหนควรตัด/ปรับราคา/ยกระดับ
+ข้อ 5 — แผนเดือนหน้า: แนะนำ 1 กลยุทธ์หลัก (platform focus / pricing / bundle / ลด marketing fee) พร้อม target ที่วัดได้
 
 กฎ: ภาษาไทย ตรงๆ แต่ละข้อขึ้นต้น "• " ขึ้นบรรทัดใหม่`
   const ai  = new Anthropic({ apiKey })
@@ -777,6 +817,13 @@ function buildMonthlyFlexMessage(monthData, aiText) {
     ? ((monthData.thisSales - monthData.lastSales) / monthData.lastSales * 100) : null
   const profitDelta = (monthData.thisNetProfitPct - monthData.lastNetProfitPct).toFixed(1)
   const mktFeeDelta = (monthData.thisMktFeePct - monthData.lastMktFeePct).toFixed(1)
+  const platEntries = Object.entries(monthData.thisByPlatform).sort((a, b) => b[1].sales - a[1].sales)
+  const aovDelta    = monthData.lastAOV > 0
+    ? ((monthData.thisAOV - monthData.lastAOV) / monthData.lastAOV * 100) : null
+  const aovDeltaTxt = aovDelta !== null
+    ? (aovDelta >= 0 ? `↑${aovDelta.toFixed(1)}%` : `↓${Math.abs(aovDelta).toFixed(1)}%`)
+    : '—'
+  const aovColor    = aovDelta === null ? '#6B7280' : aovDelta >= 0 ? '#16A34A' : '#DC2626'
   const aiLines = aiText.split('\n').filter(l => l.trim()).map(line => ({
     type: 'text', text: line.trim(), size: 'sm', color: '#374151', wrap: true, margin: 'xs',
   }))
@@ -829,6 +876,47 @@ function buildMonthlyFlexMessage(monthData, aiText) {
               },
             ],
           },
+          // AOV row
+          { type: 'box', layout: 'horizontal', margin: 'md', paddingAll: '10px',
+            backgroundColor: '#F8F5FF', cornerRadius: '8px',
+            contents: [
+              { type: 'box', layout: 'vertical', flex: 3,
+                contents: [
+                  { type: 'text', text: '🛒 AOV ต่อออเดอร์', size: 'xs', color: '#6B7280' },
+                  { type: 'text', text: `฿${monthData.thisAOV.toFixed(0)}`, size: 'md', weight: 'bold', color: '#111827', margin: 'xs' },
+                  { type: 'text', text: `${monthData.thisOrderCount} ออเดอร์รวม`, size: 'xxs', color: '#9CA3AF', margin: 'xs' },
+                ],
+              },
+              { type: 'box', layout: 'vertical', flex: 2, alignItems: 'flex-end',
+                contents: [
+                  { type: 'text', text: 'เดือนก่อน', size: 'xxs', color: '#9CA3AF', align: 'end' },
+                  { type: 'text', text: `฿${monthData.lastAOV.toFixed(0)}`, size: 'sm', color: '#6B7280', margin: 'xs', align: 'end' },
+                  { type: 'text', text: aovDeltaTxt, size: 'xs', color: aovColor, margin: 'xs', align: 'end' },
+                ],
+              },
+            ],
+          },
+          // Platform breakdown
+          { type: 'separator', margin: 'md' },
+          { type: 'text', text: '📊 ยอดขายแยก Platform', weight: 'bold', size: 'sm', color: '#374151', margin: 'md' },
+          ...platEntries.map(([plat, d]) => {
+            const last     = monthData.lastByPlatform[plat]
+            const growth   = last?.sales > 0 ? (d.sales - last.sales) / last.sales * 100 : null
+            const pct      = monthData.thisSales > 0 ? d.sales / monthData.thisSales * 100 : 0
+            const growthTxt = growth !== null
+              ? (growth >= 0 ? `↑${growth.toFixed(1)}%` : `↓${Math.abs(growth).toFixed(1)}%`)
+              : 'ใหม่'
+            const growthColor = growth === null ? '#6B7280' : growth >= 0 ? '#16A34A' : '#DC2626'
+            return {
+              type: 'box', layout: 'horizontal', margin: 'sm',
+              contents: [
+                { type: 'text', text: plat, size: 'sm', color: '#111827', flex: 4 },
+                { type: 'text', text: `฿${fmt(d.sales)}`, size: 'sm', color: '#374151', flex: 4, align: 'end' },
+                { type: 'text', text: `${pct.toFixed(0)}%`, size: 'xs', color: '#9CA3AF', flex: 2, align: 'end' },
+                { type: 'text', text: growthTxt, size: 'xs', color: growthColor, flex: 3, align: 'end' },
+              ],
+            }
+          }),
           // top 5 เมนู
           { type: 'separator', margin: 'md' },
           { type: 'text', text: '🏆 Top 5 เมนูประจำเดือน', weight: 'bold', size: 'sm', color: '#374151', margin: 'md' },
