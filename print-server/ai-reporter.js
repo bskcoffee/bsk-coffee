@@ -126,7 +126,7 @@ async function getSetting(key) {
 // ─── Fetch & calculate DAILY metrics for a given date ─────────────────────────
 async function fetchMetrics(dateStr) {
   const [orders, platCosts, costRows] = await Promise.all([
-    sb('orders', `?date=eq.${dateStr}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name))`),
+    sb('orders', `?date=eq.${dateStr}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name,category))`),
     sb('platform_costs', `?date=eq.${dateStr}&select=*`),
     sb('cost_settings', `?effective_from=lte.${dateStr}&select=key,value,effective_from&order=effective_from.desc`),
   ])
@@ -143,9 +143,11 @@ async function fetchMetrics(dateStr) {
   const feeMap = {}
   for (const p of platConfig) feeMap[(p.name ?? '').toUpperCase()] = Number(p.fee ?? 0)
 
+  const BEV_CATS = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot']
   let totalSales = 0, totalGpCost = 0
-  const menuAgg  = {}
+  const menuAgg   = {}
   const platSales = {}
+  const catQty    = { beverage: 0, bread: 0, refill: 0, addon: 0 }
 
   for (const order of orders) {
     const plat = (order.platform ?? 'other').toUpperCase()
@@ -156,10 +158,16 @@ async function fetchMetrics(dateStr) {
       totalSales  += qty * price
       totalGpCost += qty * gpCst
       platSales[plat] = (platSales[plat] ?? 0) + qty * price
-      const mId = item.menu_id ?? 'unknown'
+      const mId  = item.menu_id ?? 'unknown'
+      const cat  = item.menus?.category ?? ''
       if (!menuAgg[mId]) menuAgg[mId] = { name: item.menus?.name || mId, qty: 0, sales: 0 }
       menuAgg[mId].qty   += qty
       menuAgg[mId].sales += qty * price
+      // category summary
+      if (BEV_CATS.includes(cat))      catQty.beverage += qty
+      else if (cat === 'Bun')          catQty.bread    += qty
+      else if (cat === 'Refill')       catQty.refill   += qty
+      else if (cat === 'Addon')        catQty.addon    += qty
     }
   }
 
@@ -203,7 +211,7 @@ async function fetchMetrics(dateStr) {
     matCost, laborCost,
     netProfit, netProfitPct,
     orderCount: orders.length,
-    top3,
+    top3, catQty,
   }
 }
 
@@ -360,6 +368,43 @@ function buildFlexMessage(dateStr, today, lastWeek, weekly, aiText) {
           { type: 'separator', margin: 'md' },
           { type: 'text', text: '🏆 Top เมนูขายดี', weight: 'bold', size: 'sm', color: '#374151', margin: 'md' },
           ...top3Items,
+
+          // Category summary
+          { type: 'separator', margin: 'md' },
+          { type: 'text', text: '📦 ยอดตามประเภท', weight: 'bold', size: 'sm', color: '#374151', margin: 'md' },
+          {
+            type: 'box', layout: 'horizontal', margin: 'sm', spacing: 'sm',
+            contents: [
+              { type: 'box', layout: 'vertical', flex: 1, backgroundColor: '#FFF3ED', cornerRadius: '8px', paddingAll: '8px',
+                contents: [
+                  { type: 'text', text: '🧋', size: 'sm', align: 'center' },
+                  { type: 'text', text: String(today.catQty?.beverage ?? 0), size: 'lg', weight: 'bold', color: '#92400E', align: 'center' },
+                  { type: 'text', text: 'Beverage', size: 'xxs', color: '#92400E', align: 'center' },
+                ],
+              },
+              { type: 'box', layout: 'vertical', flex: 1, backgroundColor: '#FEFCE8', cornerRadius: '8px', paddingAll: '8px',
+                contents: [
+                  { type: 'text', text: '🍞', size: 'sm', align: 'center' },
+                  { type: 'text', text: String(today.catQty?.bread ?? 0), size: 'lg', weight: 'bold', color: '#713F12', align: 'center' },
+                  { type: 'text', text: 'Bread', size: 'xxs', color: '#713F12', align: 'center' },
+                ],
+              },
+              { type: 'box', layout: 'vertical', flex: 1, backgroundColor: '#EFF6FF', cornerRadius: '8px', paddingAll: '8px',
+                contents: [
+                  { type: 'text', text: '🔄', size: 'sm', align: 'center' },
+                  { type: 'text', text: String(today.catQty?.refill ?? 0), size: 'lg', weight: 'bold', color: '#1E40AF', align: 'center' },
+                  { type: 'text', text: 'Refill', size: 'xxs', color: '#1E40AF', align: 'center' },
+                ],
+              },
+              { type: 'box', layout: 'vertical', flex: 1, backgroundColor: '#F5F3FF', cornerRadius: '8px', paddingAll: '8px',
+                contents: [
+                  { type: 'text', text: '➕', size: 'sm', align: 'center' },
+                  { type: 'text', text: String(today.catQty?.addon ?? 0), size: 'lg', weight: 'bold', color: '#5B21B6', align: 'center' },
+                  { type: 'text', text: 'Add-on', size: 'xxs', color: '#5B21B6', align: 'center' },
+                ],
+              },
+            ],
+          },
 
           // AI analysis
           { type: 'separator', margin: 'md' },
