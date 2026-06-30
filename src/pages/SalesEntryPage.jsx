@@ -865,7 +865,25 @@ export default function SalesEntryPage() {
       {/* Date + Platform selector */}
       <div className="card space-y-3">
         <div>
-          <label htmlFor="entry-date" className="label">วันที่</label>
+          <div className="flex items-center justify-between mb-1">
+            <label htmlFor="entry-date" className="label mb-0">วันที่</label>
+            <button
+              onClick={handleSendReport}
+              disabled={!isLocked || reportStatus === 'sending'}
+              aria-label="ส่ง AI Report ไป LINE"
+              title={!isLocked ? 'กดบันทึกก่อน' : 'ส่งรายงานไป LINE'}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-700 text-white"
+            >
+              {reportStatus === 'sending' && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              {reportStatus === 'sent'    && <CheckCircle size={13} />}
+              {reportStatus === 'error'   && <AlertCircle size={13} />}
+              {reportStatus === 'idle'    && <Send size={13} />}
+              {reportStatus === 'sending' ? 'กำลังส่ง...'
+                : reportStatus === 'sent' ? 'ส่งแล้ว!'
+                : reportStatus === 'error' ? 'ส่งไม่สำเร็จ'
+                : 'AI Report'}
+            </button>
+          </div>
           <input
             id="entry-date"
             type="date"
@@ -1171,37 +1189,20 @@ export default function SalesEntryPage() {
                 <p className="text-gray-400 text-sm">ยังไม่มีรายการขาย</p>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={handleSendReport}
-                disabled={reportStatus === 'sending'}
-                aria-label="ส่ง AI Report ไป LINE"
-                className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 bg-indigo-600 hover:bg-indigo-700 text-white"
-              >
-                {reportStatus === 'sending' && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-                {reportStatus === 'sent'    && <CheckCircle size={15} />}
-                {reportStatus === 'error'   && <AlertCircle size={15} />}
-                {reportStatus === 'idle'    && <Send size={15} />}
-                {reportStatus === 'sending' ? 'กำลังส่ง...'
-                  : reportStatus === 'sent' ? 'ส่งแล้ว!'
-                  : reportStatus === 'error' ? 'ส่งไม่สำเร็จ'
-                  : 'AI Report'}
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saveStatus === 'saving'}
-                className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {saveStatus === 'saving' && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-                {saveStatus === 'success' && <CheckCircle size={16} />}
-                {saveStatus === 'error' && <AlertCircle size={16} />}
-                <Save size={16} />
-                {saveStatus === 'saving' ? 'กำลังบันทึก...'
-                  : saveStatus === 'success' ? 'บันทึกแล้ว!'
-                  : saveStatus === 'error' ? 'เกิดข้อผิดพลาด'
-                  : 'บันทึก'}
-              </button>
-            </div>
+            <button
+              onClick={handleSave}
+              disabled={saveStatus === 'saving'}
+              className="btn-primary flex items-center gap-2 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {saveStatus === 'saving' && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              {saveStatus === 'success' && <CheckCircle size={16} />}
+              {saveStatus === 'error' && <AlertCircle size={16} />}
+              <Save size={16} />
+              {saveStatus === 'saving' ? 'กำลังบันทึก...'
+                : saveStatus === 'success' ? 'บันทึกแล้ว!'
+                : saveStatus === 'error' ? 'เกิดข้อผิดพลาด'
+                : 'บันทึก'}
+            </button>
           </div>
 
           {/* 5-layer breakdown */}
