@@ -23,7 +23,11 @@ function MenuModal({ menu, onClose, onSave }) {
     prices: {
       GRAB: 0, LINE: 0, SHOPEE: 0, 'The metro': 0, TU: 0,
       ...(menu?.prices ?? {}),
-    }
+    },
+    originalPrices: {
+      GRAB: 0, LINE: 0, SHOPEE: 0, 'The metro': 0, TU: 0,
+      ...(menu?.originalPrices ?? {}),
+    },
   })
   const [saving,       setSaving]       = useState(false)
   const [uploadingImg, setUploadingImg] = useState(false)
@@ -145,13 +149,20 @@ function MenuModal({ menu, onClose, onSave }) {
           image_url: form.image_url || null,
         }).eq('id', menu.id)
 
-        // Update prices (close old, open new)
+        // Update prices (close old, open new) + original_price
         for (const plat of PLATFORMS) {
-          const oldPrice = menu.prices?.[plat] ?? 0
-          const newPrice = form.prices[plat] ?? 0
+          const oldPrice    = menu.prices?.[plat]         ?? 0
+          const newPrice    = form.prices[plat]           ?? 0
+          const origPrice   = form.originalPrices[plat]  ?? 0
           if (oldPrice !== newPrice) {
             await updateMenuPrice(menu.id, plat, newPrice)
           }
+          // อัพเดท original_price บน row ปัจจุบัน (effective_to IS NULL)
+          await supabase.from('menu_prices')
+            .update({ original_price: origPrice })
+            .eq('menu_id', menu.id)
+            .eq('platform', plat)
+            .is('effective_to', null)
         }
       } else {
         // Create new
@@ -166,7 +177,8 @@ function MenuModal({ menu, onClose, onSave }) {
             await supabase.from('menu_prices').insert({
               menu_id:        newMenu.id,
               platform:       plat,
-              price:          form.prices[plat] ?? 0,
+              price:          form.prices[plat]          ?? 0,
+              original_price: form.originalPrices[plat]  ?? form.prices[plat] ?? 0,
               effective_from: new Date().toISOString().slice(0, 10),
             })
           }
@@ -288,26 +300,61 @@ function MenuModal({ menu, onClose, onSave }) {
 
           <div>
             <p className="label">ราคาขายแยกต่อ Platform (฿)</p>
-            <div className="grid grid-cols-2 gap-3">
-              {PLATFORMS.map(plat => (
-                <div key={plat}>
-                  <label className="text-xs font-medium text-gray-500">{plat}</label>
-                  <input
-                    type="number"
-                    className="input text-right"
-                    min="0"
-                    step="0.01"
-                    value={form.prices[plat]}
-                    onChange={e => setForm(f => ({
-                      ...f,
-                      prices: { ...f.prices, [plat]: parseFloat(e.target.value) || 0 }
-                    }))}
-                  />
-                </div>
-              ))}
+            {/* header row */}
+            <div className="grid grid-cols-3 gap-2 mb-1 px-1">
+              <span className="text-xs font-medium text-gray-400">Platform</span>
+              <span className="text-xs font-medium text-gray-400 text-right">ราคาปกติ</span>
+              <span className="text-xs font-medium text-gray-400 text-right">ราคาขายตอนนี้</span>
             </div>
+            <div className="flex flex-col gap-2">
+              {PLATFORMS.map(plat => {
+                const orig   = form.originalPrices[plat] ?? 0
+                const cur    = form.prices[plat] ?? 0
+                const disc   = orig > 0 && cur < orig
+                  ? Math.round((orig - cur) / orig * 100) : 0
+                return (
+                  <div key={plat} className="grid grid-cols-3 gap-2 items-center">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`badge text-xs ${PLAT_BADGE[plat]}`}>{plat}</span>
+                      {disc > 0 && (
+                        <span className="text-[10px] bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded-full">
+                          -{disc}%
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      type="number"
+                      className="input text-right text-sm"
+                      min="0"
+                      step="1"
+                      placeholder="ราคาปกติ"
+                      value={form.originalPrices[plat] || ''}
+                      onChange={e => setForm(f => ({
+                        ...f,
+                        originalPrices: { ...f.originalPrices, [plat]: parseFloat(e.target.value) || 0 }
+                      }))}
+                    />
+                    <input
+                      type="number"
+                      className={`input text-right text-sm ${disc > 0 ? 'border-red-300 bg-red-50' : ''}`}
+                      min="0"
+                      step="1"
+                      placeholder="ราคาขาย"
+                      value={form.prices[plat] || ''}
+                      onChange={e => setForm(f => ({
+                        ...f,
+                        prices: { ...f.prices, [plat]: parseFloat(e.target.value) || 0 }
+                      }))}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              💡 ราคาปกติ = rack rate ที่ไม่เปลี่ยน | ราคาขายตอนนี้ = ปรับเมื่อมีแคมเปญ
+            </p>
             {menu && (
-              <p className="text-xs text-amber-600 mt-1">⚠ การเปลี่ยนราคาจะมีผลกับยอดขายวันนี้เป็นต้นไป ยอดเก่าไม่กระทบ</p>
+              <p className="text-xs text-amber-600 mt-1">⚠ การเปลี่ยนราคาขายจะมีผลวันนี้เป็นต้นไป ยอดเก่าไม่กระทบ</p>
             )}
           </div>
 
@@ -478,11 +525,14 @@ export default function MenuManagementPage() {
   }
 
   const getMenuPrices = (menu) => {
-    const prices = {}
+    const prices = {}, originalPrices = {}
     for (const p of menu.menu_prices ?? []) {
-      if (!p.effective_to) prices[p.platform] = p.price
+      if (!p.effective_to) {
+        prices[p.platform]         = p.price
+        originalPrices[p.platform] = p.original_price ?? p.price
+      }
     }
-    return prices
+    return { prices, originalPrices }
   }
 
   const filtered = menus.filter(m => {
@@ -557,7 +607,7 @@ export default function MenuManagementPage() {
             <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">{cat} ({items.length})</h2>
             <div className="space-y-2">
               {items.map(menu => {
-                const prices  = getMenuPrices(menu)
+                const { prices, originalPrices } = getMenuPrices(menu)
                 const cost    = menuCosts[menu.id]
                 return (
                   <div
@@ -605,11 +655,22 @@ export default function MenuManagementPage() {
                       </div>
 
                       <div className="flex gap-1.5 flex-wrap">
-                        {PLATFORMS.map(p => (
-                          <span key={p} className={`badge ${PLAT_BADGE[p]}`}>
-                            {p} {formatBaht(prices[p] ?? 0)}
-                          </span>
-                        ))}
+                        {PLATFORMS.map(p => {
+                          const orig    = originalPrices[p] ?? 0
+                          const cur     = prices[p] ?? 0
+                          const discPct = orig > 0 && cur < orig
+                            ? Math.round((orig - cur) / orig * 100) : 0
+                          return (
+                            <span key={p} className={`badge ${PLAT_BADGE[p]}`}>
+                              {p} {formatBaht(cur)}
+                              {discPct > 0 && (
+                                <span className="ml-1 text-[10px] bg-red-100 text-red-700 font-bold px-1 rounded">
+                                  -{discPct}%
+                                </span>
+                              )}
+                            </span>
+                          )
+                        })}
                       </div>
                     </div>
 
@@ -641,7 +702,7 @@ export default function MenuManagementPage() {
                         <History size={16} />
                       </button>
                       <button
-                        onClick={() => setEditMenu({ ...menu, prices })}
+                        onClick={() => setEditMenu({ ...menu, prices, originalPrices })}
                         className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-cocoa-700"
                         title="แก้ไข"
                       >

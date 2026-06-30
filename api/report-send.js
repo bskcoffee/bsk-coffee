@@ -121,11 +121,26 @@ async function markSentToday() {
 }
 
 // ─── Fetch daily metrics ──────────────────────────────────────────────────────
+async function fetchMenuOriginalPrices() {
+  const rows = await sb('menu_prices', `?effective_to=is.null&select=menu_id,platform,price,original_price`)
+  // map: menuId → { platform → { price, original_price } }
+  const map = {}
+  for (const r of rows) {
+    if (!map[r.menu_id]) map[r.menu_id] = {}
+    map[r.menu_id][r.platform?.toUpperCase()] = {
+      price:          Number(r.price ?? 0),
+      original_price: Number(r.original_price ?? r.price ?? 0),
+    }
+  }
+  return map
+}
+
 async function fetchMetrics(dateStr) {
-  const [orders, platCosts, costRows] = await Promise.all([
+  const [orders, platCosts, costRows, menuOriginal] = await Promise.all([
     sb('orders', `?date=eq.${dateStr}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name,category))`),
     sb('platform_costs', `?date=eq.${dateStr}&select=*`),
     sb('cost_settings', `?effective_from=lte.${dateStr}&select=key,value,effective_from&order=effective_from.desc`),
+    fetchMenuOriginalPrices(),
   ])
 
   const cs = {}
@@ -149,9 +164,16 @@ async function fetchMetrics(dateStr) {
       platSales[plat] = (platSales[plat] ?? 0) + qty * price
       const cat = item.menus?.category ?? ''
       const mId = item.menu_id ?? 'unknown'
-      if (!menuAgg[mId]) menuAgg[mId] = { name: item.menus?.name || mId, qty: 0, sales: 0 }
-      if (!menuAgg[mId]) menuAgg[mId].gpCost = 0
-      menuAgg[mId].qty += qty; menuAgg[mId].sales += qty * price
+      if (!menuAgg[mId]) {
+        const origData     = menuOriginal[mId]?.[plat] ?? menuOriginal[mId]?.[Object.keys(menuOriginal[mId] ?? {})[0]]
+        const origPrice    = origData?.original_price ?? price
+        const discPct      = origPrice > 0 && price < origPrice
+          ? Math.round((origPrice - price) / origPrice * 100) : 0
+        menuAgg[mId] = { name: item.menus?.name || mId, qty: 0, sales: 0, gpCost: 0,
+                         origPrice, discPct }
+      }
+      menuAgg[mId].qty    += qty
+      menuAgg[mId].sales  += qty * price
       menuAgg[mId].gpCost += qty * Number(item.unit_gp_cost ?? 0)
       if (BEV_CATS.includes(cat))  catQty.beverage += qty
       else if (cat === 'Bun')      catQty.bread    += qty
@@ -245,10 +267,13 @@ async function getAIInsights(today, lastWeek, weekly) {
     ? `${((weekly.thisWeekSales - weekly.lastWeekSales) / weekly.lastWeekSales * 100).toFixed(1)}% vs สัปดาห์ก่อน`
     : 'ไม่มีข้อมูลเปรียบเทียบ'
 
-  // menu margin lines สำหรับ AI
+  // menu margin lines สำหรับ AI (รวม campaign discount%)
   const menuMarginLines = today.top3.map(m => {
-    const tag = m.margin >= 35 ? '✅ Push ได้' : m.margin >= 25 ? '🟡 ระวัง discount' : '🔴 ตรวจต้นทุน'
-    return `  • ${m.name}: ×${m.qty} | Margin ${m.margin.toFixed(1)}% ${tag}`
+    const tag      = m.margin >= 35 ? '✅ Push ได้' : m.margin >= 25 ? '🟡 ระวัง discount' : '🔴 ตรวจต้นทุน'
+    const discNote = m.discPct > 0
+      ? ` | 🏷 ลด ${m.discPct}% จากราคาปกติ ฿${fmt(m.origPrice)}`
+      : ''
+    return `  • ${m.name}: ×${m.qty} | Margin ${m.margin.toFixed(1)}% ${tag}${discNote}`
   }).join('\n')
 
   const platLines = Object.entries(today.platSales ?? {})
@@ -297,7 +322,7 @@ ${today.gpRate < 30 ? '⚠️' : '✅'}  GP Rate ${fmtPct(today.gpRate)} ${today
 ข้อ 1 — "วันนี้เป็นอย่างไร": สรุปภาพรวมสุขภาพร้านในประโยคเดียว ระบุว่าผ่าน/ไม่ผ่านเกณฑ์ไหน
 ข้อ 2 — "เพราะอะไร": หา root cause หลัก 1 อย่าง โดยดูความสัมพันธ์ระหว่าง Marketing Fee + GP Rate + mat cost + sales volume + platform mix อย่าพูดแค่อาการ ให้หาต้นตอ (ถ้า GP Rate ต่ำกว่า 32.1% ให้ระบุว่าอาจมาจาก 60/40 campaign หรือ direct sales Metro/TU)
 ข้อ 3 — "ทำอะไรได้เลย": แนะนำ 1 action ที่ทำได้จริงภายใน 48 ชั่วโมง ระบุให้ชัดเจน (เช่น "ลด campaign LINE วันพฤหัส" ดีกว่า "ควรลดต้นทุน")
-ข้อ 4 — "แคมเปญเมนู": ดู margin เมนูขายดี แล้วแนะนำ 1 ไอเดียแคมเปญที่เหมาะสม เช่น bundle เมนู margin สูง, ห้าม discount เมนู margin ต่ำ, ปรับราคาเมนูที่ขายดีแต่ margin ต่ำ
+ข้อ 4 — "แคมเปญเมนู": ถ้ามีเมนูที่ลดราคาอยู่ (มี 🏷) ให้ประเมินว่าแคมเปญนั้นคุ้มไหม — volume ขายเพิ่มขึ้นพอชดเชย margin ที่หายไปหรือเปล่า ถ้าไม่มีแคมเปญ แนะนำ 1 ไอเดียที่เหมาะกับ margin เมนูที่เห็น
 
 กฎ: ภาษาไทย พูดตรงๆ ไม่ใช้ศัพท์วิชาการ แต่ละข้อขึ้นต้นด้วย "• " ขึ้นบรรทัดใหม่ทุกข้อ`
 
@@ -484,8 +509,12 @@ function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText) {
                 { type: 'box', layout: 'vertical', flex: 5, contents: [
                   { type: 'text', text: `${m.name} ×${m.qty}`, size: 'sm', weight: 'bold',
                     color: isHigh ? '#166534' : isLow ? '#7F1D1D' : '#713F12' },
-                  { type: 'text', text: `Margin ${m.margin.toFixed(1)}%`, size: 'xs',
-                    color: isHigh ? '#16A34A' : isLow ? '#DC2626' : '#D97706', margin: 'xs' },
+                  { type: 'box', layout: 'horizontal', margin: 'xs', contents: [
+                    { type: 'text', text: `Margin ${m.margin.toFixed(1)}%`, size: 'xs',
+                      color: isHigh ? '#16A34A' : isLow ? '#DC2626' : '#D97706', flex: 0 },
+                    ...(m.discPct > 0 ? [{ type: 'text', text: `  🏷-${m.discPct}%`, size: 'xs',
+                      color: '#DC2626', flex: 0 }] : []),
+                  ]},
                 ]},
                 { type: 'box', layout: 'vertical', flex: 3, justifyContent: 'center', contents: [
                   { type: 'box', layout: 'vertical', backgroundColor: badge.bg,
