@@ -692,6 +692,11 @@ export default function SalesEntryPage() {
   }
 
   const handleSendReport = async () => {
+    // แจ้งเตือนถ้ายังไม่ได้บันทึก (รองรับ iPad ที่ไม่มี hover tooltip)
+    if (!isLocked) {
+      addToast('กดบันทึกก่อนส่งรายงาน', 'info')
+      return
+    }
     // ถ้ายังไม่ถึง 12:30 — ให้ cron จัดการเอง
     const now = new Date()
     const afterCron = now.getHours() > 12 || (now.getHours() === 12 && now.getMinutes() >= 30)
@@ -702,12 +707,7 @@ export default function SalesEntryPage() {
 
     setReportStatus('sending')
     try {
-      const { data: settingsRow } = await supabase
-        .from('settings').select('value').eq('key', 'label_settings').single()
-      const s = settingsRow?.value ? JSON.parse(settingsRow.value) : {}
-      const ip   = s.printerIp   || '192.168.68.113'
-      const port = s.printerPort || 3001
-      const res = await fetch(`http://${ip}:${port}/report/send`, {
+      const res = await fetch('/api/report-send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date }),
@@ -721,8 +721,8 @@ export default function SalesEntryPage() {
       setTimeout(() => setReportStatus('idle'), 5000)
     } catch (err) {
       setReportStatus('error')
-      addToast('ส่ง Report ไม่สำเร็จ: ' + err.message, 'error')
-      setTimeout(() => setReportStatus('idle'), 4000)
+      addToast('ส่ง Report ไม่สำเร็จ: ' + err.message + ' — แตะเพื่อลองใหม่', 'error')
+      setTimeout(() => setReportStatus('idle'), 6000)
     }
   }
 
@@ -869,10 +869,20 @@ export default function SalesEntryPage() {
             <label htmlFor="entry-date" className="label mb-0">วันที่</label>
             <button
               onClick={handleSendReport}
-              disabled={!isLocked || reportStatus === 'sending'}
+              disabled={reportStatus === 'sending'}
               aria-label="ส่ง AI Report ไป LINE"
               title={!isLocked ? 'กดบันทึกก่อน' : 'ส่งรายงานไป LINE'}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-700 text-white"
+              className={[
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200',
+                'disabled:opacity-50 disabled:cursor-not-allowed',
+                reportStatus === 'sent'
+                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                  : reportStatus === 'error'
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : !isLocked
+                  ? 'bg-gray-400 text-white cursor-pointer'
+                  : 'bg-indigo-600 hover:bg-indigo-700 text-white',
+              ].join(' ')}
             >
               {reportStatus === 'sending' && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
               {reportStatus === 'sent'    && <CheckCircle size={13} />}
@@ -880,7 +890,7 @@ export default function SalesEntryPage() {
               {reportStatus === 'idle'    && <Send size={13} />}
               {reportStatus === 'sending' ? 'กำลังส่ง...'
                 : reportStatus === 'sent' ? 'ส่งแล้ว!'
-                : reportStatus === 'error' ? 'ส่งไม่สำเร็จ'
+                : reportStatus === 'error' ? 'ลองใหม่'
                 : 'AI Report'}
             </button>
           </div>
