@@ -4,7 +4,7 @@ import { supabase, getSetting, getCostSettingsForDate } from '../lib/supabase'
 import { saveDraft, loadDraft, clearDraft, isOnline, enqueueSync, getSyncQueue, processSyncQueue, clearSyncQueue } from '../utils/offlineSync'
 import { calcPlatformProfit, calcMenuCostBreakdown, formatBaht, CAMPAIGN_GP_PCT } from '../utils/calculations'
 import { useToast } from '../contexts/ToastContext'
-import { Plus, Minus, Save, AlertCircle, CheckCircle, WifiOff, ChevronDown, ChevronUp, Pencil, Lock, Search, X, RefreshCw, CloudOff, Trash2, Printer, Download } from 'lucide-react'
+import { Plus, Minus, Save, AlertCircle, CheckCircle, WifiOff, ChevronDown, ChevronUp, Pencil, Lock, Search, X, RefreshCw, CloudOff, Trash2, Printer, Download, Send } from 'lucide-react'
 
 const DEFAULT_PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
 const CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun', 'Refill', 'Addon']
@@ -55,6 +55,7 @@ export default function SalesEntryPage() {
   const [filterCategory, setFilterCategory] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [showCosts, setShowCosts] = useState(true)
+  const [reportStatus, setReportStatus] = useState('idle') // idle | sending | sent | error
   const draftTimer = useRef(null)
 
   // Snapshot of DB state when data is loaded — used for accurate isDirty check
@@ -690,6 +691,41 @@ export default function SalesEntryPage() {
     }
   }
 
+  const handleSendReport = async () => {
+    // ถ้ายังไม่ถึง 12:30 — ให้ cron จัดการเอง
+    const now = new Date()
+    const afterCron = now.getHours() > 12 || (now.getHours() === 12 && now.getMinutes() >= 30)
+    if (!afterCron) {
+      addToast('ระบบจะส่งรายงานอัตโนมัติเวลา 12:30 น. 🕧', 'info')
+      return
+    }
+
+    setReportStatus('sending')
+    try {
+      const { data: settingsRow } = await supabase
+        .from('settings').select('value').eq('key', 'label_settings').single()
+      const s = settingsRow?.value ? JSON.parse(settingsRow.value) : {}
+      const ip   = s.printerIp   || '192.168.68.113'
+      const port = s.printerPort || 3001
+      const res = await fetch(`http://${ip}:${port}/report/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || `HTTP ${res.status}`)
+      }
+      setReportStatus('sent')
+      addToast('ส่ง AI Report ไป LINE แล้ว ✅', 'success')
+      setTimeout(() => setReportStatus('idle'), 5000)
+    } catch (err) {
+      setReportStatus('error')
+      addToast('ส่ง Report ไม่สำเร็จ: ' + err.message, 'error')
+      setTimeout(() => setReportStatus('idle'), 4000)
+    }
+  }
+
   const filteredMenus = menus.filter(m => {
     const matchCat = filterCategory === 'all' || m.category === filterCategory
     const matchSearch = searchQuery === '' ||
@@ -1181,6 +1217,26 @@ export default function SalesEntryPage() {
           </details>
         </div>
       )}
+
+      {/* ── Send AI Report button ──────────────────────────────────────── */}
+      <div className="mt-4 flex justify-end">
+        <button
+          onClick={handleSendReport}
+          disabled={reportStatus === 'sending'}
+          aria-label="ส่ง AI Report ไป LINE"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50
+            bg-indigo-600 hover:bg-indigo-700 text-white shadow"
+        >
+          {reportStatus === 'sending' && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+          {reportStatus === 'sent'    && <CheckCircle size={16} />}
+          {reportStatus === 'error'   && <AlertCircle size={16} />}
+          {reportStatus === 'idle'    && <Send size={16} />}
+          {reportStatus === 'sending' ? 'กำลังส่ง...'
+            : reportStatus === 'sent' ? 'ส่งแล้ว!'
+            : reportStatus === 'error' ? 'ส่งไม่สำเร็จ'
+            : 'ส่ง AI Report ไป LINE'}
+        </button>
+      </div>
 
       {/* Bottom padding */}
       <div className="h-4" />

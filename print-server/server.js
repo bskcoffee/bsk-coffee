@@ -1,4 +1,4 @@
-require('dotenv').config()
+require('dotenv').config({ path: require('path').join(__dirname, '.env') })
 const express = require('express')
 const cors    = require('cors')
 const net     = require('net')
@@ -27,9 +27,59 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
-const PRINTER_IP   = process.env.PRINTER_IP   || '192.168.1.100'
+let PRINTER_IP     = process.env.PRINTER_IP   || '192.168.1.100'
 const PRINTER_PORT = parseInt(process.env.PRINTER_PORT || '9100')
 const SERVER_PORT  = parseInt(process.env.SERVER_PORT  || '3001')
+const path         = require('path')
+
+// ─── Auto-discovery: scan subnet for printer on PRINTER_PORT ─────────────────
+let lastDiscoveryAt = 0
+const DISCOVERY_COOLDOWN = 60_000   // ไม่ scan ถี่กว่า 1 นาที
+
+async function discoverPrinter() {
+  const now = Date.now()
+  if (now - lastDiscoveryAt < DISCOVERY_COOLDOWN) {
+    console.log('[DISCOVER] Cooldown active — skipping scan')
+    return null
+  }
+  lastDiscoveryAt = now
+
+  const prefix = PRINTER_IP.split('.').slice(0, 3).join('.')
+  console.log(`[DISCOVER] Scanning ${prefix}.1-254:${PRINTER_PORT} ...`)
+
+  const results = await Promise.allSettled(
+    Array.from({ length: 254 }, (_, i) => `${prefix}.${i + 1}`).map(ip =>
+      new Promise((resolve, reject) => {
+        const s = new net.Socket()
+        s.setTimeout(400)
+        s.connect(PRINTER_PORT, ip, () => { s.destroy(); resolve(ip) })
+        s.on('error',   () => { s.destroy(); reject() })
+        s.on('timeout', () => { s.destroy(); reject() })
+      })
+    )
+  )
+
+  const found = results.filter(r => r.status === 'fulfilled').map(r => r.value)
+  if (found.length === 0) {
+    console.warn('[DISCOVER] No printer found on subnet')
+    return null
+  }
+  console.log(`[DISCOVER] Found: ${found.join(', ')} — using ${found[0]}`)
+  return found[0]
+}
+
+function updatePrinterIp(newIp) {
+  PRINTER_IP = newIp
+  try {
+    const envPath = path.join(__dirname, '.env')
+    let content = fs.readFileSync(envPath, 'utf8')
+    content = content.replace(/^PRINTER_IP=.*/m, `PRINTER_IP=${newIp}`)
+    fs.writeFileSync(envPath, content)
+    console.log(`[DISCOVER] .env updated → PRINTER_IP=${newIp}`)
+  } catch (e) {
+    console.warn('[DISCOVER] Could not update .env:', e.message)
+  }
+}
 
 // ─── Test TCP reachability to printer ────────────────────────────────────────
 function testPrinterTcp(timeoutMs = 3000) {
@@ -45,31 +95,42 @@ function testPrinterTcp(timeoutMs = 3000) {
   })
 }
 
-// ─── Send raw bytes to printer via TCP (with 1 auto-retry) ───────────────────
+// ─── Send raw bytes to printer via TCP (with 1 auto-retry + auto-discovery) ──
 function printRaw(buffer) {
-  const attempt = (retriesLeft) =>
+  const attempt = (retriesLeft, allowDiscover = true) =>
     new Promise((resolve, reject) => {
       const socket = new net.Socket()
       socket.setTimeout(8000)
       socket.connect(PRINTER_PORT, PRINTER_IP, () => {
-        socket.write(buffer)
+        const flushed = socket.write(buffer)
+        if (flushed) socket.end()
       })
       socket.on('drain', () => socket.end())
       socket.on('close', () => resolve())
-      socket.on('error', (err) => {
+      socket.on('error', async (err) => {
         socket.destroy()
         if (retriesLeft > 0) {
           console.warn(`[PRINT] error — retrying in 2s (${retriesLeft} left): ${err.message}`)
           setTimeout(() => attempt(retriesLeft - 1).then(resolve).catch(reject), 2000)
+        } else if (allowDiscover) {
+          console.warn('[PRINT] All retries failed — starting auto-discovery...')
+          const newIp = await discoverPrinter()
+          if (newIp) { updatePrinterIp(newIp); attempt(1, false).then(resolve).catch(reject) }
+          else reject(err)
         } else {
           reject(err)
         }
       })
-      socket.on('timeout', () => {
+      socket.on('timeout', async () => {
         socket.destroy()
         if (retriesLeft > 0) {
           console.warn(`[PRINT] timeout — retrying in 2s (${retriesLeft} left)`)
           setTimeout(() => attempt(retriesLeft - 1).then(resolve).catch(reject), 2000)
+        } else if (allowDiscover) {
+          console.warn('[PRINT] All retries timed out — starting auto-discovery...')
+          const newIp = await discoverPrinter()
+          if (newIp) { updatePrinterIp(newIp); attempt(1, false).then(resolve).catch(reject) }
+          else reject(new Error('Printer connection timed out'))
         } else {
           reject(new Error('Printer connection timed out'))
         }
@@ -453,6 +514,26 @@ app.post('/print', async (req, res) => {
     res.json({ success: true, labelsCount: buffers.length })
   } catch (err) {
     console.error('[PRINT ERROR]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── AI Reporter ──────────────────────────────────────────────────────────────
+let aiReporter = null
+try { aiReporter = require('./ai-reporter') } catch (e) { console.warn('[AI Reporter] Failed to load:', e.message) }
+
+// POST /report/send  — manual trigger จาก cocoa-house web app
+// body: { date: 'YYYY-MM-DD' }
+app.post('/report/send', async (req, res) => {
+  if (!aiReporter) return res.status(503).json({ error: 'AI Reporter not loaded' })
+  const { date } = req.body
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'date required (YYYY-MM-DD)' })
+  }
+  try {
+    await aiReporter.runReport(date)
+    res.json({ ok: true, date })
+  } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
