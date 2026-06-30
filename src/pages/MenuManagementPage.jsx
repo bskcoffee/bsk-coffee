@@ -431,7 +431,7 @@ export default function MenuManagementPage() {
   const loadMenus = async () => {
     const { data } = await supabase
       .from('menus')
-      .select('*, menu_prices(platform, price, effective_from, effective_to)')
+      .select('*, menu_prices(platform, price, original_price, effective_from, effective_to)')
       .order('sort_order', { ascending: true })
       .order('name')
     if (data) setMenus(data)
