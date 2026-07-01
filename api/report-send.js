@@ -512,22 +512,22 @@ async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], tren
   // (A) memory context
   const memoryBlock = buildMemoryContext(memory, 'daily')
 
-  const prompt = `คุณคือ Mirai — AI วิเคราะห์ธุรกิจของ Cocoa House${memoryBlock}
-ข้อมูล ${dateStr}: ยอดขาย ฿${fmt(today.totalSales)} (${vsDay}) | Net Profit ${fmtPct(today.netProfitPct)} ${checkProfit} | Mat Cost ${fmtPct(matCostPct)} ${checkMat} | Marketing ${fmtPct(today.marketingFeePct)} ${checkMarketing} | GP Rate ${fmtPct(today.gpRate)}
+  const prompt = `คุณคือ Mirai — AI วิเคราะห์ธุรกิจ Cocoa House${memoryBlock}
+${dateStr} | ยอด ฿${fmt(today.totalSales)} (${vsDay}) | Profit ${fmtPct(today.netProfitPct)} ${checkProfit} | Mat ${fmtPct(matCostPct)} | Mkt ${fmtPct(today.marketingFeePct)}
 Platform: ${Object.entries(today.platSales ?? {}).sort((a,b)=>b[1]-a[1]).map(([p,s])=>`${p} ฿${fmt(s)}`).join(' | ')}
-Top Menu: ${today.top3.map(m=>`${m.name} ×${m.qty} margin ${m.margin.toFixed(0)}%${m.discPct>0?' 🏷-'+m.discPct+'%':''}`).join(' | ')}
-${baselineNote}${trendLines ? `Trend: ${trend.map(w=>`${w.label} ฿${fmt(w.sales)}`).join(' → ')}` : ''}${trendNote ? ` | ${trendNote}` : ''}
+Menu: ${today.top3.map(m=>`${m.name}×${m.qty} m${m.margin.toFixed(0)}%${m.discPct>0?' 🏷-'+m.discPct+'%':''}`).join(' | ')}
+${baselineNote ? baselineNote + '\n' : ''}${trendNote}
 
-สรุป 3 ข้อ — สั้น กระชับ มี impact:
-• ข้อ 1 สถานะ: ผ่าน/ไม่ผ่านเป้า + Root Cause หลัก 1 อย่าง (ระบุตัวเลข)
-• ข้อ 2 Action 48 ชม.: 1 action ทำได้เลย ระบุเมนู/platform + ตัวเลขที่คาดหวัง
-• ข้อ 3 Insight: pricing/bundle/campaign ที่เพิ่ม Profit ได้สุด พร้อมเหตุผล
+ตอบ 3 bullet เท่านั้น แต่ละข้อ 1 บรรทัด ห้ามเกิน 3 บรรทัดรวม:
+• 📊 [สถานะ]: [ผ่าน/ไม่ผ่านเป้า] เพราะ [root cause + ตัวเลข]
+• ⚡ [Action]: [1 action ทำเลย] → คาดได้ [ตัวเลขเป้า]
+• 💡 [Insight]: [pricing/bundle/margin tip + เหตุผลตัวเลข]
 
-กฎ: ภาษาไทย กระชับ ตัวเลขจริงทุกข้อ ห้ามพูดกว้างๆ แต่ละข้อ ≤ 2 บรรทัด`
+ห้ามใช้ prefix "ข้อ 1/2/3" ห้ามมี intro/outro ตัวเลขจริงทุกข้อ`
 
   const ai  = new Anthropic({ apiKey })
   const msg = await ai.messages.create({
-    model: 'claude-sonnet-4-6', max_tokens: 400,
+    model: 'claude-sonnet-4-6', max_tokens: 280,
     messages: [{ role: 'user', content: prompt }],
   })
   return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้ในขณะนี้'
@@ -587,7 +587,11 @@ function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText) {
       header: {
         type: 'box', layout: 'vertical', paddingAll: '16px', backgroundColor: '#3B1F0F',
         contents: [
-          { type: 'text', text: '🍫 Cocoa House', weight: 'bold', color: '#FFFFFF', size: 'lg' },
+          { type: 'box', layout: 'horizontal', contents: [
+            { type: 'text', text: '🍫 Cocoa House', weight: 'bold', color: '#FFFFFF', size: 'lg', flex: 1 },
+            { type: 'box', layout: 'vertical', flex: 0, justifyContent: 'center',
+              contents: [{ type: 'text', text: 'Mirai ✨', size: 'xs', color: '#D4A87A', weight: 'bold', align: 'end' }] },
+          ]},
           { type: 'text', text: `รายงานประจำวัน — ${thaiDate(dateStr)}`, size: 'xs', color: '#D4A87A', margin: 'xs' },
         ],
       },
@@ -725,9 +729,9 @@ function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText) {
             }
           }),
 
-          // ── AI ──
+          // ── Mirai AI ──
           { type: 'separator', margin: 'md' },
-          { type: 'text', text: '🤖 AI วิเคราะห์', weight: 'bold', size: 'sm', color: '#374151', margin: 'md' },
+          { type: 'text', text: '✨ Mirai วิเคราะห์', weight: 'bold', size: 'sm', color: '#374151', margin: 'md' },
           ...aiLines,
         ],
       },
