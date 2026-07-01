@@ -8,6 +8,8 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY
 const LINE_TOKEN   = process.env.LINE_CHANNEL_ACCESS_TOKEN
 const LINE_USER    = process.env.LINE_ADMIN_USER_ID
 
+const CAMPAIGN_GP_PCT = 5  // Grab 60/40 campaign flat GP fee % (same as calculations.js)
+
 // ─── Date helpers (Thailand UTC+7) ───────────────────────────────────────────
 function thaiDateStr(offsetDays = 0) {
   const d = new Date()
@@ -223,6 +225,23 @@ async function markSentToday() {
   await upsertSetting('ai_report_last_sent', thaiDateStr(0))
 }
 
+// ─── Fetch platform fee rates from settings (same keys as Dashboard) ─────────
+async function fetchPlatFees() {
+  try {
+    const rows = await sb('settings',
+      `?key=in.(grab_fee_pct,line_fee_pct,shopee_fee_pct,the_metro_fee_pct,tu_fee_pct)&select=key,value`)
+    const map = {}
+    for (const r of rows) {
+      if (r.key === 'grab_fee_pct')      map['GRAB']       = parseFloat(r.value) || 0
+      if (r.key === 'line_fee_pct')      map['LINE']       = parseFloat(r.value) || 0
+      if (r.key === 'shopee_fee_pct')    map['SHOPEE']     = parseFloat(r.value) || 0
+      if (r.key === 'the_metro_fee_pct') map['THE METRO']  = parseFloat(r.value) || 0
+      if (r.key === 'tu_fee_pct')        map['TU']         = parseFloat(r.value) || 0
+    }
+    return map
+  } catch { return {} }
+}
+
 // ─── Fetch daily metrics ──────────────────────────────────────────────────────
 async function fetchMenuOriginalPrices() {
   const rows = await sb('menu_prices', `?effective_to=is.null&select=menu_id,platform,price,original_price`)
@@ -263,17 +282,18 @@ function calcSimpleMaterialCost(mc, cs) {
 }
 
 async function fetchMetrics(dateStr) {
-  const [orders, platCosts, costRows, menuOriginal] = await Promise.all([
-    sb('orders', `?date=eq.${dateStr}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name,category))`),
+  const [orders, platCosts, costRows, menuOriginal, platFees] = await Promise.all([
+    sb('orders', `?date=eq.${dateStr}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,is_campaign,menu_id,menus(name,category))`),
     sb('platform_costs', `?date=eq.${dateStr}&select=*`),
     sb('cost_settings', `?effective_from=lte.${dateStr}&select=key,value,effective_from&order=effective_from.desc`),
     fetchMenuOriginalPrices(),
+    fetchPlatFees(),
   ])
 
   const cs = {}
   for (const row of costRows) if (!(row.key in cs)) cs[row.key] = Number(row.value)
 
-  // Fetch menu_costs for real material cost calculation (same as Dashboard)
+  // Fetch menu_costs for material cost calculation (same as Dashboard)
   const menuIds = [...new Set(orders.flatMap(o => (o.order_items ?? []).map(i => i.menu_id)).filter(Boolean))]
   let menuCostMap = {}
   if (menuIds.length > 0) {
@@ -282,20 +302,25 @@ async function fetchMetrics(dateStr) {
   }
 
   const BEV_CATS = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot']
-  let totalSales = 0, totalPlatFeeRaw = 0, totalMatCostRaw = 0
-  const menuAgg = {}, platSales = {}, catQty = { beverage: 0, bread: 0, refill: 0, addon: 0 }
+  let totalSales = 0, totalMatCostRaw = 0
+  // track normal/campaign sales per platform (for feePct-based GP calc, same as Dashboard)
+  const platSales = {}, platNormalSales = {}, platCampaignSales = {}
+  const menuAgg = {}, catQty = { beverage: 0, bread: 0, refill: 0, addon: 0 }
 
   for (const order of orders) {
-    const plat = (order.platform ?? 'other').toUpperCase()
+    const plat       = (order.platform ?? 'other').toUpperCase()
     for (const item of order.order_items ?? []) {
       const qty        = Number(item.quantity ?? 0)
       const price      = Number(item.unit_price ?? 0)
-      const platFeeUnit = Number(item.unit_gp_cost ?? 0)  // = price × feePct (platform commission only)
+      const isCampaign = item.is_campaign === true
+      const platFeeUnit = Number(item.unit_gp_cost ?? 0)  // for per-menu margin display
       const matUnit    = calcSimpleMaterialCost(menuCostMap[item.menu_id], cs)
-      totalSales        += qty * price
-      totalPlatFeeRaw   += qty * platFeeUnit
-      totalMatCostRaw   += qty * matUnit
-      platSales[plat] = (platSales[plat] ?? 0) + qty * price
+      const itemSales  = qty * price
+      totalSales       += itemSales
+      totalMatCostRaw  += qty * matUnit
+      platSales[plat]  = (platSales[plat] ?? 0) + itemSales
+      if (isCampaign) platCampaignSales[plat] = (platCampaignSales[plat] ?? 0) + itemSales
+      else            platNormalSales[plat]    = (platNormalSales[plat]   ?? 0) + itemSales
       const cat = item.menus?.category ?? ''
       const mId = item.menu_id ?? 'unknown'
       if (!menuAgg[mId]) {
@@ -307,7 +332,7 @@ async function fetchMetrics(dateStr) {
                          platFee: 0, matCost: 0, origPrice, discPct }
       }
       menuAgg[mId].qty     += qty
-      menuAgg[mId].sales   += qty * price
+      menuAgg[mId].sales   += itemSales
       menuAgg[mId].platFee += qty * platFeeUnit
       menuAgg[mId].matCost += qty * matUnit
       if (BEV_CATS.includes(cat))  catQty.beverage += qty
@@ -324,22 +349,35 @@ async function fetchMetrics(dateStr) {
                   + Number(pc.delivery_discount ?? 0) + Number(pc.advertisement ?? 0)
   }
 
-  const grossSales     = Math.max(0, totalSales - menuDiscount)
-  const discountRatio  = totalSales > 0 ? grossSales / totalSales : 1
-  // Platform commission and material cost adjusted for discount ratio
-  const platCommission = totalPlatFeeRaw * discountRatio
-  const matCost        = totalMatCostRaw * discountRatio
-  const laborCost      = grossSales * (cs.labor_pct ?? 0) / 100
-  const totalPlatFee   = platCommission + extraCosts
+  const grossSales    = Math.max(0, totalSales - menuDiscount)
+  const discountRatio = totalSales > 0 ? grossSales / totalSales : 1
+
+  // GP Cost = Σ per platform: (grossNormalSales × feePct% + grossCampaignSales × 5%)
+  // ตรงกับ Dashboard's totalGpCost (ใช้ feePct จาก settings ไม่ใช่ unit_gp_cost)
+  const gpCost = Object.keys(platSales).reduce((sum, plat) => {
+    const feePct        = platFees[plat] ?? 0
+    const normalSales   = (platNormalSales[plat]   ?? 0) * discountRatio
+    const campaignSales = (platCampaignSales[plat] ?? 0) * discountRatio
+    return sum + normalSales * feePct / 100 + campaignSales * CAMPAIGN_GP_PCT / 100
+  }, 0)
+
+  const matCost    = totalMatCostRaw * discountRatio
+  const laborCost  = grossSales * (cs.labor_pct ?? 0) / 100
+
+  // Net Profit = Dashboard's newNetProfit formula:
+  // totalSales - totalGpCost(feePct) - totalMatCost - totalLaborCost - menuDiscount - extraCosts
+  // = grossSales - gpCost - matCost - laborCost - extraCosts
+  const netProfit    = grossSales - gpCost - matCost - laborCost - extraCosts
+  const netProfitPct = grossSales > 0 ? (netProfit    / grossSales) * 100 : 0
+  const matCostPct   = grossSales > 0 ? (matCost      / grossSales) * 100 : 0
+  const gpRate       = grossSales > 0 ? (gpCost        / grossSales) * 100 : 0
+
+  const totalPlatFee   = gpCost + extraCosts
   const platFeeRate    = grossSales > 0 ? (totalPlatFee / grossSales) * 100 : 0
-  // Net Profit = ตรงกับ Dashboard 5-Layer (ไม่หัก matCost/laborCost — แสดงแยก)
-  // Dashboard: grossSales - gpCostAdjusted - extraCosts
-  const netProfit    = grossSales - platCommission - extraCosts
-  const netProfitPct = grossSales > 0 ? (netProfit / grossSales) * 100 : 0
-  const matCostPct   = grossSales > 0 ? (matCost   / grossSales) * 100 : 0
+  const marketingFee    = menuDiscount + extraCosts
+  const marketingFeePct = grossSales > 0 ? (marketingFee / grossSales) * 100 : 0
 
   // Per-menu margin = (sales - platFee - matCost) / sales
-  // ถ้า matCost = 0 (ไม่มีข้อมูล menu_costs) ให้ใช้แค่ platFee
   for (const m of Object.values(menuAgg)) {
     const hasMat = m.matCost > 0
     m.margin = m.sales > 0
@@ -348,11 +386,6 @@ async function fetchMetrics(dateStr) {
     m.hasMat = hasMat
   }
   const top3 = Object.values(menuAgg).sort((a, b) => b.qty - a.qty).slice(0, 3)
-
-  const marketingFee    = menuDiscount + extraCosts
-  const marketingFeePct = grossSales > 0 ? (marketingFee / grossSales) * 100 : 0
-  // GP rate = platform commission / gross sales
-  const gpRate = grossSales > 0 ? (platCommission / grossSales) * 100 : 0
 
   return { totalSales, grossSales, menuDiscount, totalPlatFee, platFeeRate,
            marketingFee, marketingFeePct, gpRate,
