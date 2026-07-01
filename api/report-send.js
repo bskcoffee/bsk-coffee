@@ -238,6 +238,30 @@ async function fetchMenuOriginalPrices() {
   return map
 }
 
+// ─── Material cost helper (mirrors calcMenuCostBreakdown price=0, feePct=0) ────
+function calcSimpleMaterialCost(mc, cs) {
+  if (!mc || !cs) return 0
+  const ingredient = (Number(mc.main_ingredient) || 0)
+                   + (Number(mc.milk_condensed)  || 0)
+                   + (Number(mc.milk_mixed)       || 0)
+                   + (Number(mc.milk_fresh)       || 0)
+  const pkgType = mc.packaging_type || 'beverage'
+  let packaging = 0
+  if (pkgType === 'beverage') {
+    packaging = (cs.packaging_bev_cup     || 0) + (cs.packaging_bev_sticker || 0)
+              + (cs.packaging_bev_straw   || 0) + (cs.packaging_bev_seal    || 0)
+              + (cs.packaging_bev_bag     || 0)
+  } else if (pkgType === 'bun') {
+    packaging = (cs.packaging_bun_box     || 0) + (cs.packaging_bun_sticker || 0)
+              + (cs.packaging_bun_bag     || 0)
+  }
+  const shared = (cs.consumables || 0) + (cs.operation_cost || 0)
+  const custom = Array.isArray(mc.custom_costs)
+    ? mc.custom_costs.reduce((s, c) => s + (Number(c.amount) || 0), 0)
+    : 0
+  return ingredient + packaging + shared + custom
+}
+
 async function fetchMetrics(dateStr) {
   const [orders, platCosts, costRows, menuOriginal] = await Promise.all([
     sb('orders', `?date=eq.${dateStr}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name,category))`),
@@ -249,35 +273,43 @@ async function fetchMetrics(dateStr) {
   const cs = {}
   for (const row of costRows) if (!(row.key in cs)) cs[row.key] = Number(row.value)
 
-  const platConfigRaw = await getSetting('platform_config')
-  const platConfig    = platConfigRaw ? JSON.parse(platConfigRaw) : []
-  const feeMap = {}
-  for (const p of platConfig) feeMap[(p.name ?? '').toUpperCase()] = Number(p.fee ?? 0)
+  // Fetch menu_costs for real material cost calculation (same as Dashboard)
+  const menuIds = [...new Set(orders.flatMap(o => (o.order_items ?? []).map(i => i.menu_id)).filter(Boolean))]
+  let menuCostMap = {}
+  if (menuIds.length > 0) {
+    const mcRows = await sb('menu_costs', `?menu_id=in.(${menuIds.join(',')})&select=*`)
+    for (const mc of mcRows) menuCostMap[mc.menu_id] = mc
+  }
 
   const BEV_CATS = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot']
-  let totalSales = 0, totalGpCost = 0
+  let totalSales = 0, totalPlatFeeRaw = 0, totalMatCostRaw = 0
   const menuAgg = {}, platSales = {}, catQty = { beverage: 0, bread: 0, refill: 0, addon: 0 }
 
   for (const order of orders) {
     const plat = (order.platform ?? 'other').toUpperCase()
     for (const item of order.order_items ?? []) {
-      const qty = Number(item.quantity ?? 0), price = Number(item.unit_price ?? 0)
-      totalSales  += qty * price
-      totalGpCost += qty * Number(item.unit_gp_cost ?? 0)
+      const qty        = Number(item.quantity ?? 0)
+      const price      = Number(item.unit_price ?? 0)
+      const platFeeUnit = Number(item.unit_gp_cost ?? 0)  // = price × feePct (platform commission only)
+      const matUnit    = calcSimpleMaterialCost(menuCostMap[item.menu_id], cs)
+      totalSales        += qty * price
+      totalPlatFeeRaw   += qty * platFeeUnit
+      totalMatCostRaw   += qty * matUnit
       platSales[plat] = (platSales[plat] ?? 0) + qty * price
       const cat = item.menus?.category ?? ''
       const mId = item.menu_id ?? 'unknown'
       if (!menuAgg[mId]) {
-        const origData     = menuOriginal[mId]?.[plat] ?? menuOriginal[mId]?.[Object.keys(menuOriginal[mId] ?? {})[0]]
-        const origPrice    = origData?.original_price ?? price
-        const discPct      = origPrice > 0 && price < origPrice
+        const origData  = menuOriginal[mId]?.[plat] ?? menuOriginal[mId]?.[Object.keys(menuOriginal[mId] ?? {})[0]]
+        const origPrice = origData?.original_price ?? price
+        const discPct   = origPrice > 0 && price < origPrice
           ? Math.round((origPrice - price) / origPrice * 100) : 0
-        menuAgg[mId] = { name: item.menus?.name || mId, qty: 0, sales: 0, gpCost: 0,
-                         origPrice, discPct }
+        menuAgg[mId] = { name: item.menus?.name || mId, qty: 0, sales: 0,
+                         platFee: 0, matCost: 0, origPrice, discPct }
       }
-      menuAgg[mId].qty    += qty
-      menuAgg[mId].sales  += qty * price
-      menuAgg[mId].gpCost += qty * Number(item.unit_gp_cost ?? 0)
+      menuAgg[mId].qty     += qty
+      menuAgg[mId].sales   += qty * price
+      menuAgg[mId].platFee += qty * platFeeUnit
+      menuAgg[mId].matCost += qty * matUnit
       if (BEV_CATS.includes(cat))  catQty.beverage += qty
       else if (cat === 'Bun')      catQty.bread    += qty
       else if (cat === 'Refill')   catQty.refill   += qty
@@ -294,31 +326,27 @@ async function fetchMetrics(dateStr) {
 
   const grossSales     = Math.max(0, totalSales - menuDiscount)
   const discountRatio  = totalSales > 0 ? grossSales / totalSales : 1
-  const gpCostAdj      = totalGpCost * discountRatio
-  let platFeeFromOrders = 0
-  for (const [plat, sales] of Object.entries(platSales))
-    platFeeFromOrders += (sales * discountRatio) * (feeMap[plat] ?? 0) / 100
-  const totalPlatFee  = platFeeFromOrders + extraCosts
-  const platFeeRate   = grossSales > 0 ? (totalPlatFee / grossSales) * 100 : 0
-  const laborCost     = grossSales * (cs.labor_pct ?? 0) / 100
-  const matCost       = gpCostAdj   // gpCostAdj = Σ(qty × unit_gp_cost) × discountRatio = material cost
-  // Net Profit = Gross Sales − Mat Cost − GP Commission − Labor − Platform Extra Costs
-  // (matches Dashboard: 965 - 277 - 210 - 48 - 69 = 361)
-  const netProfit     = grossSales - gpCostAdj - platFeeFromOrders - laborCost - extraCosts
-  const netProfitPct  = grossSales > 0 ? (netProfit / grossSales) * 100 : 0
-  // เพิ่ม margin% ต่อเมนู
-  for (const m of Object.values(menuAgg)) {
-    m.margin = m.sales > 0 ? ((m.sales - m.gpCost) / m.sales) * 100 : 0
-  }
-  const top3          = Object.values(menuAgg).sort((a, b) => b.qty - a.qty).slice(0, 3)
+  // Platform commission and material cost adjusted for discount ratio
+  const platCommission = totalPlatFeeRaw  * discountRatio
+  const matCost        = totalMatCostRaw  * discountRatio
+  const laborCost      = grossSales * (cs.labor_pct ?? 0) / 100
+  const totalPlatFee   = platCommission + extraCosts
+  const platFeeRate    = grossSales > 0 ? (totalPlatFee / grossSales) * 100 : 0
+  // Net Profit = Gross Sales − GP Commission − Mat Cost − Labor − Extra Costs
+  // matches Dashboard: grossSales - totalGpCost - totalMatCost - totalLaborCost - extraCosts
+  const netProfit    = grossSales - platCommission - matCost - laborCost - extraCosts
+  const netProfitPct = grossSales > 0 ? (netProfit / grossSales) * 100 : 0
 
-  // Marketing Fee = ต้นทุนโปรโมทที่ร้านแบกเอง (ไม่รวม GP commission ของ platform)
-  // = menu_discount + campaign + marketing_fee + delivery_discount + advertisement
+  // Per-menu margin = (sales - platFee - matCost) / sales  (real margin after plat fee + ingredients)
+  for (const m of Object.values(menuAgg)) {
+    m.margin = m.sales > 0 ? ((m.sales - m.platFee - m.matCost) / m.sales) * 100 : 0
+  }
+  const top3 = Object.values(menuAgg).sort((a, b) => b.qty - a.qty).slice(0, 3)
+
   const marketingFee    = menuDiscount + extraCosts
   const marketingFeePct = grossSales > 0 ? (marketingFee / grossSales) * 100 : 0
-
-  // GP rate จริง (ถ้าต่ำกว่า 32.1% แสดงว่ามี 60/40 campaign หรือ direct sales เช่น Metro, TU)
-  const gpRate = totalSales > 0 ? (platFeeFromOrders / totalSales) * 100 : 0
+  // GP rate = platform commission / gross sales
+  const gpRate = grossSales > 0 ? (platCommission / grossSales) * 100 : 0
 
   return { totalSales, grossSales, menuDiscount, totalPlatFee, platFeeRate,
            marketingFee, marketingFeePct, gpRate,
@@ -439,33 +467,22 @@ async function getAIInsights(today, lastWeek, weekly, memory = [], trend = [], b
   // (A) memory context
   const memoryBlock = buildMemoryContext(memory, 'daily')
 
-  const prompt = `คุณคือ CMO+CFO ส่วนตัวของร้าน Cocoa House (เครื่องดื่ม/เบเกอรี่ delivery)
-หน้าที่: วิเคราะห์วันนี้ วางแผนการตลาด และแนะนำเพื่อเพิ่ม Profit ให้ร้านอย่างเป็นรูปธรรม${memoryBlock}
-═══ ข้อมูลวันนี้ ═══
-ยอดขาย       ฿${fmt(today.totalSales)}  (${vsDay})
-Net Profit    ${fmtPct(today.netProfitPct)}  [เป้า >20%]  ${trendNote}
-Mat Cost      ${fmtPct(matCostPct)}  [เป้า ≤30%]
-Marketing Fee ${fmtPct(today.marketingFeePct)}  [เป้า ≤20%]
-GP Rate       ${fmtPct(today.gpRate)}  [ปกติ 32.1%]
-Platform Mix:
-${platLines || 'ไม่มีข้อมูล'}
-Top Menu + Margin:
-${menuMarginLines || 'ไม่มีข้อมูล'}
-${checkProfit} Net Profit  ${checkMat} Mat Cost  ${checkMarketing} Marketing Fee
-${today.gpRate < 30 ? '⚠️ GP Rate ต่ำ — ตรวจ 60/40 หรือ direct sales' : '✅ GP Rate ปกติ'}
-${trendLines ? `\n═══ Trend 4 สัปดาห์ ═══\n${trendLines}` : ''}
-${baselineNote ? `\n═══ เทียบ Day-of-Week ═══\n${baselineNote}` : ''}
-═══ วิเคราะห์ 4 ข้อ ═══
-ข้อ 1 — ภาพรวมวันนี้: ผ่านเกณฑ์ไหม และ trend 4 สัปดาห์บอกอะไร
-ข้อ 2 — Root cause: หาต้นตอหลัก 1 อย่างจากความสัมพันธ์ของตัวเลข (อย่าพูดแค่อาการ)
-ข้อ 3 — Action 48 ชม.: แนะนำ 1 action ที่ทำได้จริงทันที เช่น ขึ้นราคาเมนูใด/ลด campaign platform ใด/เพิ่ม push เมนูไหน พร้อมระบุตัวเลขที่คาดหวัง
-ข้อ 4 — Campaign/Pricing: ถ้ามี 🏷 ประเมินว่าคุ้มไหม ถ้าไม่มี แนะนำ 1 ไอเดียเพิ่ม Profit เช่น ปรับราคาเมนู margin สูง หรือ bundle ที่เพิ่ม AOV
+  const prompt = `คุณคือ Mirai — AI วิเคราะห์ธุรกิจของ Cocoa House${memoryBlock}
+ข้อมูล ${dateStr}: ยอดขาย ฿${fmt(today.totalSales)} (${vsDay}) | Net Profit ${fmtPct(today.netProfitPct)} ${checkProfit} | Mat Cost ${fmtPct(matCostPct)} ${checkMat} | Marketing ${fmtPct(today.marketingFeePct)} ${checkMarketing} | GP Rate ${fmtPct(today.gpRate)}
+Platform: ${Object.entries(today.platSales ?? {}).sort((a,b)=>b[1]-a[1]).map(([p,s])=>`${p} ฿${fmt(s)}`).join(' | ')}
+Top Menu: ${today.top3.map(m=>`${m.name} ×${m.qty} margin ${m.margin.toFixed(0)}%${m.discPct>0?' 🏷-'+m.discPct+'%':''}`).join(' | ')}
+${baselineNote}${trendLines ? `Trend: ${trend.map(w=>`${w.label} ฿${fmt(w.sales)}`).join(' → ')}` : ''}${trendNote ? ` | ${trendNote}` : ''}
 
-กฎ: ภาษาไทย ตรงๆ ระบุตัวเลขจริง แต่ละข้อขึ้นต้น "• " ขึ้นบรรทัดใหม่ ห้ามพูดกว้างๆ`
+สรุป 3 ข้อ — สั้น กระชับ มี impact:
+• ข้อ 1 สถานะ: ผ่าน/ไม่ผ่านเป้า + Root Cause หลัก 1 อย่าง (ระบุตัวเลข)
+• ข้อ 2 Action 48 ชม.: 1 action ทำได้เลย ระบุเมนู/platform + ตัวเลขที่คาดหวัง
+• ข้อ 3 Insight: pricing/bundle/campaign ที่เพิ่ม Profit ได้สุด พร้อมเหตุผล
+
+กฎ: ภาษาไทย กระชับ ตัวเลขจริงทุกข้อ ห้ามพูดกว้างๆ แต่ละข้อ ≤ 2 บรรทัด`
 
   const ai  = new Anthropic({ apiKey })
   const msg = await ai.messages.create({
-    model: 'claude-sonnet-4-6', max_tokens: 600,
+    model: 'claude-sonnet-4-6', max_tokens: 400,
     messages: [{ role: 'user', content: prompt }],
   })
   return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้ในขณะนี้'
