@@ -27,10 +27,18 @@ function isAuthorized(req) {
 // → marketing_fee = values[len-6]  (if column present)
 // → campaign      = values[len-7]  (if both optional columns present)
 
-function parseGrabReport(text) {
-  // 1. Extract ISO date (appears in ADS description: "คำค้นหาอัตโนมัติ - 2026-06-28")
+function dateFromFilename(filename) {
+  // filename: "3-C62HVAWZGUNWVN-20260524.pdf" → "2026-05-24"
+  const m = filename && filename.match(/(\d{8})(?:\.\w+)?$/)
+  if (!m) return null
+  const s = m[1]
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
+}
+
+function parseGrabReport(text, filename) {
+  // 1. Extract ISO date — prefer ADS section ("2026-05-24"), fallback to filename
   const dateMatch = text.match(/(\d{4}-\d{2}-\d{2})/)
-  const date = dateMatch?.[1] ?? null
+  const date = dateMatch?.[1] ?? dateFromFilename(filename) ?? null
 
   // 2. Detect optional columns from Thai column headers
   const hasExtraCommission = /ค.{0,3}าคอมมิชช.{0,3}ันเพ.{0,3}ิ่มเติม/.test(text)
@@ -134,13 +142,13 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
   if (!isAuthorized(req))    return res.status(401).json({ error: 'unauthorized' })
 
-  const { pdfBase64, saveToDb = false } = req.body ?? {}
+  const { pdfBase64, saveToDb = false, filename } = req.body ?? {}
   if (!pdfBase64) return res.status(400).json({ error: 'missing pdfBase64' })
 
   try {
     const buffer        = Buffer.from(pdfBase64, 'base64')
     const { text }      = await pdfParse(buffer)
-    const parsed        = parseGrabReport(text)
+    const parsed        = parseGrabReport(text, filename)
 
     if (saveToDb && parsed.date) {
       const action = await saveCosts(
