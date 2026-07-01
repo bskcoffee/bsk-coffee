@@ -380,37 +380,32 @@ async function fetchMetrics(dateStr) {
                   + Number(pc.delivery_discount ?? 0) + Number(pc.advertisement ?? 0)
   }
 
-  const grossSales    = Math.max(0, totalSales - menuDiscount)
-  const discountRatio = totalSales > 0 ? grossSales / totalSales : 1
+  const grossSales = Math.max(0, totalSales - menuDiscount)
 
-  // GP Cost = Σ per platform: (grossNormalSales × feePct% + grossCampaignSales × 5%)
-  // ตรงกับ Dashboard's totalGpCost (ใช้ feePct จาก settings ไม่ใช่ unit_gp_cost)
+  // GP Cost — คำนวณบนยอดขายเต็ม (ไม่ใช้ discountRatio)
   const gpCost = Object.keys(platSales).reduce((sum, plat) => {
     const feePct        = platFees[plat] ?? 0
-    const normalSales   = (platNormalSales[plat]   ?? 0) * discountRatio
-    const campaignSales = (platCampaignSales[plat] ?? 0) * discountRatio
+    const normalSales   = platNormalSales[plat]   ?? 0
+    const campaignSales = platCampaignSales[plat] ?? 0
     return sum + normalSales * feePct / 100 + campaignSales * CAMPAIGN_GP_PCT / 100
   }, 0)
 
-  // matCost — ไม่ scale ด้วย discountRatio (ตรงกับ Dashboard: totalMatCost = Σ qty × materialCost)
-  const matCost    = totalMatCostRaw
-  // laborCost — ใช้ totalSales (ตรงกับ Dashboard: totalLaborCost = totalSales × laborPct)
-  const laborCost  = totalSales * (cs.labor_pct ?? 0) / 100
+  // Platform cost = GP + ทุกค่าใน platform_costs
+  const platformCost = gpCost + menuDiscount + extraCosts
 
-  // Net Profit = Dashboard's newNetProfit formula:
-  // totalSales - totalGpCost(feePct) - totalMatCost - totalLaborCost - menuDiscount - extraCosts
-  // = grossSales - gpCost - matCost - laborCost - extraCosts
-  const netProfit    = grossSales - gpCost - matCost - laborCost - extraCosts
-  // pct ใช้ totalSales ตรงกับ Dashboard's newNetProfitPct
-  const netProfitPct = totalSales > 0 ? (netProfit    / totalSales) * 100 : 0
-  const matCostPct   = totalSales > 0 ? (matCost      / totalSales) * 100 : 0
-  const gpRate       = grossSales > 0 ? (gpCost        / grossSales) * 100 : 0
+  const matCost   = totalMatCostRaw
+  const laborCost = totalSales * (cs.labor_pct ?? 0) / 100
 
-  const totalPlatFee   = gpCost + extraCosts
-  const platFeeRate    = grossSales > 0 ? (totalPlatFee / grossSales) * 100 : 0
+  // Net Profit = ยอดขายรวม - Platform cost - Mat cost - Labor cost
+  const netProfit    = totalSales - platformCost - matCost - laborCost
+  const netProfitPct = totalSales > 0 ? (netProfit / totalSales) * 100 : 0
+  const matCostPct   = totalSales > 0 ? (matCost   / totalSales) * 100 : 0
+  const gpRate       = totalSales > 0 ? (gpCost    / totalSales) * 100 : 0
+
+  const totalPlatFee   = platformCost
+  const platFeeRate    = totalSales > 0 ? (platformCost / totalSales) * 100 : 0
   const marketingFee    = menuDiscount + extraCosts
-  const marketingFeePct = grossSales > 0 ? (marketingFee / grossSales) * 100 : 0
-
+  const marketingFeePct = totalSales > 0 ? (marketingFee / totalSales) * 100 : 0
   // Per-menu margin = (sales - platFee - matCost - laborCost - marketingCost) / sales
   // Matches MenuCostPage calc (all-in margin including labor + marketing %)
   for (const m of Object.values(menuAgg)) {
