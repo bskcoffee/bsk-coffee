@@ -299,7 +299,7 @@ async function fetchMetrics(dateStr) {
   const [orders, platCosts, costRows, menuOriginal, platFees, costSchemaRow] = await Promise.all([
     sb('orders', `?date=eq.${dateStr}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,is_campaign,menu_id,item_options,menus(name,category))`),
     sb('platform_costs', `?date=eq.${dateStr}&select=*`),
-    sb('cost_settings', `?effective_from=lte.${dateStr}&select=key,value,effective_from&order=effective_from.desc`),
+    sb('cost_settings', `?effective_from=lte.${thaiDateStr()}&or=(effective_to.is.null,effective_to.gt.${thaiDateStr()})&select=key,value,effective_from&order=effective_from.desc`),
     fetchMenuOriginalPrices(),
     fetchPlatFees(),
     sb('settings', `?key=eq.cost_schema&select=value`).catch(() => []),
