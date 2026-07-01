@@ -327,19 +327,25 @@ async function fetchMetrics(dateStr) {
   const grossSales     = Math.max(0, totalSales - menuDiscount)
   const discountRatio  = totalSales > 0 ? grossSales / totalSales : 1
   // Platform commission and material cost adjusted for discount ratio
-  const platCommission = totalPlatFeeRaw  * discountRatio
-  const matCost        = totalMatCostRaw  * discountRatio
+  const platCommission = totalPlatFeeRaw * discountRatio
+  const matCost        = totalMatCostRaw * discountRatio
   const laborCost      = grossSales * (cs.labor_pct ?? 0) / 100
   const totalPlatFee   = platCommission + extraCosts
   const platFeeRate    = grossSales > 0 ? (totalPlatFee / grossSales) * 100 : 0
-  // Net Profit = Gross Sales − GP Commission − Mat Cost − Labor − Extra Costs
-  // matches Dashboard: grossSales - totalGpCost - totalMatCost - totalLaborCost - extraCosts
-  const netProfit    = grossSales - platCommission - matCost - laborCost - extraCosts
+  // Net Profit = ตรงกับ Dashboard 5-Layer (ไม่หัก matCost/laborCost — แสดงแยก)
+  // Dashboard: grossSales - gpCostAdjusted - extraCosts
+  const netProfit    = grossSales - platCommission - extraCosts
   const netProfitPct = grossSales > 0 ? (netProfit / grossSales) * 100 : 0
+  const matCostPct   = grossSales > 0 ? (matCost   / grossSales) * 100 : 0
 
-  // Per-menu margin = (sales - platFee - matCost) / sales  (real margin after plat fee + ingredients)
+  // Per-menu margin = (sales - platFee - matCost) / sales
+  // ถ้า matCost = 0 (ไม่มีข้อมูล menu_costs) ให้ใช้แค่ platFee
   for (const m of Object.values(menuAgg)) {
-    m.margin = m.sales > 0 ? ((m.sales - m.platFee - m.matCost) / m.sales) * 100 : 0
+    const hasMat = m.matCost > 0
+    m.margin = m.sales > 0
+      ? ((m.sales - m.platFee - (hasMat ? m.matCost : 0)) / m.sales) * 100
+      : 0
+    m.hasMat = hasMat
   }
   const top3 = Object.values(menuAgg).sort((a, b) => b.qty - a.qty).slice(0, 3)
 
@@ -350,8 +356,8 @@ async function fetchMetrics(dateStr) {
 
   return { totalSales, grossSales, menuDiscount, totalPlatFee, platFeeRate,
            marketingFee, marketingFeePct, gpRate,
-           matCost, laborCost, netProfit, netProfitPct, orderCount: orders.length,
-           top3, catQty, platSales }
+           matCost, matCostPct, laborCost, netProfit, netProfitPct,
+           orderCount: orders.length, top3, catQty, platSales }
 }
 
 // ─── Fetch monthly total ──────────────────────────────────────────────────────
