@@ -301,7 +301,7 @@ async function fetchMetrics(dateStr) {
   const totalPlatFee  = platFeeFromOrders + extraCosts
   const platFeeRate   = grossSales > 0 ? (totalPlatFee / grossSales) * 100 : 0
   const laborCost     = grossSales * (cs.labor_pct ?? 0) / 100
-  const matCost       = Math.max(0, gpCostAdj - laborCost - platFeeFromOrders)
+  const matCost       = gpCostAdj   // gpCostAdj = Σ(qty × unit_gp_cost) × discountRatio = material cost
   const netProfit     = grossSales - gpCostAdj - extraCosts
   const netProfitPct  = grossSales > 0 ? (netProfit / grossSales) * 100 : 0
   // เพิ่ม margin% ต่อเมนู
