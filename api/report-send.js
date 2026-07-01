@@ -257,41 +257,60 @@ async function fetchMenuOriginalPrices() {
   return map
 }
 
-// ─── Material cost helper (mirrors calcMenuCostBreakdown price=0, feePct=0) ────
-function calcSimpleMaterialCost(mc, cs) {
+// ─── Material cost — mirrors calcMenuCostBreakdown(price=0, feePct=0, costSchema) ─
+// Supports dynamic cost_schema (same as Dashboard) to avoid matCost discrepancy
+function calcMatCost(mc, cs, costSchema = null) {
   if (!mc || !cs) return 0
   const ingredient = (Number(mc.main_ingredient) || 0)
                    + (Number(mc.milk_condensed)  || 0)
                    + (Number(mc.milk_mixed)       || 0)
                    + (Number(mc.milk_fresh)       || 0)
   const pkgType = mc.packaging_type || 'beverage'
-  let packaging = 0
-  if (pkgType === 'beverage') {
-    packaging = (cs.packaging_bev_cup     || 0) + (cs.packaging_bev_sticker || 0)
-              + (cs.packaging_bev_straw   || 0) + (cs.packaging_bev_seal    || 0)
-              + (cs.packaging_bev_bag     || 0)
-  } else if (pkgType === 'bun') {
-    packaging = (cs.packaging_bun_box     || 0) + (cs.packaging_bun_sticker || 0)
-              + (cs.packaging_bun_bag     || 0)
+  // Build pkg/shared keys from schema (identical to buildDynamicLookups in calculations.js)
+  let pkgKeys, sharedKeys
+  if (costSchema?.sections) {
+    pkgKeys   = { none: [] }
+    sharedKeys = []
+    for (const sec of costSchema.sections) {
+      if (sec.pkg_type === 'shared') {
+        for (const item of sec.items ?? []) sharedKeys.push(item.key)
+      } else if (sec.pkg_type) {
+        pkgKeys[sec.pkg_type] = (sec.items ?? []).map(i => i.key)
+      }
+    }
+    if (!pkgKeys.beverage) pkgKeys.beverage = ['packaging_bev_cup','packaging_bev_sticker','packaging_bev_straw','packaging_bev_seal','packaging_bev_bag']
+    if (!pkgKeys.bun)      pkgKeys.bun      = ['packaging_bun_box','packaging_bun_sticker','packaging_bun_bag']
+  } else {
+    pkgKeys   = {
+      beverage: ['packaging_bev_cup','packaging_bev_sticker','packaging_bev_straw','packaging_bev_seal','packaging_bev_bag'],
+      bun:      ['packaging_bun_box','packaging_bun_sticker','packaging_bun_bag'],
+    }
+    sharedKeys = ['consumables', 'operation_cost']
   }
-  const shared = (cs.consumables || 0) + (cs.operation_cost || 0)
-  const custom = Array.isArray(mc.custom_costs)
+  const packaging = (pkgKeys[pkgType] || []).reduce((s, k) => s + (Number(cs[k]) || 0), 0)
+  const shared    = sharedKeys.reduce((s, k) => s + (Number(cs[k]) || 0), 0)
+  const custom    = Array.isArray(mc.custom_costs)
     ? mc.custom_costs.reduce((s, c) => s + (Number(c.amount) || 0), 0)
     : 0
   return ingredient + packaging + shared + custom
 }
 
 async function fetchMetrics(dateStr) {
-  const [orders, platCosts, costRows, menuOriginal, platFees] = await Promise.all([
-    sb('orders', `?date=eq.${dateStr}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,is_campaign,menu_id,menus(name,category))`),
+  const [orders, platCosts, costRows, menuOriginal, platFees, costSchemaRow] = await Promise.all([
+    sb('orders', `?date=eq.${dateStr}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,is_campaign,menu_id,item_options,menus(name,category))`),
     sb('platform_costs', `?date=eq.${dateStr}&select=*`),
     sb('cost_settings', `?effective_from=lte.${dateStr}&select=key,value,effective_from&order=effective_from.desc`),
     fetchMenuOriginalPrices(),
     fetchPlatFees(),
+    sb('settings', `?key=eq.cost_schema&select=value`).catch(() => []),
   ])
 
   const cs = {}
   for (const row of costRows) if (!(row.key in cs)) cs[row.key] = Number(row.value)
+
+  // Parse dynamic cost schema (same as Dashboard — ensures matCost matches exactly)
+  let costSchema = null
+  try { costSchema = costSchemaRow[0]?.value ? JSON.parse(costSchemaRow[0].value) : null } catch {}
 
   // Fetch menu_costs for material cost calculation (same as Dashboard)
   const menuIds = [...new Set(orders.flatMap(o => (o.order_items ?? []).map(i => i.menu_id)).filter(Boolean))]
@@ -316,7 +335,7 @@ async function fetchMetrics(dateStr) {
       // Use feePct from settings for per-menu margin (matches MenuCostPage calc)
       const feePctForItem  = isCampaign ? CAMPAIGN_GP_PCT : (platFees[plat] ?? 0)
       const platFeeUnit    = price * feePctForItem / 100
-      const matUnit        = calcSimpleMaterialCost(menuCostMap[item.menu_id], cs)
+      const matUnit        = calcMatCost(menuCostMap[item.menu_id], cs, costSchema)
       const laborUnit      = price * (cs.labor_pct     ?? 0) / 100
       const marketingUnit  = price * (cs.marketing_pct ?? 0) / 100
       const itemSales  = qty * price
@@ -341,10 +360,16 @@ async function fetchMetrics(dateStr) {
       menuAgg[mId].matCost      += qty * matUnit
       menuAgg[mId].laborCost    += qty * laborUnit
       menuAgg[mId].marketingCost += qty * marketingUnit
+      // Category — matches Dashboard logic exactly
       if (BEV_CATS.includes(cat))  catQty.beverage += qty
       else if (cat === 'Bun')      catQty.bread    += qty
-      else if (cat === 'Refill')   catQty.refill   += qty
-      else if (cat === 'Addon')    catQty.addon    += qty
+      // Refill: from item_options (same as Dashboard)
+      const refill = item.item_options?.refill
+      if (Array.isArray(refill)) catQty.refill += refill.reduce((s, r) => s + (r.qty ?? 1), 0)
+      else if (refill)           catQty.refill += refill.qty ?? 1
+      // Add-on: paid milk add-on (same as Dashboard — NOT category='Addon')
+      const milk = item.item_options?.milk
+      if (milk && (milk.price ?? 0) > 0) catQty.addon += qty
     }
   }
 
@@ -562,8 +587,11 @@ function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText) {
     ],
   })
 
-  const aiLines = aiText.split('\n').filter(l => l.trim()).map(line => ({
-    type: 'text', text: line.trim(), size: 'sm', color: '#374151', wrap: true, margin: 'xs',
+  // Each AI bullet = box with left-accent for visual separation
+  const aiLines = aiText.split('\n').filter(l => l.trim()).map((line, i) => ({
+    type: 'box', layout: 'vertical', margin: i === 0 ? 'sm' : 'md',
+    paddingAll: '8px', backgroundColor: '#FAFAF9', cornerRadius: '6px',
+    contents: [{ type: 'text', text: line.trim(), size: 'sm', color: '#374151', wrap: true }],
   }))
 
   const top3Items = today.top3.length > 0
