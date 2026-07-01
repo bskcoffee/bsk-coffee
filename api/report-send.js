@@ -302,7 +302,9 @@ async function fetchMetrics(dateStr) {
   const platFeeRate   = grossSales > 0 ? (totalPlatFee / grossSales) * 100 : 0
   const laborCost     = grossSales * (cs.labor_pct ?? 0) / 100
   const matCost       = gpCostAdj   // gpCostAdj = Σ(qty × unit_gp_cost) × discountRatio = material cost
-  const netProfit     = grossSales - gpCostAdj - extraCosts
+  // Net Profit = Gross Sales − Mat Cost − GP Commission − Labor − Platform Extra Costs
+  // (matches Dashboard: 965 - 277 - 210 - 48 - 69 = 361)
+  const netProfit     = grossSales - gpCostAdj - platFeeFromOrders - laborCost - extraCosts
   const netProfitPct  = grossSales > 0 ? (netProfit / grossSales) * 100 : 0
   // เพิ่ม margin% ต่อเมนู
   for (const m of Object.values(menuAgg)) {

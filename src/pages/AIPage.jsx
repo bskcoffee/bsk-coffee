@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import {
   Brain, CheckCircle, SkipForward, TrendingUp, TrendingDown,
   Minus, ChevronDown, ChevronUp, RefreshCw, Store, AlertCircle,
-  RotateCcw, CalendarOff,
+  RotateCcw, CalendarOff, Send,
 } from 'lucide-react'
 
 const TYPE_LABELS = { daily: 'รายวัน', weekly: 'รายสัปดาห์', monthly: 'รายเดือน' }
@@ -392,12 +392,16 @@ export default function AIPage() {
   const [loading, setLoading]       = useState(true)
   const [filter, setFilter]         = useState('all')
   const [stats, setStats]           = useState({ done: 0, skipped: 0, pending: 0 })
-  const [closeDayTarget, setCloseDayTarget]       = useState(null)  // date string → from card
-  const [showRetroModal, setShowRetroModal]       = useState(false) // null date → date picker
+  const [closeDayTarget, setCloseDayTarget]       = useState(null)
+  const [showRetroModal, setShowRetroModal]       = useState(false)
   const [todayClosed, setTodayClosed]             = useState(false)
   const [todayClosedSaving, setTodayClosedSaving] = useState(false)
+  const [sending, setSending]                     = useState(false)
+  const [sendResult, setSendResult]               = useState(null)  // { ok, msg }
 
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })
+  const today     = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })
+  const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })
+  const [sendDate, setSendDate] = useState(yesterday)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -464,9 +468,27 @@ export default function AIPage() {
     setTodayClosedSaving(false)
   }
 
+  async function handleSendReport() {
+    setSending(true)
+    setSendResult(null)
+    try {
+      const res = await fetch('/api/report-send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: sendDate }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'error')
+      setSendResult({ ok: true, msg: `ส่งแล้ว — ${sendDate} ยอด ฿${json.totalSales?.toLocaleString('th-TH') ?? '—'}` })
+      await load()
+    } catch (e) {
+      setSendResult({ ok: false, msg: e.message })
+    }
+    setSending(false)
+  }
+
   function handleCloseDayConfirm(date) {
     setCloseDayTarget(null)
-    // refresh to show the closed card
     load()
   }
 
@@ -506,6 +528,41 @@ export default function AIPage() {
                 <RefreshCw size={16} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
               </button>
             </div>
+          </div>
+
+          {/* Send Report panel */}
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+              <Send size={15} className="text-purple-500" aria-hidden="true" />
+              ส่ง AI Report ทาง LINE
+            </div>
+            <div className="flex gap-2 items-center">
+              <input
+                type="date"
+                value={sendDate}
+                max={today}
+                onChange={e => { setSendDate(e.target.value); setSendResult(null) }}
+                className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                aria-label="เลือกวันที่สำหรับ report"
+              />
+              <button
+                onClick={handleSendReport}
+                disabled={sending || !sendDate}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
+                aria-label="ส่ง report ไป LINE"
+              >
+                {sending
+                  ? <><RefreshCw size={14} className="animate-spin" aria-hidden="true" /> กำลังส่ง…</>
+                  : <><Send size={14} aria-hidden="true" /> ส่ง Report</>
+                }
+              </button>
+            </div>
+            {sendResult && (
+              <div className={`text-xs px-3 py-2 rounded-xl ${sendResult.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}
+                role="status">
+                {sendResult.ok ? '✅ ' : '❌ '}{sendResult.msg}
+              </div>
+            )}
           </div>
 
           {/* Today closed banner */}
