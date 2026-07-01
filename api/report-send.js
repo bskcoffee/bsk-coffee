@@ -392,15 +392,18 @@ async function fetchMetrics(dateStr) {
     return sum + normalSales * feePct / 100 + campaignSales * CAMPAIGN_GP_PCT / 100
   }, 0)
 
-  const matCost    = totalMatCostRaw * discountRatio
-  const laborCost  = grossSales * (cs.labor_pct ?? 0) / 100
+  // matCost — ไม่ scale ด้วย discountRatio (ตรงกับ Dashboard: totalMatCost = Σ qty × materialCost)
+  const matCost    = totalMatCostRaw
+  // laborCost — ใช้ totalSales (ตรงกับ Dashboard: totalLaborCost = totalSales × laborPct)
+  const laborCost  = totalSales * (cs.labor_pct ?? 0) / 100
 
   // Net Profit = Dashboard's newNetProfit formula:
   // totalSales - totalGpCost(feePct) - totalMatCost - totalLaborCost - menuDiscount - extraCosts
   // = grossSales - gpCost - matCost - laborCost - extraCosts
   const netProfit    = grossSales - gpCost - matCost - laborCost - extraCosts
-  const netProfitPct = grossSales > 0 ? (netProfit    / grossSales) * 100 : 0
-  const matCostPct   = grossSales > 0 ? (matCost      / grossSales) * 100 : 0
+  // pct ใช้ totalSales ตรงกับ Dashboard's newNetProfitPct
+  const netProfitPct = totalSales > 0 ? (netProfit    / totalSales) * 100 : 0
+  const matCostPct   = totalSales > 0 ? (matCost      / totalSales) * 100 : 0
   const gpRate       = grossSales > 0 ? (gpCost        / grossSales) * 100 : 0
 
   const totalPlatFee   = gpCost + extraCosts
