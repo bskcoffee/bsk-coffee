@@ -313,8 +313,12 @@ async function fetchMetrics(dateStr) {
       const qty        = Number(item.quantity ?? 0)
       const price      = Number(item.unit_price ?? 0)
       const isCampaign = item.is_campaign === true
-      const platFeeUnit = Number(item.unit_gp_cost ?? 0)  // for per-menu margin display
-      const matUnit    = calcSimpleMaterialCost(menuCostMap[item.menu_id], cs)
+      // Use feePct from settings for per-menu margin (matches MenuCostPage calc)
+      const feePctForItem  = isCampaign ? CAMPAIGN_GP_PCT : (platFees[plat] ?? 0)
+      const platFeeUnit    = price * feePctForItem / 100
+      const matUnit        = calcSimpleMaterialCost(menuCostMap[item.menu_id], cs)
+      const laborUnit      = price * (cs.labor_pct     ?? 0) / 100
+      const marketingUnit  = price * (cs.marketing_pct ?? 0) / 100
       const itemSales  = qty * price
       totalSales       += itemSales
       totalMatCostRaw  += qty * matUnit
@@ -329,12 +333,14 @@ async function fetchMetrics(dateStr) {
         const discPct   = origPrice > 0 && price < origPrice
           ? Math.round((origPrice - price) / origPrice * 100) : 0
         menuAgg[mId] = { name: item.menus?.name || mId, qty: 0, sales: 0,
-                         platFee: 0, matCost: 0, origPrice, discPct }
+                         platFee: 0, matCost: 0, laborCost: 0, marketingCost: 0, origPrice, discPct }
       }
-      menuAgg[mId].qty     += qty
-      menuAgg[mId].sales   += itemSales
-      menuAgg[mId].platFee += qty * platFeeUnit
-      menuAgg[mId].matCost += qty * matUnit
+      menuAgg[mId].qty          += qty
+      menuAgg[mId].sales        += itemSales
+      menuAgg[mId].platFee      += qty * platFeeUnit
+      menuAgg[mId].matCost      += qty * matUnit
+      menuAgg[mId].laborCost    += qty * laborUnit
+      menuAgg[mId].marketingCost += qty * marketingUnit
       if (BEV_CATS.includes(cat))  catQty.beverage += qty
       else if (cat === 'Bun')      catQty.bread    += qty
       else if (cat === 'Refill')   catQty.refill   += qty
@@ -377,13 +383,13 @@ async function fetchMetrics(dateStr) {
   const marketingFee    = menuDiscount + extraCosts
   const marketingFeePct = grossSales > 0 ? (marketingFee / grossSales) * 100 : 0
 
-  // Per-menu margin = (sales - platFee - matCost) / sales
+  // Per-menu margin = (sales - platFee - matCost - laborCost - marketingCost) / sales
+  // Matches MenuCostPage calc (all-in margin including labor + marketing %)
   for (const m of Object.values(menuAgg)) {
-    const hasMat = m.matCost > 0
     m.margin = m.sales > 0
-      ? ((m.sales - m.platFee - (hasMat ? m.matCost : 0)) / m.sales) * 100
+      ? ((m.sales - m.platFee - m.matCost - m.laborCost - m.marketingCost) / m.sales) * 100
       : 0
-    m.hasMat = hasMat
+    m.hasMat = m.matCost > 0
   }
   const top3 = Object.values(menuAgg).sort((a, b) => b.qty - a.qty).slice(0, 3)
 
@@ -467,7 +473,7 @@ async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], tren
     : 'ไม่มีข้อมูลเปรียบเทียบ'
 
   const menuMarginLines = today.top3.map(m => {
-    const tag      = m.margin >= 35 ? '✅ Push ได้' : m.margin >= 25 ? '🟡 ระวัง discount' : '🔴 ตรวจต้นทุน'
+    const tag      = m.margin >= 20 ? '✅ Push ได้' : m.margin >= 10 ? '🟡 ระวัง discount' : '🔴 ตรวจต้นทุน'
     const discNote = m.discPct > 0
       ? ` | 🏷 ลด ${m.discPct}% จากราคาปกติ ฿${fmt(m.origPrice)}`
       : ''
@@ -485,7 +491,7 @@ async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], tren
     }).join('\n')
 
   const matCostPct     = today.grossSales > 0 ? (today.matCost / today.grossSales * 100) : 0
-  const checkProfit    = today.netProfitPct >= 20 ? '✅' : today.netProfitPct >= 15 ? '🟡' : '🔴'
+  const checkProfit    = today.netProfitPct >= 15 ? '✅' : today.netProfitPct >= 10 ? '🟡' : '🔴'
   const checkMat       = matCostPct <= 30 ? '✅' : matCostPct <= 35 ? '🟡' : '🔴'
   const checkMarketing = today.marketingFeePct <= 20 ? '✅' : today.marketingFeePct <= 25 ? '🟡' : '🔴'
   const profitDelta    = lastWeek ? (today.netProfitPct - lastWeek.netProfitPct).toFixed(1) : null
@@ -690,7 +696,7 @@ function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText) {
           { type: 'separator', margin: 'md' },
           { type: 'text', text: '📈 Margin เมนูขายดี', weight: 'bold', size: 'sm', color: '#374151', margin: 'md' },
           ...today.top3.map(m => {
-            const isHigh = m.margin >= 35, isLow = m.margin < 25
+            const isHigh = m.margin >= 20, isLow = m.margin < 10
             const bg     = isHigh ? '#F0FDF4' : isLow ? '#FEF2F2' : '#FFFBEB'
             const badge  = isHigh ? { text: 'Push!', bg: '#DCFCE7', color: '#166534' }
                          : isLow  ? { text: 'ตรวจต้นทุน', bg: '#FEE2E2', color: '#991B1B' }
@@ -845,7 +851,7 @@ async function getWeeklyAIInsights(weekData, monday, sunday, memory = []) {
     .map(m => {
       const last = Object.values(weekData.lastAgg).find(x => x.name === m.name)
       const vs   = last ? ` (${((m.qty - last.qty) / (last.qty || 1) * 100).toFixed(0)}% vs สัปดาห์ก่อน)` : ''
-      const tag  = m.margin >= 35 ? '✅ Push' : m.margin < 25 ? '🔴 ตรวจต้นทุน' : '🟡 ระวัง'
+      const tag  = m.margin >= 20 ? '✅ Push' : m.margin < 10 ? '🔴 ตรวจต้นทุน' : '🟡 ระวัง'
       return `  • ${m.name}: ×${m.qty}${vs} | Margin ${m.margin.toFixed(1)}% ${tag}`
     }).join('\n')
   const memoryBlock = buildMemoryContext(memory, 'weekly')
@@ -877,7 +883,7 @@ async function getMonthlyAIInsights(monthData, memory = []) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return '• (AI ไม่พร้อมใช้งาน)'
   const top5Lines = monthData.top5.map(m => {
-    const tag = m.margin >= 35 ? '✅ Push' : m.margin < 25 ? '🔴 ตรวจต้นทุน' : '🟡 ระวัง'
+    const tag = m.margin >= 20 ? '✅ Push' : m.margin < 10 ? '🔴 ตรวจต้นทุน' : '🟡 ระวัง'
     return `  • ${m.name}: ×${m.qty} | Margin ${m.margin.toFixed(1)}% ${tag}`
   }).join('\n')
   const platLines = Object.entries(monthData.thisByPlatform)
@@ -1115,7 +1121,7 @@ function buildMonthlyFlexMessage(monthData, aiText) {
           { type: 'separator', margin: 'md' },
           { type: 'text', text: '🏆 Top 5 เมนูประจำเดือน', weight: 'bold', size: 'sm', color: '#374151', margin: 'md' },
           ...monthData.top5.map((m, i) => {
-            const isHigh = m.margin >= 35, isLow = m.margin < 25
+            const isHigh = m.margin >= 20, isLow = m.margin < 10
             return {
               type: 'box', layout: 'horizontal', margin: 'sm',
               contents: [
