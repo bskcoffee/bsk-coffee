@@ -419,7 +419,7 @@ async function fetch4WeekTrend(todayStr) {
 }
 
 // ─── AI analysis ─────────────────────────────────────────────────────────────
-async function getAIInsights(today, lastWeek, weekly, memory = [], trend = [], baseline = null) {
+async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], trend = [], baseline = null) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return '• (AI วิเคราะห์ไม่พร้อมใช้งาน — ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY)'
 
@@ -1151,7 +1151,7 @@ async function runReport(targetDate, isManual = false) {
   const outcomeText = buildOutcomeText(todayData, yesterdayMemory)
   if (outcomeText) await saveOutcome(yesterday, outcomeText)
 
-  const aiText = await getAIInsights(todayData, lastWeekData, weeklyData, memory, trend, baseline)
+  const aiText = await getAIInsights(targetDate, todayData, lastWeekData, weeklyData, memory, trend, baseline)
   const flex   = buildFlexMessage(targetDate, todayData, lastWeekData, weeklyData, monthlyData, aiText)
   await sendLine(flex)
   // บันทึก memory สำหรับวันนี้
