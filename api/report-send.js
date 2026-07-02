@@ -697,7 +697,7 @@ ${baselineNote ? baselineNote + '\n' : ''}${trendNote}${weekendBlock}
 
   const ai  = new Anthropic({ apiKey })
   const msg = await ai.messages.create({
-    model: 'claude-sonnet-4-6', max_tokens: isFriday && weekendData ? 520 : 400,
+    model: 'claude-sonnet-4-6', max_tokens: isFriday && weekendData ? 750 : 600,
     messages: [{ role: 'user', content: prompt }],
   })
   return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้ในขณะนี้'
