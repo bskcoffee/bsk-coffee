@@ -9,6 +9,7 @@ const LINE_TOKEN   = process.env.LINE_CHANNEL_ACCESS_TOKEN
 const LINE_USER    = process.env.LINE_ADMIN_USER_ID
 
 const CAMPAIGN_GP_PCT = 5  // Grab 60/40 campaign flat GP fee % (same as calculations.js)
+const MONTHLY_TARGET  = 50000  // เป้ายอดขายต่อเดือน (฿)
 
 // ─── Date helpers (Thailand UTC+7) ───────────────────────────────────────────
 function thaiDateStr(offsetDays = 0) {
@@ -341,8 +342,7 @@ async function fetchMetrics(dateStr) {
       const feePctForItem  = isCampaign ? CAMPAIGN_GP_PCT : (platFees[plat] ?? 0)
       const platFeeUnit    = price * feePctForItem / 100
       const matUnit        = calcMatCost(menuCostMap[item.menu_id], cs, costSchema)
-      const laborUnit      = price * (cs.labor_pct     ?? 0) / 100
-      const marketingUnit  = price * (cs.marketing_pct ?? 0) / 100
+      const laborUnit      = price * (cs.labor_pct ?? 0) / 100
       const itemSales  = qty * price
       totalSales       += itemSales
       totalMatCostRaw  += qty * matUnit
@@ -364,7 +364,6 @@ async function fetchMetrics(dateStr) {
       menuAgg[mId].platFee      += qty * platFeeUnit
       menuAgg[mId].matCost      += qty * matUnit
       menuAgg[mId].laborCost    += qty * laborUnit
-      menuAgg[mId].marketingCost += qty * marketingUnit
       // Category — matches Dashboard logic exactly
       if (BEV_CATS.includes(cat))  catQty.beverage += qty
       else if (cat === 'Bun')      catQty.bread    += qty
@@ -379,7 +378,13 @@ async function fetchMetrics(dateStr) {
   }
 
   let menuDiscount = 0, extraCosts = 0
+  const platMktCosts = {}  // per-platform actual marketing costs
   for (const pc of platCosts) {
+    const p = (pc.platform ?? 'OTHER').toUpperCase()
+    const mkt = Number(pc.menu_discount ?? 0) + Number(pc.campaign ?? 0)
+              + Number(pc.marketing_fee ?? 0) + Number(pc.delivery_discount ?? 0)
+              + Number(pc.advertisement ?? 0)
+    platMktCosts[p] = (platMktCosts[p] ?? 0) + mkt
     menuDiscount += Number(pc.menu_discount ?? 0)
     extraCosts   += Number(pc.campaign ?? 0) + Number(pc.marketing_fee ?? 0)
                   + Number(pc.delivery_discount ?? 0) + Number(pc.advertisement ?? 0)
@@ -411,18 +416,31 @@ async function fetchMetrics(dateStr) {
   const platFeeRate    = totalSales > 0 ? (platformCost / totalSales) * 100 : 0
   const marketingFee    = menuDiscount + extraCosts
   const marketingFeePct = totalSales > 0 ? (marketingFee / totalSales) * 100 : 0
-  // Per-menu margin = (sales - platFee - matCost - laborCost - marketingCost) / sales
-  // Matches MenuCostPage calc (all-in margin including labor + marketing %)
+  // Per-menu margin ใช้ actual marketing cost จาก platform_costs วันนั้นจริง
+  // = (sales - platFee - matCost - laborCost - sales × actualMktCostPct) / sales
+  const actualMktCostPct = totalSales > 0 ? (menuDiscount + extraCosts) / totalSales : 0
+  const overallMatPct    = totalSales > 0 ? totalMatCostRaw / totalSales : 0
+  const laborPct         = (cs.labor_pct ?? 0) / 100
+
+  // Per-platform margin (approximate — ใช้ overall matCost% + labor% เป็น baseline)
+  const platMarginPct = {}
+  for (const p of Object.keys(platSales)) {
+    const pSales = platSales[p] ?? 0
+    if (pSales === 0) continue
+    const pFeePct    = (platFees[p] ?? 0) / 100
+    const pMktCostPct = (platMktCosts[p] ?? 0) / pSales
+    platMarginPct[p] = (1 - pFeePct - overallMatPct - laborPct - pMktCostPct) * 100
+  }
   for (const m of Object.values(menuAgg)) {
     m.margin = m.sales > 0
-      ? ((m.sales - m.platFee - m.matCost - m.laborCost - m.marketingCost) / m.sales) * 100
+      ? ((m.sales - m.platFee - m.matCost - m.laborCost - m.sales * actualMktCostPct) / m.sales) * 100
       : 0
     m.hasMat = m.matCost > 0
   }
   const top3 = Object.values(menuAgg).sort((a, b) => b.qty - a.qty).slice(0, 3)
 
   return { totalSales, grossSales, menuDiscount, totalPlatFee, platFeeRate,
-           marketingFee, marketingFeePct, gpRate,
+           marketingFee, marketingFeePct, gpRate, platMarginPct, platMktCosts,
            matCost, matCostPct, laborCost, netProfit, netProfitPct,
            orderCount: orders.length, top3, catQty, platSales }
 }
@@ -537,8 +555,52 @@ async function fetch4WeekTrend(todayStr) {
   } catch { return [] }
 }
 
+// ─── Weekend pattern (for Friday report) ─────────────────────────────────────
+async function fetchWeekendPattern(fridayStr) {
+  try {
+    // ย้อนหลัง 4 เสาร์ + 4 อาทิตย์ (ศุกร์ - 6 = เสาร์ก่อน, - 5 = อาทิตย์ก่อน, ...)
+    const satDates = [-6, -13, -20, -27].map(d => offsetDate(fridayStr, d))
+    const sunDates = [-5, -12, -19, -26].map(d => offsetDate(fridayStr, d))
+    const allDates = [...satDates, ...sunDates]
+
+    const ordersByDate = await Promise.all(allDates.map(d =>
+      sb('orders', `?date=eq.${d}&status=eq.delivered&select=order_items(quantity,unit_price,menu_id,menus(name))`)
+        .catch(() => [])
+    ))
+
+    const calcSales = (orders) =>
+      orders.reduce((t, o) =>
+        t + (o.order_items ?? []).reduce((s, it) =>
+          s + Number(it.quantity ?? 0) * Number(it.unit_price ?? 0), 0), 0)
+
+    const satSales  = satDates.map((_, i) => calcSales(ordersByDate[i]))
+    const sunSales  = sunDates.map((_, i) => calcSales(ordersByDate[satDates.length + i]))
+    const validSat  = satSales.filter(s => s > 0)
+    const validSun  = sunSales.filter(s => s > 0)
+    const avgSat    = validSat.length > 0 ? Math.round(validSat.reduce((a, b) => a + b, 0) / validSat.length) : 0
+    const avgSun    = validSun.length > 0 ? Math.round(validSun.reduce((a, b) => a + b, 0) / validSun.length) : 0
+
+    // top menus บน weekend
+    const menuAgg = {}
+    for (const orders of ordersByDate)
+      for (const o of orders)
+        for (const it of o.order_items ?? []) {
+          const id = it.menu_id ?? 'x'
+          if (!menuAgg[id]) menuAgg[id] = { name: it.menus?.name || id, qty: 0, sales: 0 }
+          menuAgg[id].qty   += Number(it.quantity ?? 0)
+          menuAgg[id].sales += Number(it.quantity ?? 0) * Number(it.unit_price ?? 0)
+        }
+
+    const topMenus = Object.values(menuAgg).sort((a, b) => b.qty - a.qty).slice(0, 3)
+    return { avgSat, avgSun, satSamples: validSat.length, sunSamples: validSun.length, topMenus }
+  } catch (e) {
+    console.error('[fetchWeekendPattern]', e)
+    return null
+  }
+}
+
 // ─── AI analysis ─────────────────────────────────────────────────────────────
-async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], trend = [], baseline = null, dailyTarget = 0) {
+async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], trend = [], baseline = null, dailyTarget = 0, monthlyInfo = null, weekendData = null) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return '• (AI วิเคราะห์ไม่พร้อมใช้งาน — ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY)'
 
@@ -557,11 +619,17 @@ async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], tren
   const platLines = Object.entries(today.platSales ?? {})
     .sort((a, b) => b[1] - a[1])
     .map(([plat, sales]) => {
-      const lastSales = lastWeek?.platSales?.[plat]
-      const vsStr = lastSales > 0
+      const lastSales  = lastWeek?.platSales?.[plat]
+      const vsStr      = lastSales > 0
         ? ` (${((sales - lastSales) / lastSales * 100).toFixed(1)}% vs 7 วันก่อน)`
         : ''
-      return `  • ${plat}: ฿${fmt(sales)}${vsStr}`
+      const margin     = today.platMarginPct?.[plat]
+      const mktCost    = today.platMktCosts?.[plat] ?? 0
+      const mktPct     = sales > 0 ? (mktCost / sales * 100).toFixed(1) : '0.0'
+      const marginStr  = margin != null
+        ? ` | Margin ${margin.toFixed(1)}%${margin >= 20 ? ' ✅' : ' ⚠️ ต่ำ'} | MktCost ${mktPct}%`
+        : ''
+      return `  • ${plat}: ฿${fmt(sales)}${vsStr}${marginStr}`
     }).join('\n')
 
   const matCostPct     = today.grossSales > 0 ? (today.matCost / today.grossSales * 100) : 0
@@ -586,29 +654,57 @@ async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], tren
   // (A) memory context
   const memoryBlock = buildMemoryContext(memory, 'daily')
 
-  const prompt = `คุณคือ Mirai — AI วิเคราะห์ธุรกิจ Cocoa House${memoryBlock}
-${dateStr} | ยอด ฿${fmt(today.totalSales)} (${vsDay}) | เป้า ฿${fmt(dailyTarget)} ${today.totalSales >= dailyTarget ? "✅ ถึงเป้า" : "❌ ขาด ฿" + fmt(dailyTarget - today.totalSales)} | Profit ${fmtPct(today.netProfitPct)} ${checkProfit} | Mat ${fmtPct(matCostPct)} | Mkt ${fmtPct(today.marketingFeePct)}
-Platform: ${Object.entries(today.platSales ?? {}).sort((a,b)=>b[1]-a[1]).map(([p,s])=>`${p} ฿${fmt(s)}`).join(' | ')}
-Menu: ${today.top3.map(m=>`${m.name}×${m.qty} m${m.margin.toFixed(0)}%${m.discPct>0?' 🏷-'+m.discPct+'%':''}`).join(' | ')}
-${baselineNote ? baselineNote + '\n' : ''}${trendNote}
+  const targetStatus = dailyTarget > 0
+    ? (today.totalSales >= dailyTarget
+        ? '✅ ถึงเป้า'
+        : today.totalSales >= dailyTarget * 0.85
+          ? `🟡 ใกล้เคียง (${Math.round(today.totalSales / dailyTarget * 100)}%)`
+          : `❌ ขาด ฿${fmt(dailyTarget - today.totalSales)}`)
+    : ''
 
-ตอบ 3 bullet เท่านั้น แต่ละข้อ 1 บรรทัด ห้ามเกิน 3 บรรทัดรวม:
+  const monthlyLine = monthlyInfo
+    ? `เดือนนี้: ฿${fmt(monthlyInfo.mtd)}/฿${fmt(MONTHLY_TARGET)} (${monthlyInfo.monthlyPct}%) | เหลือ ${monthlyInfo.daysRemaining} วัน | เป้าวันนี้ ฿${fmt(dailyTarget)} (dynamic)`
+    : ''
+
+  const isFriday = new Date(dateStr + 'T12:00:00').getDay() === 5
+
+  const weekendBlock = isFriday && weekendData
+    ? `\nข้อมูลสุดสัปดาห์ (${weekendData.satSamples + weekendData.sunSamples} สัปดาห์ย้อนหลัง): เสาร์เฉลี่ย ฿${fmt(weekendData.avgSat)} | อาทิตย์เฉลี่ย ฿${fmt(weekendData.avgSun)} | เมนูยอดนิยม: ${weekendData.topMenus.map(m => `${m.name}×${m.qty}`).join(', ')}`
+    : ''
+
+  const fridayBullet = isFriday && weekendData
+    ? `\n• 🗓 [Weekend Prep]: เสาร์/อาทิตย์ยอดเฉลี่ย ฿${fmt(weekendData.avgSat)}/฿${fmt(weekendData.avgSun)} — แนะนำ 1 โปรโมชัน/แคมเปญ platform เพื่อดันยอดสุดสัปดาห์นี้ พร้อมเป้าหมายเป็นตัวเลข`
+    : ''
+
+  const prompt = `คุณคือ Mirai — AI วิเคราะห์ธุรกิจ Cocoa House
+[Context: ร้านเป็น Delivery 100% ผ่าน LINE MAN และ GrabFood ไม่มีหน้าร้าน ลูกค้าบางส่วนเป็นคนในหมู่บ้าน The Metro สั่งผ่าน app
+เวลาเปิด: จ-ศ 19:30-20:00 ถึง 00:00 (เวลาเปิดยืดหยุ่นแล้วแต่วัน) | ส-อา 09:30-00:00 (มีหยุดพัก ~3 ชม.กลางวัน)
+Action ที่แนะนำต้องอยู่ในขอบเขตที่ทำได้จริง: ปรับราคา/เมนู/แคมเปญ platform/โปรโมต digital เท่านั้น ห้ามแนะนำ upsell หน้าร้าน แจกใบปลิว หรือพูดชวนลูกค้าที่กำลังรอ
+เมื่อแนะนำเวลาโปรโมชัน ให้คำนึงถึงช่วงเวลาเปิดร้านด้วย]${memoryBlock}
+${dateStr} | ยอด ฿${fmt(today.totalSales)} (${vsDay}) | เป้า ฿${fmt(dailyTarget)} ${targetStatus} | Profit ${fmtPct(today.netProfitPct)} ${checkProfit} | Mat ${fmtPct(matCostPct)} | Mkt ${fmtPct(today.marketingFeePct)}
+${monthlyLine}
+Platform Margin (actual):
+${platLines || 'ไม่มีข้อมูล'}
+Menu: ${today.top3.map(m=>`${m.name}×${m.qty} m${m.margin.toFixed(0)}%${m.discPct>0?' 🏷-'+m.discPct+'%':''}`).join(' | ')}
+${baselineNote ? baselineNote + '\n' : ''}${trendNote}${weekendBlock}
+
+ตอบ ${isFriday && weekendData ? '4' : '3'} bullet เท่านั้น แต่ละข้อ 1 บรรทัด:
 • 📊 [สถานะ]: [ผ่าน/ไม่ผ่านเป้า] เพราะ [root cause + ตัวเลข]
-• ⚡ [Action]: [1 action ทำเลย] → คาดได้ [ตัวเลขเป้า]
-• 💡 [Insight]: [pricing/bundle/margin tip + เหตุผลตัวเลข]
+• ⚡ [Action]: ถ้า Platform ไหน Margin ⚠️ ต่ำ (<20%) ให้ระบุว่า MktCost สูงหรือเปล่า → แนะนำ 1 action (ตรวจ/ลด campaign หรือขึ้นราคา) พร้อมตัวเลขเป้า
+• 💡 [Insight]: [pricing/bundle/margin tip + เหตุผลตัวเลข]${fridayBullet}
 
 ห้ามใช้ prefix "ข้อ 1/2/3" ห้ามมี intro/outro ตัวเลขจริงทุกข้อ`
 
   const ai  = new Anthropic({ apiKey })
   const msg = await ai.messages.create({
-    model: 'claude-sonnet-4-6', max_tokens: 280,
+    model: 'claude-sonnet-4-6', max_tokens: isFriday && weekendData ? 380 : 280,
     messages: [{ role: 'user', content: prompt }],
   })
   return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้ในขณะนี้'
 }
 
 // ─── LINE Flex Message ────────────────────────────────────────────────────────
-function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText, dailyTarget = 0) {
+function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText, dailyTarget = 0, monthlyInfo = null) {
   // % change vs 7 days (compact badge)
   const pctBadge = (cur, prev) => {
     if (!prev || prev === 0) return { text: '—', color: '#9CA3AF' }
@@ -690,10 +786,17 @@ function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText, dai
                   { type: 'text', text: `฿${fmt(today.totalSales)}`, size: 'xl', weight: 'bold', color: '#111827', margin: 'xs' },
                   { type: 'text', text: pctBadge(today.totalSales, lastWeek?.totalSales).text,
                     size: 'xs', color: pctBadge(today.totalSales, lastWeek?.totalSales).color, margin: 'xs' },
-                  ...(dailyTarget > 0 ? [{ type: 'text', text: today.totalSales >= dailyTarget
-                    ? `✅ ถึงเป้า ฿${fmt(dailyTarget)}`
-                    : `🎯 ขาด ฿${fmt(dailyTarget - today.totalSales)} จากเป้า ฿${fmt(dailyTarget)}`,
-                    size: 'xs', color: today.totalSales >= dailyTarget ? '#16A34A' : '#D97706', margin: 'xs' }] : []),
+                  ...(dailyTarget > 0 ? [{
+                    type: 'text',
+                    text: today.totalSales >= dailyTarget
+                      ? `✅ ถึงเป้า ฿${fmt(dailyTarget)}`
+                      : today.totalSales >= dailyTarget * 0.85
+                        ? `🟡 ใกล้เคียง ฿${fmt(dailyTarget)}`
+                        : `🎯 ขาด ฿${fmt(dailyTarget - today.totalSales)} (เป้า ฿${fmt(dailyTarget)})`,
+                    size: 'xs',
+                    color: today.totalSales >= dailyTarget ? '#16A34A' : today.totalSales >= dailyTarget * 0.85 ? '#D97706' : '#DC2626',
+                    margin: 'xs',
+                  }] : []),
                 ],
               },
               // Card 2: Net Profit
@@ -728,8 +831,11 @@ function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText, dai
                 contents: [
                   { type: 'text', text: `📆 ${monthly?.monthLabel ?? 'เดือนนี้'}`, size: 'xs', color: '#6B7280' },
                   { type: 'text', text: `฿${fmt(monthly?.totalSales ?? 0)}`, size: 'lg', weight: 'bold', color: '#111827', margin: 'xs' },
-                  { type: 'text', text: `Profit ${fmtPct(monthly?.netProfitPct ?? 0)}`,
-                    size: 'xs', color: (monthly?.netProfitPct ?? 0) >= 20 ? '#16A34A' : '#DC2626', margin: 'xs' },
+                  ...(monthlyInfo
+                    ? [{ type: 'text', text: `${monthlyInfo.monthlyPct}% of ฿${fmt(MONTHLY_TARGET)}`,
+                        size: 'xs', color: monthlyInfo.monthlyPct >= 100 ? '#16A34A' : monthlyInfo.monthlyPct >= 70 ? '#D97706' : '#DC2626', margin: 'xs' }]
+                    : [{ type: 'text', text: `Profit ${fmtPct(monthly?.netProfitPct ?? 0)}`,
+                        size: 'xs', color: (monthly?.netProfitPct ?? 0) >= 20 ? '#16A34A' : '#DC2626', margin: 'xs' }]),
                 ],
               },
             ],
@@ -1253,7 +1359,8 @@ async function runReport(targetDate, isManual = false) {
   }
 
   const lastWeekSame = offsetDate(targetDate, -7)
-  const [todayData, lastWeekData, weeklyData, monthlyData, memory, trend, baseline] = await Promise.all([
+  const isFriday     = new Date(targetDate + 'T12:00:00').getDay() === 5
+  const [todayData, lastWeekData, weeklyData, monthlyData, memory, trend, baseline, weekendData] = await Promise.all([
     fetchMetrics(targetDate),
     fetchMetrics(lastWeekSame).catch(() => null),
     fetchWeeklyMetrics(targetDate).catch(() => null),
@@ -1261,10 +1368,18 @@ async function runReport(targetDate, isManual = false) {
     fetchAIMemory('daily', 5),
     fetch4WeekTrend(targetDate).catch(() => []),
     fetchDayOfWeekBaseline(targetDate).catch(() => null),
+    isFriday ? fetchWeekendPattern(targetDate).catch(() => null) : Promise.resolve(null),
   ])
 
-  // เป้ารายวัน
-  const dailyTarget = await getSetting('daily_sales_target').then(v => Number(v ?? 1500)).catch(() => 1500)
+  // เป้ารายวัน — dynamic จากเป้าเดือน ฿50,000
+  const d = new Date(targetDate + 'T12:00:00')
+  const daysInMonth   = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+  const daysRemaining = daysInMonth - d.getDate() + 1  // รวมวันนี้
+  const mtdBeforeToday = Math.max(0, (monthlyData?.totalSales ?? 0) - todayData.totalSales)
+  const dailyTarget    = Math.round(Math.max(0, MONTHLY_TARGET - mtdBeforeToday) / daysRemaining)
+  const mtdTotal       = monthlyData?.totalSales ?? 0
+  const monthlyPct     = Math.round(mtdTotal / MONTHLY_TARGET * 100)
+  const monthlyInfo    = { mtd: mtdTotal, target: MONTHLY_TARGET, daysRemaining, dailyTarget, monthlyPct }
 
   // เช็คว่าร้านปิดวันนี้ไหม
   const closed = await isClosedDay(targetDate)
@@ -1284,8 +1399,8 @@ async function runReport(targetDate, isManual = false) {
   const outcomeText = buildOutcomeText(todayData, yesterdayMemory, dailyTarget)
   if (outcomeText) await saveOutcome(yesterday, outcomeText)
 
-  const aiText = await getAIInsights(targetDate, todayData, lastWeekData, weeklyData, memory, trend, baseline, dailyTarget)
-  const flex   = buildFlexMessage(targetDate, todayData, lastWeekData, weeklyData, monthlyData, aiText, dailyTarget)
+  const aiText = await getAIInsights(targetDate, todayData, lastWeekData, weeklyData, memory, trend, baseline, dailyTarget, monthlyInfo, weekendData)
+  const flex   = buildFlexMessage(targetDate, todayData, lastWeekData, weeklyData, monthlyData, aiText, dailyTarget, monthlyInfo)
   await sendLine(flex)
   // บันทึก memory สำหรับวันนี้
   await saveAIMemory('daily', targetDate, aiText, {
