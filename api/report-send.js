@@ -114,7 +114,7 @@ async function upsertSetting(key, value) {
 async function fetchAIMemory(reportType, limit = 4) {
   try {
     return await sb('ai_memory',
-      `?report_type=eq.${reportType}&order=report_date.desc&limit=${limit}&select=report_date,recommendations,key_metrics`)
+      `?report_type=eq.${reportType}&order=report_date.desc&limit=${limit}&select=report_date,recommendations,key_metrics,outcome`)
   } catch { return [] }
 }
 
@@ -139,7 +139,8 @@ function buildMemoryContext(memories, reportType) {
     const km = m.key_metrics ?? {}
     const salesStr = km.totalSales ? ` | ยอด ฿${fmt(km.totalSales)}` : ''
     const profitStr = km.netProfitPct != null ? ` | Profit ${fmtPct(km.netProfitPct)}` : ''
-    return `  [${d}${salesStr}${profitStr}]\n  แนะนำ: ${(m.recommendations ?? '').slice(0, 200).replace(/\n/g, ' ')}`
+    const outcomeStr = m.outcome ? `\n  ผลลัพธ์: ${m.outcome}` : ''
+    return `  [${d}${salesStr}${profitStr}]\n  แนะนำ: ${(m.recommendations ?? '').slice(0, 200).replace(/\n/g, ' ')}${outcomeStr}`
   }).join('\n')
   return `\n═══ ความจำ AI — ${reportType === 'daily' ? '4 วัน' : reportType === 'weekly' ? '4 สัปดาห์' : '4 เดือน'}ย้อนหลัง ═══\n${lines}\n(ใช้ความจำนี้ดูว่าแนะนำอะไรไปแล้ว ผลเป็นอย่างไร และพัฒนาคำแนะนำให้ดีขึ้น)\n`
 }
@@ -176,7 +177,7 @@ async function saveOutcome(reportDate, outcomeText) {
   } catch (e) { console.warn('[Outcome] save failed:', e.message) }
 }
 
-function buildOutcomeText(todayMetrics, yesterdayMemory) {
+function buildOutcomeText(todayMetrics, yesterdayMemory, dailyTarget = 0) {
   if (!yesterdayMemory?.key_metrics) return null
   // ข้ามถ้าเมื่อวานร้านปิด
   if (yesterdayMemory.key_metrics?.closed) return null
@@ -187,7 +188,10 @@ function buildOutcomeText(todayMetrics, yesterdayMemory) {
   const profitSign = profitDiff >= 0 ? '+' : ''
   const salesIcon  = salesDiff >= 0 ? '✅' : '🔴'
   const profitIcon = profitDiff >= 0.5 ? '✅' : profitDiff <= -0.5 ? '🔴' : '🟡'
-  return `${salesIcon} ยอดขาย ${salesSign}฿${fmt(Math.abs(salesDiff))} vs วันก่อน | ${profitIcon} Profit ${profitSign}${profitDiff.toFixed(1)}pp`
+  const targetNote = dailyTarget > 0
+    ? ` | ${(km.totalSales ?? 0) >= dailyTarget ? '✅ ถึงเป้า' : `⚠️ ขาดเป้า ฿${fmt(dailyTarget - (km.totalSales ?? 0))}`} (เป้า ฿${fmt(dailyTarget)})`
+    : ''
+  return `${salesIcon} ยอดขาย ${salesSign}฿${fmt(Math.abs(salesDiff))} vs วันก่อน${targetNote} | ${profitIcon} Profit ${profitSign}${profitDiff.toFixed(1)}pp`
 }
 
 // ─── F: Day-of-week Baseline ─────────────────────────────────────────────────
@@ -422,20 +426,66 @@ async function fetchMetrics(dateStr) {
            orderCount: orders.length, top3, catQty, platSales }
 }
 
-// ─── Fetch monthly total ──────────────────────────────────────────────────────
+// ─── Fetch monthly total (full cost — matches Daily formula) ─────────────────
 async function fetchMonthlyMetrics(dateStr) {
   const [year, month] = dateStr.split('-')
   const monthStart = `${year}-${month}-01`
-  const orders = await sb('orders',
-    `?date=gte.${monthStart}&date=lte.${dateStr}&status=eq.delivered&select=order_items(quantity,unit_price,unit_gp_cost)`)
-  let totalSales = 0, totalGpCost = 0
-  for (const o of orders)
+
+  const [orders, platCosts, costRows, platFeesRes, costSchemaRow] = await Promise.all([
+    sb('orders', `?date=gte.${monthStart}&date=lte.${dateStr}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,is_campaign,menu_id)`),
+    sb('platform_costs', `?date=gte.${monthStart}&date=lte.${dateStr}&select=*`),
+    sb('cost_settings', `?effective_from=lte.${thaiDateStr()}&or=(effective_to.is.null,effective_to.gt.${thaiDateStr()})&select=key,value,effective_from&order=effective_from.desc`),
+    fetchPlatFees(),
+    sb('settings', `?key=eq.cost_schema&select=value`).catch(() => []),
+  ])
+
+  const cs = {}
+  for (const row of costRows) if (!(row.key in cs)) cs[row.key] = Number(row.value)
+  let costSchema = null
+  try { costSchema = costSchemaRow[0]?.value ? JSON.parse(costSchemaRow[0].value) : null } catch {}
+
+  // menu_costs for matCost calculation
+  const menuIds = [...new Set(orders.flatMap(o => (o.order_items ?? []).map(i => i.menu_id)).filter(Boolean))]
+  let menuCostMap = {}
+  if (menuIds.length > 0) {
+    const mcRows = await sb('menu_costs', `?menu_id=in.(${menuIds.join(',')})&select=*`)
+    for (const mc of mcRows) menuCostMap[mc.menu_id] = mc
+  }
+
+  // Accumulate per-platform sales + matCost
+  const platNormalSales = {}, platCampaignSales = {}
+  let totalSales = 0, totalMatCostRaw = 0
+  for (const o of orders) {
+    const plat = o.platform ?? 'unknown'
+    if (!platNormalSales[plat]) { platNormalSales[plat] = 0; platCampaignSales[plat] = 0 }
     for (const i of o.order_items ?? []) {
-      const qty = Number(i.quantity ?? 0)
-      totalSales  += qty * Number(i.unit_price ?? 0)
-      totalGpCost += qty * Number(i.unit_gp_cost ?? 0)
+      const qty   = Number(i.quantity ?? 0)
+      const price = Number(i.unit_price ?? 0)
+      totalSales += qty * price
+      if (i.is_campaign) platCampaignSales[plat] += qty * price
+      else platNormalSales[plat] += qty * price
+      totalMatCostRaw += qty * calcMatCost(menuCostMap[i.menu_id], cs, costSchema)
     }
-  const netProfit    = totalSales - totalGpCost
+  }
+
+  // Platform costs (sum whole month)
+  let menuDiscount = 0, extraCosts = 0
+  for (const pc of platCosts) {
+    menuDiscount += Number(pc.menu_discount ?? 0)
+    extraCosts   += Number(pc.campaign ?? 0) + Number(pc.marketing_fee ?? 0)
+                  + Number(pc.delivery_discount ?? 0) + Number(pc.advertisement ?? 0)
+  }
+
+  // GP Cost (same formula as daily)
+  const gpCost = Object.keys(platNormalSales).reduce((sum, plat) => {
+    const feePct = platFeesRes[plat] ?? 0
+    return sum + platNormalSales[plat] * feePct / 100 + platCampaignSales[plat] * CAMPAIGN_GP_PCT / 100
+  }, 0)
+
+  const platformCost = gpCost + menuDiscount + extraCosts
+  const matCost      = totalMatCostRaw
+  const laborCost    = totalSales * (cs.labor_pct ?? 0) / 100
+  const netProfit    = totalSales - platformCost - matCost - laborCost
   const netProfitPct = totalSales > 0 ? (netProfit / totalSales) * 100 : 0
   const monthLabel   = new Date(dateStr + 'T12:00:00').toLocaleDateString('th-TH', { month: 'long', timeZone: 'Asia/Bangkok' })
   return { totalSales, netProfit, netProfitPct, monthLabel }
@@ -487,7 +537,7 @@ async function fetch4WeekTrend(todayStr) {
 }
 
 // ─── AI analysis ─────────────────────────────────────────────────────────────
-async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], trend = [], baseline = null) {
+async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], trend = [], baseline = null, dailyTarget = 0) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return '• (AI วิเคราะห์ไม่พร้อมใช้งาน — ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY)'
 
@@ -536,7 +586,7 @@ async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], tren
   const memoryBlock = buildMemoryContext(memory, 'daily')
 
   const prompt = `คุณคือ Mirai — AI วิเคราะห์ธุรกิจ Cocoa House${memoryBlock}
-${dateStr} | ยอด ฿${fmt(today.totalSales)} (${vsDay}) | Profit ${fmtPct(today.netProfitPct)} ${checkProfit} | Mat ${fmtPct(matCostPct)} | Mkt ${fmtPct(today.marketingFeePct)}
+${dateStr} | ยอด ฿${fmt(today.totalSales)} (${vsDay}) | เป้า ฿${fmt(dailyTarget)} ${today.totalSales >= dailyTarget ? "✅ ถึงเป้า" : "❌ ขาด ฿" + fmt(dailyTarget - today.totalSales)} | Profit ${fmtPct(today.netProfitPct)} ${checkProfit} | Mat ${fmtPct(matCostPct)} | Mkt ${fmtPct(today.marketingFeePct)}
 Platform: ${Object.entries(today.platSales ?? {}).sort((a,b)=>b[1]-a[1]).map(([p,s])=>`${p} ฿${fmt(s)}`).join(' | ')}
 Menu: ${today.top3.map(m=>`${m.name}×${m.qty} m${m.margin.toFixed(0)}%${m.discPct>0?' 🏷-'+m.discPct+'%':''}`).join(' | ')}
 ${baselineNote ? baselineNote + '\n' : ''}${trendNote}
@@ -557,7 +607,7 @@ ${baselineNote ? baselineNote + '\n' : ''}${trendNote}
 }
 
 // ─── LINE Flex Message ────────────────────────────────────────────────────────
-function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText) {
+function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText, dailyTarget = 0) {
   // % change vs 7 days (compact badge)
   const pctBadge = (cur, prev) => {
     if (!prev || prev === 0) return { text: '—', color: '#9CA3AF' }
@@ -639,6 +689,10 @@ function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText) {
                   { type: 'text', text: `฿${fmt(today.totalSales)}`, size: 'xl', weight: 'bold', color: '#111827', margin: 'xs' },
                   { type: 'text', text: pctBadge(today.totalSales, lastWeek?.totalSales).text,
                     size: 'xs', color: pctBadge(today.totalSales, lastWeek?.totalSales).color, margin: 'xs' },
+                  ...(dailyTarget > 0 ? [{ type: 'text', text: today.totalSales >= dailyTarget
+                    ? `✅ ถึงเป้า ฿${fmt(dailyTarget)}`
+                    : `🎯 ขาด ฿${fmt(dailyTarget - today.totalSales)} จากเป้า ฿${fmt(dailyTarget)}`,
+                    size: 'xs', color: today.totalSales >= dailyTarget ? '#16A34A' : '#D97706', margin: 'xs' }] : []),
                 ],
               },
               // Card 2: Net Profit
@@ -1208,6 +1262,9 @@ async function runReport(targetDate, isManual = false) {
     fetchDayOfWeekBaseline(targetDate).catch(() => null),
   ])
 
+  // เป้ารายวัน
+  const dailyTarget = await getSetting('daily_sales_target').then(v => Number(v ?? 1500)).catch(() => 1500)
+
   // เช็คว่าร้านปิดวันนี้ไหม
   const closed = await isClosedDay(targetDate)
   if (closed) {
@@ -1223,11 +1280,11 @@ async function runReport(targetDate, isManual = false) {
   // D: เขียน outcome ให้เมื่อวาน
   const yesterday = offsetDate(targetDate, -1)
   const yesterdayMemory = memory.find(m => m.report_date === yesterday) ?? null
-  const outcomeText = buildOutcomeText(todayData, yesterdayMemory)
+  const outcomeText = buildOutcomeText(todayData, yesterdayMemory, dailyTarget)
   if (outcomeText) await saveOutcome(yesterday, outcomeText)
 
-  const aiText = await getAIInsights(targetDate, todayData, lastWeekData, weeklyData, memory, trend, baseline)
-  const flex   = buildFlexMessage(targetDate, todayData, lastWeekData, weeklyData, monthlyData, aiText)
+  const aiText = await getAIInsights(targetDate, todayData, lastWeekData, weeklyData, memory, trend, baseline, dailyTarget)
+  const flex   = buildFlexMessage(targetDate, todayData, lastWeekData, weeklyData, monthlyData, aiText, dailyTarget)
   await sendLine(flex)
   // บันทึก memory สำหรับวันนี้
   await saveAIMemory('daily', targetDate, aiText, {
@@ -1235,6 +1292,7 @@ async function runReport(targetDate, isManual = false) {
     netProfitPct:    todayData.netProfitPct,
     marketingFeePct: todayData.marketingFeePct,
     orderCount:      todayData.orderCount,
+    dailyTarget,
   })
   console.log(`[AI Reporter] Sent report for ${targetDate}`)
   return { ok: true, date: targetDate }
