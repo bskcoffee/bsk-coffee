@@ -693,11 +693,11 @@ ${baselineNote ? baselineNote + '\n' : ''}${trendNote}${weekendBlock}
 • ⚡ [Action]: ถ้า Platform ไหน Margin ⚠️ ต่ำ (<20%) → ระบุสาเหตุ (MktCost/Campaign?) + แนะนำ action แก้ไข | ถ้าทุก Platform ✅ → แนะนำ 1 action เพิ่มยอด/volume พร้อมตัวเลขเป้า
 • 💡 [Insight]: [pricing/bundle/margin tip + เหตุผลตัวเลข]${fridayBullet}
 
-ห้ามใช้ prefix "ข้อ 1/2/3" ห้ามมี intro/outro ตัวเลขจริงทุกข้อ`
+ห้ามใช้ prefix "ข้อ 1/2/3" ห้ามมี intro/outro ตัวเลขจริงทุกข้อ แต่ละ bullet ห้ามเกิน 40 คำ`
 
   const ai  = new Anthropic({ apiKey })
   const msg = await ai.messages.create({
-    model: 'claude-sonnet-4-6', max_tokens: isFriday && weekendData ? 750 : 600,
+    model: 'claude-sonnet-4-6', max_tokens: isFriday && weekendData ? 1200 : 900,
     messages: [{ role: 'user', content: prompt }],
   })
   return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้ในขณะนี้'
