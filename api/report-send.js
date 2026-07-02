@@ -120,15 +120,16 @@ async function fetchAIMemory(reportType, limit = 4) {
 
 async function saveAIMemory(reportType, reportDate, recommendations, keyMetrics = {}) {
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/ai_memory`, {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/ai_memory?on_conflict=report_type,report_date`, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates',
+        'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal',
       },
       body: JSON.stringify({ report_type: reportType, report_date: reportDate,
         recommendations, key_metrics: keyMetrics }),
     })
+    if (!r.ok) console.warn('[AI Memory] save failed:', r.status, await r.text())
   } catch (e) { console.warn('[AI Memory] save failed:', e.message) }
 }
 
