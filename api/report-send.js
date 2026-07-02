@@ -690,7 +690,7 @@ ${baselineNote ? baselineNote + '\n' : ''}${trendNote}${weekendBlock}
 
 ตอบ ${isFriday && weekendData ? '4' : '3'} bullet เท่านั้น แต่ละข้อ 1 บรรทัด:
 • 📊 [สถานะ]: [ผ่าน/ไม่ผ่านเป้า] เพราะ [root cause + ตัวเลข]
-• ⚡ [Action]: ถ้า Platform ไหน Margin ⚠️ ต่ำ (<20%) ให้ระบุว่า MktCost สูงหรือเปล่า → แนะนำ 1 action (ตรวจ/ลด campaign หรือขึ้นราคา) พร้อมตัวเลขเป้า
+• ⚡ [Action]: ถ้า Platform ไหน Margin ⚠️ ต่ำ (<20%) → ระบุสาเหตุ (MktCost/Campaign?) + แนะนำ action แก้ไข | ถ้าทุก Platform ✅ → แนะนำ 1 action เพิ่มยอด/volume พร้อมตัวเลขเป้า
 • 💡 [Insight]: [pricing/bundle/margin tip + เหตุผลตัวเลข]${fridayBullet}
 
 ห้ามใช้ prefix "ข้อ 1/2/3" ห้ามมี intro/outro ตัวเลขจริงทุกข้อ`
