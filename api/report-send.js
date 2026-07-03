@@ -676,6 +676,31 @@ async function getAIInsights(dateStr, today, lastWeek, weekly, memory = [], tren
     ? `\n• 🗓 [Weekend Prep]: เสาร์/อาทิตย์ยอดเฉลี่ย ฿${fmt(weekendData.avgSat)}/฿${fmt(weekendData.avgSun)} — แนะนำ 1 โปรโมชัน/แคมเปญ platform เพื่อดันยอดสุดสัปดาห์นี้ พร้อมเป้าหมายเป็นตัวเลข`
     : ''
 
+  // ─── Zero-orders prompt (แยก path เมื่อไม่มีออเดอร์) ───────────────────────
+  if (today.orderCount === 0) {
+    const promptNoOrder = `คุณคือ Mirai — AI วิเคราะห์ธุรกิจ Cocoa House
+[Context: ร้านเป็น Delivery 100% ผ่าน LINE MAN และ GrabFood ไม่มีหน้าร้าน เปิด จ-ศ ช่วงเย็น-ดึก | ส-อา ทั้งวัน
+Action ที่แนะนำต้องอยู่ในขอบเขตที่ทำได้จริง: ปรับราคา/เมนู/แคมเปญ platform/โปรโมต digital เท่านั้น]
+${dateStr} | วันนี้ไม่มีออเดอร์เลย (฿0)
+${monthlyLine}
+${trendLines ? `Trend 4 สัปดาห์:\n${trendLines}` : ''}
+${baselineNote ? baselineNote : ''}
+
+ตอบ 2 bullet เท่านั้น แต่ละข้อ 1 บรรทัด ตัวเลขจริงทุกข้อ:
+• 📊 [สถานะเดือน]: MTD ฿${fmt(monthlyInfo?.mtd ?? 0)}/฿${fmt(MONTHLY_TARGET)} — ต้องทำวันละ ฿${fmt(dailyTarget)} ใน ${monthlyInfo?.daysRemaining ?? 0} วันที่เหลือ ระบุว่า track อยู่หรือเสี่ยงพลาดเป้า
+• 💡 [Action]: แนะนำ 1 action ที่ทำได้จริงเพื่อดึงออเดอร์วันพรุ่งนี้หรือสุดสัปดาห์ พร้อมตัวเลขเป้า
+
+ห้ามใช้ prefix "ข้อ 1/2" ห้ามมี intro/outro แต่ละ bullet ห้ามเกิน 40 คำ`
+
+    const ai  = new Anthropic({ apiKey })
+    const msg = await ai.messages.create({
+      model: 'claude-sonnet-4-6', max_tokens: 600,
+      messages: [{ role: 'user', content: promptNoOrder }],
+    })
+    return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้ในขณะนี้'
+  }
+
+  // ─── Normal prompt (มีออเดอร์) ───────────────────────────────────────────────
   const prompt = `คุณคือ Mirai — AI วิเคราะห์ธุรกิจ Cocoa House
 [Context: ร้านเป็น Delivery 100% ผ่าน LINE MAN และ GrabFood ไม่มีหน้าร้าน ลูกค้าบางส่วนเป็นคนในหมู่บ้าน The Metro สั่งผ่าน app
 เวลาเปิด: จ-ศ 19:30-20:00 ถึง 00:00 (เวลาเปิดยืดหยุ่นแล้วแต่วัน) | ส-อา 09:30-00:00 (มีหยุดพัก ~3 ชม.กลางวัน)
@@ -1388,10 +1413,7 @@ async function runReport(targetDate, isManual = false) {
     return { skipped: true, reason: 'closed' }
   }
 
-  if (todayData.orderCount === 0 && !isManual) {
-    console.log(`[AI Reporter] No orders for ${targetDate} — skip`)
-    return { skipped: true, reason: 'no orders' }
-  }
+  // ไม่ skip แม้ไม่มีออเดอร์ — ส่ง report พร้อม monthly/weekly context
 
   // D: เขียน outcome ให้เมื่อวาน
   const yesterday = offsetDate(targetDate, -1)
@@ -1498,7 +1520,7 @@ export default async function handler(req, res) {
     const yesterday = thaiDateStr(-1)
     try {
       const result = await runReport(yesterday, false)
-      await markSentToday()
+      if (!result.skipped) await markSentToday()
       return res.status(200).json(result)
     } catch (err) {
       console.error('[Daily Cron]', err.message)
