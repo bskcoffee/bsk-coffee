@@ -47,7 +47,7 @@ function parseGrabReport(text, filename) {
   // 3. Find all decimal numbers in the summary section
   //    Section: from "ยอดรายการ" header to start of "รายได้จากไทยช่วยไทย" section
   const secStart = text.search(/ยอดรายการ\s*VAT|ยอดรายการVAT/)
-  const secEnd   = text.search(/รายไดจากไทยชวยไทยพลัส|รายไดจากไทย/)
+  const secEnd   = text.search(/รายได.{0,3}จากไทย.{0,3}ช.{0,3}วยไทย|รายไดจากไทย/)
   const section  = (secStart !== -1 && secEnd > secStart)
     ? text.slice(secStart, secEnd)
     : text
