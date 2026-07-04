@@ -152,7 +152,7 @@ export default function POSPage({ onDateChange }) {
 
       const [menusRes, settingsRes] = await Promise.all([
         supabase.from('menus')
-          .select('id, name, category, sort_order, image_url, menu_prices(platform, price)')
+          .select('id, name, category, sort_order, image_url, menu_prices(platform, price, effective_to)')
           .eq('is_active', true)
           .order('sort_order', { ascending: true })
           .order('name'),
@@ -161,7 +161,10 @@ export default function POSPage({ onDateChange }) {
 
       const allMenuList = (menusRes.data ?? []).map(m => {
         const prices = {}
-        for (const p of m.menu_prices ?? []) prices[p.platform] = p.price
+        // เฉพาะ row ปัจจุบัน (effective_to IS NULL) เพื่อไม่ให้ price history ทับราคาล่าสุด
+        for (const p of m.menu_prices ?? []) {
+          if (p.effective_to === null) prices[p.platform] = p.price
+        }
         return { ...m, prices }
       })
 
