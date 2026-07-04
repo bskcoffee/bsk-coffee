@@ -255,8 +255,18 @@ export default function SalesEntryPage() {
         setCampaignQty({})
         setPosUnitPrices({})
         setPosRefillCount(0)
-        setCosts({ menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
         setHasCampaign(false)
+        // โหลด platform_costs ที่ GAS/parser insert ไว้ล่วงหน้า (ถ้ามี)
+        const { data: gcPc } = await supabase
+          .from('platform_costs').select('*')
+          .eq('date', date).eq('platform', platform).maybeSingle()
+        setCosts(gcPc ? {
+          menu_discount:     gcPc.menu_discount     ?? 0,
+          campaign:          gcPc.campaign          ?? 0,
+          marketing_fee:     gcPc.marketing_fee     ?? 0,
+          delivery_discount: gcPc.delivery_discount ?? 0,
+          advertisement:     gcPc.advertisement     ?? 0,
+        } : { menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
         return
       }
 
