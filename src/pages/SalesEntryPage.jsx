@@ -162,22 +162,9 @@ export default function SalesEntryPage() {
     loadCostData()
   }, [date, platform, platConfig])
 
-  // Load default costs when platform changes
-  useEffect(() => {
-    const loadDefaults = async () => {
-      const defaults = await getSetting(`${platSlug(platform)}_defaults`)
-      if (defaults) {
-        setCosts(prev => ({
-          menu_discount: defaults.menu_discount ?? prev.menu_discount,
-          campaign: defaults.campaign ?? prev.campaign,
-          marketing_fee: defaults.marketing_fee ?? prev.marketing_fee,
-          delivery_discount: defaults.delivery_discount ?? prev.delivery_discount,
-          advertisement: defaults.advertisement ?? prev.advertisement,
-        }))
-      }
-    }
-    loadDefaults()
-  }, [platform])
+  // NOTE: loadDefaults was moved into check() below as a sequential fallback
+  // to avoid a race condition where it could overwrite platform_costs values
+  // loaded from the DB (0 ?? existingValue = 0 when defaults have explicit 0s)
 
   // Check data: POS มี priority เสมอ — query posOrders ครั้งเดียว
   useEffect(() => {
@@ -260,13 +247,25 @@ export default function SalesEntryPage() {
         const { data: gcPc } = await supabase
           .from('platform_costs').select('*')
           .eq('date', date).eq('platform', platform).maybeSingle()
-        setCosts(gcPc ? {
-          menu_discount:     gcPc.menu_discount     ?? 0,
-          campaign:          gcPc.campaign          ?? 0,
-          marketing_fee:     gcPc.marketing_fee     ?? 0,
-          delivery_discount: gcPc.delivery_discount ?? 0,
-          advertisement:     gcPc.advertisement     ?? 0,
-        } : { menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
+        if (gcPc) {
+          setCosts({
+            menu_discount:     gcPc.menu_discount     ?? 0,
+            campaign:          gcPc.campaign          ?? 0,
+            marketing_fee:     gcPc.marketing_fee     ?? 0,
+            delivery_discount: gcPc.delivery_discount ?? 0,
+            advertisement:     gcPc.advertisement     ?? 0,
+          })
+        } else {
+          // ไม่มีข้อมูลเลย → ใช้ platform defaults จาก settings (sequential — ไม่มี race)
+          const defaults = await getSetting(`${platSlug(platform)}_defaults`)
+          setCosts(defaults ? {
+            menu_discount:     defaults.menu_discount     ?? 0,
+            campaign:          defaults.campaign          ?? 0,
+            marketing_fee:     defaults.marketing_fee     ?? 0,
+            delivery_discount: defaults.delivery_discount ?? 0,
+            advertisement:     defaults.advertisement     ?? 0,
+          } : { menu_discount: 0, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
+        }
         return
       }
 
@@ -298,7 +297,16 @@ export default function SalesEntryPage() {
         setExistingWarning(false)
         // รวม discount จากทุก POS order ใน date+platform นี้
         const totalPosDiscount = (posOrdersData ?? []).reduce((s, o) => s + (o.discount ?? 0), 0)
-        setCosts({ menu_discount: totalPosDiscount, campaign: 0, marketing_fee: 0, delivery_discount: 0, advertisement: 0 })
+        // ไม่มี platform_costs row → ใช้ platform defaults สำหรับ campaign/mkt/advert
+        // (sequential ใน check() — ไม่มี race กับ loadDefaults เก่า)
+        const defaults = await getSetting(`${platSlug(platform)}_defaults`)
+        setCosts({
+          menu_discount:     totalPosDiscount,                    // POS discount เสมอ
+          campaign:          defaults?.campaign          ?? 0,
+          marketing_fee:     defaults?.marketing_fee     ?? 0,
+          delivery_discount: defaults?.delivery_discount ?? 0,
+          advertisement:     defaults?.advertisement     ?? 0,
+        })
       }
 
       // ── Auto-import order_items จาก POS ──────────────────────────
