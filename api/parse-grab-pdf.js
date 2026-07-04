@@ -40,14 +40,13 @@ function parseGrabReport(text, filename) {
   const dateMatch = text.match(/(\d{4}-\d{2}-\d{2})/)
   const date = dateMatch?.[1] ?? dateFromFilename(filename) ?? null
 
-  // 2. Detect optional columns from Thai column headers (full text scan is fine here)
+  // 2. Detect optional columns from Thai column headers (full text scan)
   const hasExtraCommission = /ค.{0,3}าคอมมิชช.{0,3}ันเพ.{0,3}ิ่มเติม/.test(text)
   const hasMarketingFee    = /ค.{0,3}าธรรมเนียมการตลาด/.test(text)
 
   // 3. Find the main summary data row directly.
   //    pdf-parse concatenates all numbers in the summary row onto a single line
   //    with no spaces (e.g. "389.000.000.00-19.00-118.77-5.94-18.730.00-10.59215.970.00").
-  //    We match a line starting with 3+ digit number followed by 8+ more decimal numbers.
   //    NOTE: Thai text contains Private Use Area characters (U+F70x) from PDF font encoding,
   //    so section boundaries via Thai regex are unreliable — we find the row directly instead.
   const dataRowMatch = text.match(/\n(\d{3,}\.\d{2}(?:[-\d.,]+\.\d{2}){8,})\n/)
@@ -55,34 +54,37 @@ function parseGrabReport(text, filename) {
     ? [...dataRowMatch[1].matchAll(/-?\d{1,3}(?:,\d{3})*\.\d{2}/g)].map(m => parseFloat(m[0].replace(/,/g, '')))
     : []
 
-  // 4. Infer hasAdvertisement from number count:
-  //    base 9 cols + optional marketing_fee + optional campaign = expectedWithoutAdv
-  //    if actual count is higher, the extra column is โฆษณา
-  const expectedWithoutAdv = 9 + (hasMarketingFee ? 1 : 0) + (hasExtraCommission ? 1 : 0)
-  const hasAdvertisement   = allNums.length > expectedWithoutAdv
-
   const len = allNums.length
 
   if (len < 9) {
     return { date, advertisement: 0, marketing_fee: 0, campaign: 0 }
   }
 
-  // advertisement อยู่ที่ len-3 เมื่อมีคอลัมน์ โฆษณา, ถ้าไม่มีให้ = 0
-  const advertisement = hasAdvertisement ? Math.abs(allNums[len - 3] || 0) : 0
+  // 4. Detect โฆษณา and การปรับรายได้ columns from the text immediately before the data row.
+  //    This is reliable because these column headers appear on the same line as the data.
+  const preRowIdx = text.indexOf('\n' + dataRowMatch[1] + '\n')
+  const preRow    = preRowIdx >= 0 ? text.slice(Math.max(0, preRowIdx - 400), preRowIdx) : ''
+  const hasAdvertisement = /โฆษณา/.test(preRow)
+  const hasAdj           = /การปรับราย/.test(preRow)  // การปรับรายได้ (ไทยช่วยไทยพลัส)
 
-  // adv = 1 ชดเชย index เมื่อไม่มีคอลัมน์ โฆษณา
-  const adv = hasAdvertisement ? 0 : 1
+  // 5. Calculate column index offsets.
+  //    Trailing columns after mkt (from start): ส่วนลดจัดส่ง(1) + [การปรับ] + [โฆษณา] + รายรับ(1) + ค้างชำระ(1) = 3+adj+adv
+  //    trailingOffset = those trailing cols + 1 (the mkt col itself) = 4 + adj + adv
+  const trailingOffset = 4 + (hasAdj ? 1 : 0) + (hasAdvertisement ? 1 : 0)
+
+  // advertisement อยู่ที่ len-3 เสมอเมื่อมีคอลัมน์ โฆษณา (ก่อน รายรับ และ ค้างชำระ เสมอ)
+  const advertisement = hasAdvertisement ? Math.abs(allNums[len - 3] || 0) : 0
 
   let marketing_fee = 0
   let campaign      = 0
 
   if (hasMarketingFee && hasExtraCommission) {
-    campaign      = Math.abs(allNums[len - 7 + adv] || 0)
-    marketing_fee = Math.abs(allNums[len - 6 + adv] || 0)
+    campaign      = Math.abs(allNums[len - trailingOffset - 1] || 0)
+    marketing_fee = Math.abs(allNums[len - trailingOffset]     || 0)
   } else if (hasMarketingFee) {
-    marketing_fee = Math.abs(allNums[len - 6 + adv] || 0)
+    marketing_fee = Math.abs(allNums[len - trailingOffset] || 0)
   } else if (hasExtraCommission) {
-    campaign = Math.abs(allNums[len - 6 + adv] || 0)
+    campaign = Math.abs(allNums[len - trailingOffset] || 0)
   }
 
   return { date, advertisement, marketing_fee, campaign }
