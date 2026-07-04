@@ -52,35 +52,48 @@ function parseGrabReport(text, filename) {
     ? text.slice(secStart, secEnd)
     : text
 
+  // 4. Detect advertisement column from section only (not full text —
+  //    "โฆษณา" also appears in definitions on page 2 even when no ads that day)
+  const hasAdvertisement = /โฆษณา/.test(section)
+
   // Extract all decimal numbers from the section (values like -631.00, 1,012.94)
   const numMatches = [...section.matchAll(/-?\d{1,3}(?:,\d{3})*\.\d{2}/g)]
   const allNums    = numMatches.map(m => parseFloat(m[0].replace(/,/g, '')))
 
-  // Expected row length based on which optional columns are present
-  const expectedLen = 10 + (hasMarketingFee ? 1 : 0) + (hasExtraCommission ? 1 : 0)
+  // Base columns: 9 without โฆษณา, 10 with โฆษณา
+  // Full format: ยอดรายการ | VAT | ค่าบริการ | โปรโมชันร้าน | ค่าคอมมิชชัน
+  //              [ค่าคอมมิชชันเพิ่มเติม] [ค่าธรรมเนียมการตลาด]
+  //              ส่วนลดจัดส่ง | การปรับรายได้ | [โฆษณา] | รายรับทั้งหมด | ค้างชำระ
+  const baseColumns = 9 + (hasAdvertisement ? 1 : 0)
+  const expectedLen = baseColumns + (hasMarketingFee ? 1 : 0) + (hasExtraCommission ? 1 : 0)
 
   // Take last expectedLen numbers — they form the data row
   const values = allNums.slice(-expectedLen)
   const len    = values.length
 
-  if (len < 10) {
+  if (len < 9) {
     // Fallback: couldn't find enough numbers, try THB- pattern for advertisement
     const advertMatch = text.match(/โฆษณา[\s\S]{0,600}?THB-([0-9,]+\.[0-9]+)/)
     const advertisement = advertMatch ? parseFloat(advertMatch[1].replace(/,/g, '')) : 0
     return { date, advertisement, marketing_fee: 0, campaign: 0 }
   }
 
-  const advertisement = Math.abs(values[len - 3] || 0)
-  let marketing_fee   = 0
-  let campaign        = 0
+  // advertisement อยู่ที่ len-3 เมื่อมีคอลัมน์ โฆษณา, ถ้าไม่มีให้ = 0
+  const advertisement = hasAdvertisement ? Math.abs(values[len - 3] || 0) : 0
+
+  // adv = 1 ชดเชย index เมื่อไม่มีคอลัมน์ โฆษณา
+  const adv = hasAdvertisement ? 0 : 1
+
+  let marketing_fee = 0
+  let campaign      = 0
 
   if (hasMarketingFee && hasExtraCommission) {
-    campaign      = Math.abs(values[len - 7] || 0)
-    marketing_fee = Math.abs(values[len - 6] || 0)
+    campaign      = Math.abs(values[len - 7 + adv] || 0)
+    marketing_fee = Math.abs(values[len - 6 + adv] || 0)
   } else if (hasMarketingFee) {
-    marketing_fee = Math.abs(values[len - 6] || 0)
+    marketing_fee = Math.abs(values[len - 6 + adv] || 0)
   } else if (hasExtraCommission) {
-    campaign = Math.abs(values[len - 6] || 0)
+    campaign = Math.abs(values[len - 6 + adv] || 0)
   }
 
   return { date, advertisement, marketing_fee, campaign }
