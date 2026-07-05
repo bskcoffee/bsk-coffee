@@ -2,9 +2,11 @@ import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const pdfParse = require('pdf-parse/lib/pdf-parse.js')
 
-const SUPABASE_URL      = process.env.VITE_SUPABASE_URL
+const SUPABASE_URL      = process.env.VITE_SUPABASE_URL      || process.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY
-const CRON_SECRET       = process.env.CRON_SECRET
+// Service key bypasses RLS — ใช้สำหรับ server-side writes (GAS → Vercel → Supabase)
+const SUPABASE_WRITE_KEY = process.env.SUPABASE_SERVICE_KEY  || SUPABASE_ANON_KEY
+const CRON_SECRET        = process.env.CRON_SECRET
 
 // ── Auth helper ──────────────────────────────────────────────────────────────
 
@@ -93,38 +95,48 @@ function parseGrabReport(text, filename) {
 // ── Supabase upsert ───────────────────────────────────────────────────────────
 
 async function saveCosts(date, advertisement, marketing_fee, campaign) {
-  const headers = {
+  // ใช้ service key เพื่อ bypass RLS (server-side only — ไม่ expose ฝั่ง client)
+  const readHeaders = {
     apikey:        SUPABASE_ANON_KEY,
     Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    'Content-Type': 'application/json',
+  }
+  const writeHeaders = {
+    apikey:        SUPABASE_WRITE_KEY,
+    Authorization: `Bearer ${SUPABASE_WRITE_KEY}`,
     'Content-Type': 'application/json',
     Prefer:        'return=minimal',
   }
 
-  // Check if row exists
+  // Check if row exists (read — anon key ok)
   const checkRes = await fetch(
     `${SUPABASE_URL}/rest/v1/platform_costs?date=eq.${date}&platform=eq.GRAB&select=id`,
-    { headers }
+    { headers: readHeaders }
   )
   const existing = await checkRes.json()
 
   if (existing?.length > 0) {
     // PATCH only the 3 cost columns — leave menu_discount, delivery_discount intact
-    await fetch(
+    const patchRes = await fetch(
       `${SUPABASE_URL}/rest/v1/platform_costs?date=eq.${date}&platform=eq.GRAB`,
       {
         method:  'PATCH',
-        headers,
+        headers: writeHeaders,
         body: JSON.stringify({ advertisement, marketing_fee, campaign }),
       }
     )
+    if (!patchRes.ok) {
+      const errText = await patchRes.text()
+      throw new Error(`PATCH failed ${patchRes.status}: ${errText}`)
+    }
     return 'updated'
   } else {
     // INSERT new row (user hasn't manually entered yet)
-    await fetch(
+    const postRes = await fetch(
       `${SUPABASE_URL}/rest/v1/platform_costs`,
       {
         method:  'POST',
-        headers,
+        headers: writeHeaders,
         body: JSON.stringify({
           date,
           platform:          'GRAB',
@@ -136,6 +148,10 @@ async function saveCosts(date, advertisement, marketing_fee, campaign) {
         }),
       }
     )
+    if (!postRes.ok) {
+      const errText = await postRes.text()
+      throw new Error(`INSERT failed ${postRes.status}: ${errText}`)
+    }
     return 'inserted'
   }
 }
