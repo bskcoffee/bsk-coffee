@@ -2,15 +2,17 @@
 // Parses LINE MAN Wongnai daily report email body and saves costs to Supabase
 //
 // Fields extracted:
+//   marketing_fee  ← ค่าบริการ GP (รวม VAT)
 //   advertisement  ← ค่าบริการโฆษณา (รวม VAT)
-//   marketing_fee  ← ค่าธรรมเนียมการตลาดจากแคมเปญโค้ดเด็ด (รวม VAT)
 //
 // POST body: { emailText, subject, saveToDb }
 // Header:    x-parse-secret = CRON_SECRET
 
-const SUPABASE_URL      = process.env.VITE_SUPABASE_URL
-const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY
-const CRON_SECRET       = process.env.CRON_SECRET
+const SUPABASE_URL       = process.env.VITE_SUPABASE_URL      || process.env.SUPABASE_URL
+const SUPABASE_ANON_KEY  = process.env.VITE_SUPABASE_ANON_KEY
+// Service key bypasses RLS — used for server-side writes
+const SUPABASE_WRITE_KEY = process.env.SUPABASE_SERVICE_KEY   || SUPABASE_ANON_KEY
+const CRON_SECRET        = process.env.CRON_SECRET
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -22,21 +24,21 @@ function isAuthorized(req) {
 
 // ── Date parsing ──────────────────────────────────────────────────────────────
 //
-// Subject format: "รายงานยอดขายรายวัน - LINE MAN Wongnai 29/06/69"
-// → day=29, month=06, shortYear=69 → thaiYear=2569 → adYear=2026 → "2026-06-29"
+// Subject format: "รายงานยอดขายรายวัน - LINE MAN Wongnai 01/07/69"
+// → day=01, month=07, shortYear=69 → thaiYear=2569 → adYear=2026 → "2026-07-01"
 
 function parseDateFromSubject(subject) {
   const m = (subject ?? '').match(/(\d{1,2})\/(\d{2})\/(\d{2,4})\s*$/)
   if (!m) return null
-  const day   = m[1].padStart(2, '0')
-  const month = m[2]
-  let thaiYear = parseInt(m[3])
+  const day      = m[1].padStart(2, '0')
+  const month    = m[2]
+  let thaiYear   = parseInt(m[3])
   if (thaiYear < 100) thaiYear += 2500          // 69 → 2569
-  const adYear = thaiYear - 543
+  const adYear   = thaiYear - 543
   return `${adYear}-${month}-${day}`
 }
 
-// Fallback: parse "วันที่ 29 มิ.ย. 2569" from email body
+// Fallback: parse "วันที่ 01 ก.ค. 2569" from email body
 const THAI_MONTHS = {
   'ม.ค.': '01', 'ก.พ.': '02', 'มี.ค.': '03', 'เม.ย.': '04',
   'พ.ค.': '05', 'มิ.ย.': '06', 'ก.ค.': '07', 'ส.ค.': '08',
@@ -55,13 +57,23 @@ function parseDateFromBody(text) {
 
 // ── Email parser ──────────────────────────────────────────────────────────────
 //
-// Looks for a decimal number (possibly negative) after each cost label.
-// Plain-text email layout is typically:
-//   ค่าบริการโฆษณา (รวม VAT)  -55.28
-// or the number may appear on the next line.
+// LINE MAN email is HTML — strip tags first, then extract numbers.
+// Layout (plain text after strip):
+//   ค่าบริการ GP (รวม VAT)    -175.27
+//   ค่าบริการโฆษณา (รวม VAT)  -110.55
+
+function stripHtml(html) {
+  return html
+    .replace(/<[^>]+>/g, ' ')   // remove tags
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+}
 
 function extractAmount(text, labelPattern) {
-  const re = new RegExp(labelPattern + '[\\s\\S]{0,200}?(-?[\\d,]+\\.\\d{2})')
+  const re = new RegExp(labelPattern + '[\\s\\S]{0,300}?(-?[\\d,]+\\.\\d{2})')
   const m  = text.match(re)
   if (!m) return 0
   return Math.abs(parseFloat(m[1].replace(/,/g, '')))
@@ -70,11 +82,14 @@ function extractAmount(text, labelPattern) {
 function parseLineManEmail(emailText, subject) {
   const date = parseDateFromSubject(subject) ?? parseDateFromBody(emailText)
 
-  // ค่าบริการโฆษณา (รวม VAT)
-  const advertisement = extractAmount(emailText, 'ค.{0,5}าบริการโฆษณา')
+  // Strip HTML if present
+  const text = emailText.includes('<') ? stripHtml(emailText) : emailText
 
-  // ค่าธรรมเนียมการตลาดจากแคมเปญโค้ดเด็ด (รวม VAT)
-  const marketing_fee = extractAmount(emailText, 'ค.{0,5}าธรรมเนียมการตลาดจากแคมเปญ')
+  // ค่าบริการ GP (รวม VAT) → marketing_fee (GP commission)
+  const marketing_fee = extractAmount(text, 'ค.{0,5}าบริการ\\s*GP')
+
+  // ค่าบริการโฆษณา (รวม VAT) → advertisement
+  const advertisement = extractAmount(text, 'ค.{0,5}าบริการโฆษณา')
 
   return { date, advertisement, marketing_fee, campaign: 0 }
 }
@@ -82,40 +97,44 @@ function parseLineManEmail(emailText, subject) {
 // ── Supabase upsert ───────────────────────────────────────────────────────────
 
 async function saveCosts(date, advertisement, marketing_fee) {
-  const headers = {
-    apikey:         SUPABASE_ANON_KEY,
-    Authorization:  `Bearer ${SUPABASE_ANON_KEY}`,
+  const writeHeaders = {
+    apikey:         SUPABASE_WRITE_KEY,
+    Authorization:  `Bearer ${SUPABASE_WRITE_KEY}`,
     'Content-Type': 'application/json',
     Prefer:         'return=minimal',
   }
 
-  // Check if row exists for this date + platform
+  // Check if row exists — ใช้ service key เพื่อ bypass RLS
   const checkRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/platform_costs?date=eq.${date}&platform=eq.LINEMAN&select=id`,
-    { headers }
+    `${SUPABASE_URL}/rest/v1/platform_costs?date=eq.${date}&platform=eq.LINE&select=id`,
+    { headers: writeHeaders }
   )
   const existing = await checkRes.json()
 
   if (existing?.length > 0) {
-    // PATCH only the cost columns — leave menu_discount, delivery_discount intact
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/platform_costs?date=eq.${date}&platform=eq.LINEMAN`,
+    // PATCH only cost columns — leave menu_discount, delivery_discount intact
+    const patchRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/platform_costs?date=eq.${date}&platform=eq.LINE`,
       {
         method:  'PATCH',
-        headers,
+        headers: writeHeaders,
         body:    JSON.stringify({ advertisement, marketing_fee }),
       }
     )
+    if (!patchRes.ok) {
+      const errText = await patchRes.text()
+      throw new Error(`PATCH failed ${patchRes.status}: ${errText}`)
+    }
     return 'updated'
   } else {
-    await fetch(
+    const postRes = await fetch(
       `${SUPABASE_URL}/rest/v1/platform_costs`,
       {
         method:  'POST',
-        headers,
+        headers: writeHeaders,
         body:    JSON.stringify({
           date,
-          platform:          'LINEMAN',
+          platform:          'LINE',
           menu_discount:     0,
           campaign:          0,
           marketing_fee,
@@ -124,6 +143,10 @@ async function saveCosts(date, advertisement, marketing_fee) {
         }),
       }
     )
+    if (!postRes.ok) {
+      const errText = await postRes.text()
+      throw new Error(`INSERT failed ${postRes.status}: ${errText}`)
+    }
     return 'inserted'
   }
 }
