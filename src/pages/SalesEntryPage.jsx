@@ -75,6 +75,8 @@ export default function SalesEntryPage() {
   const [posRefillCount, setPosRefillCount] = useState(0)
   // id ของ platform_costs row ที่โหลดมา (null = ยังไม่มี row) — ใช้ตัดสิน INSERT vs UPDATE
   const costsRowIdRef = useRef(null)
+  // id ของ orders row ที่โหลดมา (manual mode only) — ใช้ตัดสิน INSERT vs UPDATE
+  const orderRowIdRef = useRef(null)
 
   // Load menus + platform_config
   useEffect(() => {
@@ -192,6 +194,7 @@ export default function SalesEntryPage() {
           .maybeSingle()
 
         if (oldOrder) {
+          orderRowIdRef.current = oldOrder.id ?? null
           setExistingWarning(true)
           setPosUnitPrices({})
           setPosRefillCount(0)
@@ -237,6 +240,7 @@ export default function SalesEntryPage() {
         }
 
         // ── ไม่มีทั้ง POS และ SalesEntry เก่า — clean slate ─────────────
+        orderRowIdRef.current = null
         setIsLocked(false)
         setExistingWarning(false)
         setNotes('')
@@ -648,14 +652,26 @@ export default function SalesEntryPage() {
         if (costsError) throw costsError
       } else {
         // ── Manual mode: ไม่มี POS data — บันทึกแบบเดิม ─────────────────
-        const { data: orderData, error: orderError } = await supabase
-          .from('orders')
-          .upsert({ date, platform, notes, status: 'delivered' }, { onConflict: 'date,platform' })
-          .select()
-          .single()
-        if (orderError) throw orderError
-
-        const orderId = orderData.id
+        let orderId
+        if (orderRowIdRef.current) {
+          // row มีอยู่แล้ว → UPDATE
+          const { error: orderError } = await supabase
+            .from('orders')
+            .update({ notes, status: 'delivered' })
+            .eq('id', orderRowIdRef.current)
+          if (orderError) throw orderError
+          orderId = orderRowIdRef.current
+        } else {
+          // row ยังไม่มี → INSERT
+          const { data: orderData, error: orderError } = await supabase
+            .from('orders')
+            .insert({ date, platform, notes, status: 'delivered' })
+            .select('id')
+            .single()
+          if (orderError) throw orderError
+          orderId = orderData.id
+          orderRowIdRef.current = orderId
+        }
         await supabase.from('order_items').delete().eq('order_id', orderId)
 
         const itemsToInsert = [
