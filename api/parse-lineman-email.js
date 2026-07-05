@@ -85,13 +85,11 @@ function parseLineManEmail(emailText, subject) {
   // Strip HTML if present
   const text = emailText.includes('<') ? stripHtml(emailText) : emailText
 
-  // ค่าบริการ GP (รวม VAT) → marketing_fee (GP commission)
-  const marketing_fee = extractAmount(text, 'ค.{0,5}าบริการ\\s*GP')
-
   // ค่าบริการโฆษณา (รวม VAT) → advertisement
+  // หมายเหตุ: ค่าบริการ GP คือ commission ที่ระบบ GP% คำนวณอยู่แล้ว — ไม่เก็บใน platform_costs
   const advertisement = extractAmount(text, 'ค.{0,5}าบริการโฆษณา')
 
-  return { date, advertisement, marketing_fee, campaign: 0 }
+  return { date, advertisement, marketing_fee: 0, campaign: 0 }
 }
 
 // ── Supabase upsert ───────────────────────────────────────────────────────────
