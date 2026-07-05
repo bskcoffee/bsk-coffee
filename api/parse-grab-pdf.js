@@ -108,10 +108,10 @@ async function saveCosts(date, advertisement, marketing_fee, campaign) {
     Prefer:        'return=minimal',
   }
 
-  // Check if row exists (read — anon key ok)
+  // Check if row exists — ใช้ service key เพื่อ bypass RLS (anon key ถูก block → คิดว่าไม่มี row → INSERT fail)
   const checkRes = await fetch(
     `${SUPABASE_URL}/rest/v1/platform_costs?date=eq.${date}&platform=eq.GRAB&select=id`,
-    { headers: readHeaders }
+    { headers: writeHeaders }
   )
   const existing = await checkRes.json()
 
