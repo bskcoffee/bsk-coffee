@@ -586,7 +586,8 @@ export default function DashboardPage() {
       .map(([date, day]) => {
         const total = calcDayTotal(day.byPlatform)
         return {
-          date: date.slice(5),
+          date:     date.slice(5),  // "MM-DD" for display
+          fullDate: date,           // "YYYY-MM-DD" for navigation
           ยอดขาย: Math.round(total.sales),
           กำไร: Math.round(total.netProfit),
           ...Object.fromEntries(platList.map(p => [p, Math.round(day.byPlatform[p]?.sales ?? 0)])),
@@ -1216,13 +1217,29 @@ export default function DashboardPage() {
                       {aggregated.zeroSalesDays.length > 0 && (
                         <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-3 rounded-xl">
                           <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                          <span>⚠ ไม่มียอดขาย {aggregated.zeroSalesDays.length} วัน — อาจลืมกรอก?</span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span>⚠ ไม่มียอดขาย {aggregated.zeroSalesDays.length} วัน — อาจลืมกรอก?</span>
+                            {aggregated.zeroSalesDays.map(d => (
+                              <a key={d.fullDate} href={`/sales?date=${d.fullDate}`}
+                                className="px-2 py-0.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded text-xs font-medium hover:underline underline-offset-2">
+                                {d.date}
+                              </a>
+                            ))}
+                          </div>
                         </div>
                       )}
                       {aggregated.lossDays.length > 0 && (
                         <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl">
                           <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                          <span>🔴 กำไรติดลบ {aggregated.lossDays.length} วัน</span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span>🔴 กำไรติดลบ {aggregated.lossDays.length} วัน</span>
+                            {aggregated.lossDays.map(d => (
+                              <a key={d.fullDate} href={`/sales?date=${d.fullDate}`}
+                                className="px-2 py-0.5 bg-red-100 hover:bg-red-200 text-red-700 rounded text-xs font-medium hover:underline underline-offset-2">
+                                {d.date}
+                              </a>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
