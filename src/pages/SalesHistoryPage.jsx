@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { getCostSchema } from '../lib/supabase'
 import { calcPlatformProfit, calcMenuCostBreakdown, formatBaht, CAMPAIGN_GP_PCT } from '../utils/calculations'
 import { format, startOfMonth, endOfMonth, parseISO, addMonths, subMonths } from 'date-fns'
 import { th } from 'date-fns/locale'
@@ -64,7 +65,7 @@ export default function SalesHistoryPage() {
       const today = new Date().toISOString().slice(0, 10)
 
       // Fetch same data sources as Dashboard for identical calculation
-      const [ordersRes, costsRes, transferRes, settingsRes, costSettingsRes, menuCostsRes] = await Promise.all([
+      const [ordersRes, costsRes, transferRes, settingsRes, costSettingsRes, menuCostsRes, costSchema] = await Promise.all([
         supabase.from('orders').select('id, date, platform, notes, created_at').gte('date', start).lte('date', end),
         supabase.from('platform_costs').select('*').gte('date', start).lte('date', end),
         supabase.from('transfer_status').select('*').gte('sale_date', start).lte('sale_date', end),
@@ -76,6 +77,7 @@ export default function SalesHistoryPage() {
           .or(`effective_to.is.null,effective_to.gt.${today}`)
           .order('effective_from', { ascending: false }),
         supabase.from('menu_costs').select('*').is('effective_to', null),
+        getCostSchema(),
       ])
 
       const orders    = ordersRes.data ?? []
@@ -206,13 +208,14 @@ export default function SalesHistoryPage() {
           const platMatCost = platItems.reduce((sum, item) => {
             const mc = menuCostMap[item.menu_id]
             if (!mc) return sum
-            const bd = calcMenuCostBreakdown(mc, cs, 0, 0)
+            const bd = calcMenuCostBreakdown(mc, cs, 0, 0, costSchema)
             return sum + (item.quantity * (bd?.materialCost ?? 0))
           }, 0)
 
-          // GP Cost — identical to Dashboard: normal sales × feePct, campaign sales × CAMPAIGN_GP_PCT (5%)
-          const platGpCost = (r.normalSales   ?? r.sales) * (platFees[platform] ?? 0) / 100
-                           + (r.campaignSales ?? 0)       * CAMPAIGN_GP_PCT           / 100
+          // GP Cost — ใช้ grossNormalSales/grossCampaignSales (ปรับตาม menu_discount ratio แล้ว)
+          // เหมือน Dashboard ทุกประการ
+          const platGpCost = (r.grossNormalSales   ?? r.normalSales   ?? r.sales) * (platFees[platform] ?? 0) / 100
+                           + (r.grossCampaignSales ?? r.campaignSales ?? 0)       * CAMPAIGN_GP_PCT           / 100
           // Labor Cost = laborPct% x sales (same as Dashboard totalLaborCost)
           const platLaborCost = laborPct / 100 * r.sales
 
