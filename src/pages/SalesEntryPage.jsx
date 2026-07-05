@@ -73,6 +73,8 @@ export default function SalesEntryPage() {
   const [posUnitPrices, setPosUnitPrices] = useState({})
   // posRefillCount: total refill qty from POS item_options
   const [posRefillCount, setPosRefillCount] = useState(0)
+  // id ของ platform_costs row ที่โหลดมา (null = ยังไม่มี row) — ใช้ตัดสิน INSERT vs UPDATE
+  const costsRowIdRef = useRef(null)
 
   // Load menus + platform_config
   useEffect(() => {
@@ -213,6 +215,7 @@ export default function SalesEntryPage() {
             .from('platform_costs').select('*')
             .eq('date', date).eq('platform', platform).maybeSingle()
           if (pc) {
+            costsRowIdRef.current = pc.id ?? null
             setCosts({
               menu_discount:     pc.menu_discount     ?? 0,
               campaign:          pc.campaign          ?? 0,
@@ -221,6 +224,8 @@ export default function SalesEntryPage() {
               advertisement:     pc.advertisement     ?? 0,
             })
             setHasCampaign((pc.campaign_revenue ?? 0) > 0)
+          } else {
+            costsRowIdRef.current = null
           }
 
           setNotes(oldOrder.notes ?? '')
@@ -248,6 +253,7 @@ export default function SalesEntryPage() {
           .from('platform_costs').select('*')
           .eq('date', date).eq('platform', platform).maybeSingle()
         if (gcPc) {
+          costsRowIdRef.current = gcPc.id ?? null
           setCosts({
             menu_discount:     gcPc.menu_discount     ?? 0,
             campaign:          gcPc.campaign          ?? 0,
@@ -256,6 +262,7 @@ export default function SalesEntryPage() {
             advertisement:     gcPc.advertisement     ?? 0,
           })
         } else {
+          costsRowIdRef.current = null
           // ไม่มีข้อมูลเลย → ใช้ platform defaults จาก settings (sequential — ไม่มี race)
           const defaults = await getSetting(`${platSlug(platform)}_defaults`)
           setCosts(defaults ? {
@@ -285,6 +292,7 @@ export default function SalesEntryPage() {
         .maybeSingle()
 
       if (existingCosts) {
+        costsRowIdRef.current = existingCosts.id ?? null
         setExistingWarning(true)
         setCosts({
           menu_discount:     existingCosts.menu_discount     ?? 0,
@@ -294,6 +302,7 @@ export default function SalesEntryPage() {
           advertisement:     existingCosts.advertisement     ?? 0,
         })
       } else {
+        costsRowIdRef.current = null
         setExistingWarning(false)
         // รวม discount จากทุก POS order ใน date+platform นี้
         const totalPosDiscount = (posOrdersData ?? []).reduce((s, o) => s + (o.discount ?? 0), 0)
@@ -624,9 +633,18 @@ export default function SalesEntryPage() {
         // ── POS mode: ข้อมูลออเดอร์มีอยู่แล้วใน POS orders ──────────────
         // ไม่ต้อง insert order_items ซ้ำ (Dashboard จะ double-count)
         // บันทึกเฉพาะ platform_costs เท่านั้น
-        const { error: costsError } = await supabase
-          .from('platform_costs')
-          .upsert({ date, platform, ...costs }, { onConflict: 'date,platform' })
+        const costsPayload = { date, platform, ...costs }
+        let costsError
+        if (costsRowIdRef.current) {
+          // row มีอยู่แล้ว → UPDATE
+          const { error } = await supabase.from('platform_costs').update(costsPayload).eq('id', costsRowIdRef.current)
+          costsError = error
+        } else {
+          // row ยังไม่มี → INSERT
+          const { data: ins, error } = await supabase.from('platform_costs').insert(costsPayload).select('id').single()
+          costsError = error
+          if (!error && ins?.id) costsRowIdRef.current = ins.id
+        }
         if (costsError) throw costsError
       } else {
         // ── Manual mode: ไม่มี POS data — บันทึกแบบเดิม ─────────────────
@@ -668,10 +686,17 @@ export default function SalesEntryPage() {
         }
 
         // platform_costs for manual mode
-        const { error: costsError } = await supabase
-          .from('platform_costs')
-          .upsert({ date, platform, ...costs }, { onConflict: 'date,platform' })
-        if (costsError) throw costsError
+        const costsPayload2 = { date, platform, ...costs }
+        let costsError2
+        if (costsRowIdRef.current) {
+          const { error } = await supabase.from('platform_costs').update(costsPayload2).eq('id', costsRowIdRef.current)
+          costsError2 = error
+        } else {
+          const { data: ins2, error } = await supabase.from('platform_costs').insert(costsPayload2).select('id').single()
+          costsError2 = error
+          if (!error && ins2?.id) costsRowIdRef.current = ins2.id
+        }
+        if (costsError2) throw costsError2
       }
 
       setSaveStatus('success')
