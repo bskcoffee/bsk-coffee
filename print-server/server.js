@@ -518,9 +518,9 @@ app.post('/print', async (req, res) => {
   }
 })
 
-// ─── AI Reporter ──────────────────────────────────────────────────────────────
-let aiReporter = null
-try { aiReporter = require('./ai-reporter') } catch (e) { console.warn('[AI Reporter] Failed to load:', e.message) }
+// ─── AI Reporter (ปิดแล้ว — ย้ายไป Vercel cron แทน) ─────────────────────────
+// let aiReporter = null
+// try { aiReporter = require('./ai-reporter') } catch (e) { console.warn('[AI Reporter] Failed to load:', e.message) }
 
 // POST /report/send  — manual trigger จาก cocoa-house web app
 // body: { date: 'YYYY-MM-DD' }

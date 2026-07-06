@@ -510,9 +510,9 @@ async function runDailyReport(dateOverride) {
   }
 }
 
-// ─── Cron: 12:30 every day ────────────────────────────────────────────────────
-cron.schedule('30 12 * * *', () => {
-  console.log('[AI Reporter] Cron triggered 12:30')
+// ─── Cron: 16:30 every day ────────────────────────────────────────────────────
+cron.schedule('30 16 * * *', () => {
+  console.log('[AI Reporter] Cron triggered 16:30')
   runDailyReport()
 })
 
@@ -521,12 +521,12 @@ function startupCatchUp() {
   const now  = new Date()
   const hour = now.getHours()
   const min  = now.getMinutes()
-  if ((hour > 12 || (hour === 12 && min >= 30)) && !alreadySentToday()) {
+  if ((hour > 16 || (hour === 16 && min >= 30)) && !alreadySentToday()) {
     console.log('[AI Reporter] Startup catch-up: sending missed report in 3s')
     setTimeout(runDailyReport, 3000)
   }
 }
 startupCatchUp()
 
-console.log('[AI Reporter] Initialized — cron at 12:30 daily')
+console.log('[AI Reporter] Initialized — cron at 16:30 daily')
 module.exports = { runDailyReport, runReport: runDailyReport }
