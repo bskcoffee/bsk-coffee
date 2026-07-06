@@ -121,10 +121,12 @@ export default function SalesEntryPage() {
     window.addEventListener('online',  handleOnline)
     window.addEventListener('offline', handleOffline)
 
-    // Auto-update date when app is reopened / tab is focused on a new day
+    // Auto-update date only when a NEW calendar day starts (not on every focus)
+    const mountedDate = today()
     const handleVisibility = () => {
       if (document.visibilityState === 'visible' && !searchParams.get('date')) {
-        setDate(today())
+        const nowDate = today()
+        if (nowDate !== mountedDate) setDate(nowDate)
       }
     }
     document.addEventListener('visibilitychange', handleVisibility)
