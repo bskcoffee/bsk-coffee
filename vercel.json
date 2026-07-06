@@ -3,8 +3,8 @@
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "crons": [
-    { "path": "/api/report-send",    "schedule": "0 9 * * *"   },
-    { "path": "/api/report-weekly",  "schedule": "0 6 * * 1"   },
-    { "path": "/api/report-monthly", "schedule": "0 7 1 * *"   }
+    { "path": "/api/report-send",    "schedule": "30 9 * * *"  },
+    { "path": "/api/report-weekly",  "schedule": "30 9 * * 1"  },
+    { "path": "/api/report-monthly", "schedule": "30 9 1 * *"  }
   ]
 }

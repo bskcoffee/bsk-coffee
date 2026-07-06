@@ -963,28 +963,91 @@ function buildFlexMessage(dateStr, today, lastWeek, weekly, monthly, aiText, dai
 async function fetchWeeklyMenuMetrics(monday, sunday) {
   const prevMonday = offsetDate(monday, -7)
   const prevSunday = offsetDate(sunday, -7)
-  const [thisWeek, lastWeek] = await Promise.all([
-    sb('orders', `?date=gte.${monday}&date=lte.${sunday}&status=eq.delivered&select=order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name))`),
-    sb('orders', `?date=gte.${prevMonday}&date=lte.${prevSunday}&status=eq.delivered&select=order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name))`),
+  const today = thaiDateStr(0)
+  const [thisWeek, lastWeek, platCostsThis, platCostsLast, costRows, platFees, costSchemaRow] = await Promise.all([
+    sb('orders', `?date=gte.${monday}&date=lte.${sunday}&status=eq.delivered&select=platform,order_items(quantity,unit_price,is_campaign,menu_id,menus(name))`),
+    sb('orders', `?date=gte.${prevMonday}&date=lte.${prevSunday}&status=eq.delivered&select=platform,order_items(quantity,unit_price,is_campaign,menu_id,menus(name))`),
+    sb('platform_costs', `?date=gte.${monday}&date=lte.${sunday}&select=menu_discount,campaign,marketing_fee,delivery_discount,advertisement`),
+    sb('platform_costs', `?date=gte.${prevMonday}&date=lte.${prevSunday}&select=menu_discount,campaign,marketing_fee,delivery_discount,advertisement`),
+    sb('cost_settings', `?effective_from=lte.${today}&or=(effective_to.is.null,effective_to.gt.${today})&select=key,value,effective_from&order=effective_from.desc`),
+    fetchPlatFees(),
+    sb('settings', `?key=eq.cost_schema&select=value`).catch(() => []),
   ])
-  const aggMenu = (orders) => {
-    const agg = {}
-    for (const o of orders)
-      for (const i of o.order_items ?? []) {
-        const id = i.menu_id ?? 'x'
-        if (!agg[id]) agg[id] = { name: i.menus?.name || id, qty: 0, sales: 0, gpCost: 0 }
-        agg[id].qty    += Number(i.quantity ?? 0)
-        agg[id].sales  += Number(i.quantity ?? 0) * Number(i.unit_price ?? 0)
-        agg[id].gpCost += Number(i.quantity ?? 0) * Number(i.unit_gp_cost ?? 0)
-      }
-    for (const m of Object.values(agg)) m.margin = m.sales > 0 ? (m.sales - m.gpCost) / m.sales * 100 : 0
-    return agg
+
+  const cs = {}
+  for (const row of costRows) if (!(row.key in cs)) cs[row.key] = Number(row.value)
+  let costSchema = null
+  try { costSchema = costSchemaRow[0]?.value ? JSON.parse(costSchemaRow[0].value) : null } catch {}
+
+  // Fetch menu_costs for all unique menu_ids
+  const allOrders = [...thisWeek, ...lastWeek]
+  const menuIds = [...new Set(allOrders.flatMap(o => (o.order_items ?? []).map(i => i.menu_id)).filter(Boolean))]
+  let menuCostMap = {}
+  if (menuIds.length > 0) {
+    const mcRows = await sb('menu_costs', `?menu_id=in.(${menuIds.join(',')})&select=*`)
+    for (const mc of mcRows) menuCostMap[mc.menu_id] = mc
   }
-  const thisAgg = aggMenu(thisWeek)
-  const lastAgg = aggMenu(lastWeek)
-  const totalSales = (orders) => orders.reduce((t, o) =>
-    t + (o.order_items ?? []).reduce((s, i) => s + Number(i.quantity ?? 0) * Number(i.unit_price ?? 0), 0), 0)
-  return { thisAgg, lastAgg, thisSales: totalSales(thisWeek), lastSales: totalSales(lastWeek) }
+
+  // ใช้สูตรเดียวกับ Daily — mat + labor + platform fee
+  const aggMenu = (orders, pCosts) => {
+    const agg = {}
+    let totalSales = 0, totalMatCost = 0, totalGpCost = 0, totalLaborCost = 0
+    const platNormal = {}, platCampaign = {}
+    for (const o of orders) {
+      const plat = (o.platform ?? 'other').toUpperCase()
+      for (const i of o.order_items ?? []) {
+        const qty = Number(i.quantity ?? 0)
+        const price = Number(i.unit_price ?? 0)
+        const isCampaign = i.is_campaign === true
+        const feePct = isCampaign ? CAMPAIGN_GP_PCT : (platFees[plat] ?? 0)
+        const matUnit = calcMatCost(menuCostMap[i.menu_id], cs, costSchema)
+        const laborUnit = price * (cs.labor_pct ?? 0) / 100
+        const platFeeUnit = price * feePct / 100
+        const itemSales = qty * price
+        totalSales += itemSales
+        totalMatCost += qty * matUnit
+        totalLaborCost += qty * laborUnit
+        totalGpCost += qty * platFeeUnit
+        if (isCampaign) platCampaign[plat] = (platCampaign[plat] ?? 0) + itemSales
+        else platNormal[plat] = (platNormal[plat] ?? 0) + itemSales
+        const id = i.menu_id ?? 'x'
+        if (!agg[id]) agg[id] = { name: i.menus?.name || id, qty: 0, sales: 0, matCost: 0, laborCost: 0, platFee: 0 }
+        agg[id].qty += qty
+        agg[id].sales += itemSales
+        agg[id].matCost += qty * matUnit
+        agg[id].laborCost += qty * laborUnit
+        agg[id].platFee += qty * platFeeUnit
+      }
+    }
+    let menuDiscount = 0, extraCosts = 0
+    for (const pc of pCosts) {
+      menuDiscount += Number(pc.menu_discount ?? 0)
+      extraCosts += Number(pc.campaign ?? 0) + Number(pc.marketing_fee ?? 0)
+                 + Number(pc.delivery_discount ?? 0) + Number(pc.advertisement ?? 0)
+    }
+    const platformCost = totalGpCost + menuDiscount + extraCosts
+    const netProfit = totalSales - platformCost - totalMatCost - totalLaborCost
+    const netProfitPct = totalSales > 0 ? (netProfit / totalSales) * 100 : 0
+    const mktFeePct = totalSales > 0 ? (menuDiscount + extraCosts) / totalSales * 100 : 0
+    const actualMktPct = totalSales > 0 ? (menuDiscount + extraCosts) / totalSales : 0
+    for (const m of Object.values(agg)) {
+      m.margin = m.sales > 0
+        ? ((m.sales - m.platFee - m.matCost - m.laborCost - m.sales * actualMktPct) / m.sales) * 100
+        : 0
+    }
+    return { agg, totalSales, netProfit, netProfitPct, mktFeePct }
+  }
+
+  const thisData = aggMenu(thisWeek, platCostsThis)
+  const lastData = aggMenu(lastWeek, platCostsLast)
+
+  return {
+    thisAgg: thisData.agg, lastAgg: lastData.agg,
+    thisSales: thisData.totalSales, lastSales: lastData.totalSales,
+    thisNetProfit: thisData.netProfit, lastNetProfit: lastData.netProfit,
+    thisNetProfitPct: thisData.netProfitPct, lastNetProfitPct: lastData.netProfitPct,
+    thisMktFeePct: thisData.mktFeePct, lastMktFeePct: lastData.mktFeePct,
+  }
 }
 
 // ─── Fetch monthly menu metrics ───────────────────────────────────────────────
@@ -1071,10 +1134,14 @@ async function getWeeklyAIInsights(weekData, monday, sunday, memory = []) {
       return `  • ${m.name}: ×${m.qty}${vs} | Margin ${m.margin.toFixed(1)}% ${tag}`
     }).join('\n')
   const memoryBlock = buildMemoryContext(memory, 'weekly')
+  const profitChange = weekData.lastNetProfitPct != null
+    ? (weekData.thisNetProfitPct - weekData.lastNetProfitPct).toFixed(1)
+    : null
   const prompt = `คุณคือ CMO+CFO ร้าน Cocoa House — วิเคราะห์สัปดาห์ที่ผ่านมาและวางแผนการตลาดสัปดาห์หน้า${memoryBlock}
 ═══ ผลสัปดาห์ ${monday} ถึง ${sunday} ═══
 ยอดขายสัปดาห์นี้  ฿${fmt(weekData.thisSales)}  ${salesChange ? `(${Number(salesChange) >= 0 ? '↑' : '↓'}${Math.abs(salesChange)}% vs สัปดาห์ก่อน)` : ''}
-ยอดขายสัปดาห์ก่อน ฿${fmt(weekData.lastSales)}
+Net Profit          ${fmtPct(weekData.thisNetProfitPct ?? 0)}  ${profitChange ? `(${Number(profitChange) >= 0 ? '+' : ''}${profitChange}pp vs สัปดาห์ก่อน)` : ''}
+ยอดขายสัปดาห์ก่อน ฿${fmt(weekData.lastSales)}  Net Profit ${fmtPct(weekData.lastNetProfitPct ?? 0)}
 
 Top 5 เมนู + Margin:
 ${topMenuLines || 'ไม่มีข้อมูล'}
@@ -1182,11 +1249,15 @@ function buildWeeklyFlexMessage(monday, sunday, weekData, aiText) {
                   { type: 'text', text: deltaText, size: 'xs', color: deltaColor, margin: 'xs' },
                 ],
               },
-              { type: 'box', layout: 'vertical', flex: 1, backgroundColor: '#F9FAFB', cornerRadius: '10px', paddingAll: '12px',
+              { type: 'box', layout: 'vertical', flex: 1,
+                backgroundColor: (weekData.thisNetProfitPct ?? 0) >= 20 ? '#F0FDF4' : '#FEF2F2',
+                cornerRadius: '10px', paddingAll: '12px',
                 contents: [
-                  { type: 'text', text: 'สัปดาห์ก่อน', size: 'xs', color: '#6B7280' },
-                  { type: 'text', text: `฿${fmt(weekData.lastSales)}`, size: 'xl', weight: 'bold', color: '#6B7280', margin: 'xs' },
-                  { type: 'text', text: ' ', size: 'xs', color: '#9CA3AF', margin: 'xs' },
+                  { type: 'text', text: 'Net Profit', size: 'xs', color: '#6B7280' },
+                  { type: 'text', text: `฿${fmt(weekData.thisNetProfit ?? 0)}`, size: 'xl', weight: 'bold',
+                    color: (weekData.thisNetProfitPct ?? 0) >= 20 ? '#166534' : '#991B1B', margin: 'xs' },
+                  { type: 'text', text: fmtPct(weekData.thisNetProfitPct ?? 0), size: 'xs',
+                    color: (weekData.thisNetProfitPct ?? 0) >= 20 ? '#16A34A' : '#DC2626', margin: 'xs' },
                 ],
               },
             ],
@@ -1440,9 +1511,10 @@ async function runReport(targetDate, isManual = false) {
 export async function runWeeklyReport() {
   if (!SUPABASE_URL || !SUPABASE_KEY || !LINE_TOKEN || !LINE_USER)
     throw new Error('Missing required env vars')
-  const today  = thaiDateStr(0)
-  const monday = getMondayOf(today)
-  const sunday = offsetDate(monday, 6)
+  // ใช้ yesterday (อาทิตย์) เป็น anchor เพื่อให้ได้สัปดาห์ที่เพิ่งจบ ไม่ใช่สัปดาห์ปัจจุบัน
+  const yesterday = thaiDateStr(-1)
+  const monday = getMondayOf(yesterday)
+  const sunday = yesterday
   const [weekData, memory] = await Promise.all([
     fetchWeeklyMenuMetrics(monday, sunday),
     fetchAIMemory('weekly', 4),
