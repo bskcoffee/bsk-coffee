@@ -1055,39 +1055,89 @@ async function fetchMonthlyMenuMetrics(year, month) {
   const monthStart = `${year}-${String(month).padStart(2,'0')}-01`
   const lastMonth  = month === 1 ? `${year-1}-12-01` : `${year}-${String(month-1).padStart(2,'0')}-01`
   const lastEnd    = offsetDate(monthStart, -1)
-  const [thisM, lastM, platCostsThis, platCostsLast] = await Promise.all([
-    sb('orders', `?date=gte.${monthStart}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name))`),
-    sb('orders', `?date=gte.${lastMonth}&date=lte.${lastEnd}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,unit_gp_cost,menu_id,menus(name))`),
+  const today      = thaiDateStr(0)
+  const [thisM, lastM, platCostsThis, platCostsLast, costRows, platFees, costSchemaRow] = await Promise.all([
+    sb('orders', `?date=gte.${monthStart}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,is_campaign,menu_id,menus(name))`),
+    sb('orders', `?date=gte.${lastMonth}&date=lte.${lastEnd}&status=eq.delivered&select=id,platform,order_items(quantity,unit_price,is_campaign,menu_id,menus(name))`),
     sb('platform_costs', `?date=gte.${monthStart}&select=campaign,marketing_fee,delivery_discount,advertisement,menu_discount`),
     sb('platform_costs', `?date=gte.${lastMonth}&date=lte.${lastEnd}&select=campaign,marketing_fee,delivery_discount,advertisement,menu_discount`),
+    sb('cost_settings', `?effective_from=lte.${today}&or=(effective_to.is.null,effective_to.gt.${today})&select=key,value,effective_from&order=effective_from.desc`),
+    fetchPlatFees(),
+    sb('settings', `?key=eq.cost_schema&select=value`).catch(() => []),
   ])
-  const aggMenu = (orders) => {
-    const agg = {}
-    for (const o of orders)
-      for (const i of o.order_items ?? []) {
-        const id = i.menu_id ?? 'x'
-        if (!agg[id]) agg[id] = { name: i.menus?.name || id, qty: 0, sales: 0, gpCost: 0 }
-        agg[id].qty    += Number(i.quantity ?? 0)
-        agg[id].sales  += Number(i.quantity ?? 0) * Number(i.unit_price ?? 0)
-        agg[id].gpCost += Number(i.quantity ?? 0) * Number(i.unit_gp_cost ?? 0)
-      }
-    for (const m of Object.values(agg)) m.margin = m.sales > 0 ? (m.sales - m.gpCost) / m.sales * 100 : 0
-    return agg
+
+  const cs = {}
+  for (const row of costRows) if (!(row.key in cs)) cs[row.key] = Number(row.value)
+  let costSchema = null
+  try { costSchema = costSchemaRow[0]?.value ? JSON.parse(costSchemaRow[0].value) : null } catch {}
+
+  // Fetch menu_costs for all unique menu_ids
+  const allOrders = [...thisM, ...lastM]
+  const menuIds = [...new Set(allOrders.flatMap(o => (o.order_items ?? []).map(i => i.menu_id)).filter(Boolean))]
+  let menuCostMap = {}
+  if (menuIds.length > 0) {
+    const mcRows = await sb('menu_costs', `?menu_id=in.(${menuIds.join(',')})&select=*`)
+    for (const mc of mcRows) menuCostMap[mc.menu_id] = mc
   }
-  const sumSales   = (orders) => orders.reduce((t, o) =>
-    t + (o.order_items ?? []).reduce((s, i) => s + Number(i.quantity ?? 0) * Number(i.unit_price ?? 0), 0), 0)
-  const sumGpCost  = (orders) => orders.reduce((t, o) =>
-    t + (o.order_items ?? []).reduce((s, i) => s + Number(i.quantity ?? 0) * Number(i.unit_gp_cost ?? 0), 0), 0)
-  const sumMktFee  = (rows) => rows.reduce((t, r) =>
-    t + Number(r.campaign ?? 0) + Number(r.marketing_fee ?? 0)
-      + Number(r.delivery_discount ?? 0) + Number(r.advertisement ?? 0)
-      + Number(r.menu_discount ?? 0), 0)
-  const thisSales      = sumSales(thisM);   const thisGpCost = sumGpCost(thisM)
-  const lastSales      = sumSales(lastM);   const lastGpCost = sumGpCost(lastM)
+
+  // ใช้สูตรเดียวกับ Daily/Weekly — mat + labor + platform fee
+  const aggMenu = (orders, pCosts) => {
+    const agg = {}
+    let totalSales = 0, totalMatCost = 0, totalGpCost = 0, totalLaborCost = 0
+    for (const o of orders) {
+      const plat = (o.platform ?? 'other').toUpperCase()
+      for (const i of o.order_items ?? []) {
+        const qty = Number(i.quantity ?? 0)
+        const price = Number(i.unit_price ?? 0)
+        const isCampaign = i.is_campaign === true
+        const feePct = isCampaign ? CAMPAIGN_GP_PCT : (platFees[plat] ?? 0)
+        const matUnit = calcMatCost(menuCostMap[i.menu_id], cs, costSchema)
+        const laborUnit = price * (cs.labor_pct ?? 0) / 100
+        const platFeeUnit = price * feePct / 100
+        const itemSales = qty * price
+        totalSales += itemSales
+        totalMatCost += qty * matUnit
+        totalLaborCost += qty * laborUnit
+        totalGpCost += qty * platFeeUnit
+        const id = i.menu_id ?? 'x'
+        if (!agg[id]) agg[id] = { name: i.menus?.name || id, qty: 0, sales: 0, matCost: 0, laborCost: 0, platFee: 0 }
+        agg[id].qty += qty
+        agg[id].sales += itemSales
+        agg[id].matCost += qty * matUnit
+        agg[id].laborCost += qty * laborUnit
+        agg[id].platFee += qty * platFeeUnit
+      }
+    }
+    let menuDiscount = 0, extraCosts = 0
+    for (const pc of pCosts) {
+      menuDiscount += Number(pc.menu_discount ?? 0)
+      extraCosts += Number(pc.campaign ?? 0) + Number(pc.marketing_fee ?? 0)
+                 + Number(pc.delivery_discount ?? 0) + Number(pc.advertisement ?? 0)
+    }
+    const platformCost = totalGpCost + menuDiscount + extraCosts
+    const netProfit = totalSales - platformCost - totalMatCost - totalLaborCost
+    const netProfitPct = totalSales > 0 ? (netProfit / totalSales) * 100 : 0
+    const mktFeePct = totalSales > 0 ? (menuDiscount + extraCosts) / totalSales * 100 : 0
+    const actualMktPct = totalSales > 0 ? (menuDiscount + extraCosts) / totalSales : 0
+    for (const m of Object.values(agg)) {
+      m.margin = m.sales > 0
+        ? ((m.sales - m.platFee - m.matCost - m.laborCost - m.sales * actualMktPct) / m.sales) * 100
+        : 0
+    }
+    return { agg, totalSales, netProfit, netProfitPct, mktFeePct, mktFee: menuDiscount + extraCosts }
+  }
+
+  const thisData = aggMenu(thisM, platCostsThis)
+  const lastData = aggMenu(lastM, platCostsLast)
+
+  const thisSales = thisData.totalSales
+  const lastSales = lastData.totalSales
+
   const thisOrderCount = thisM.length
   const lastOrderCount = lastM.length
-  const thisAOV        = thisOrderCount > 0 ? thisSales / thisOrderCount : 0
-  const lastAOV        = lastOrderCount > 0 ? lastSales / lastOrderCount : 0
+  const thisAOV = thisOrderCount > 0 ? thisSales / thisOrderCount : 0
+  const lastAOV = lastOrderCount > 0 ? lastSales / lastOrderCount : 0
+
   // ── Platform breakdown ──
   const aggByPlatform = (orders) => {
     const agg = {}
@@ -1102,20 +1152,20 @@ async function fetchMonthlyMenuMetrics(year, month) {
   }
   const thisByPlatform = aggByPlatform(thisM)
   const lastByPlatform = aggByPlatform(lastM)
-  const thisMktFee     = sumMktFee(platCostsThis)
-  const lastMktFee     = sumMktFee(platCostsLast)
-  const thisNetProfit    = thisSales - thisGpCost - thisMktFee
-  const thisNetProfitPct = thisSales > 0 ? thisNetProfit / thisSales * 100 : 0
-  const lastNetProfitPct = lastSales > 0 ? (lastSales - lastGpCost - lastMktFee) / lastSales * 100 : 0
-  const thisMktFeePct    = thisSales > 0 ? thisMktFee / thisSales * 100 : 0
-  const lastMktFeePct    = lastSales > 0 ? lastMktFee / lastSales * 100 : 0
+
   const monthName = new Date(monthStart + 'T12:00:00').toLocaleDateString('th-TH', { month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' })
-  const top5 = Object.values(aggMenu(thisM)).sort((a, b) => b.qty - a.qty).slice(0, 5)
-  return { thisSales, lastSales, thisNetProfit, thisNetProfitPct, lastNetProfitPct,
-           thisMktFee, thisMktFeePct, lastMktFeePct,
-           thisOrderCount, lastOrderCount, thisAOV, lastAOV,
-           thisByPlatform, lastByPlatform,
-           top5, monthName }
+  const top5 = Object.values(thisData.agg).sort((a, b) => b.qty - a.qty).slice(0, 5)
+
+  return {
+    thisSales, lastSales,
+    thisNetProfit: thisData.netProfit, lastNetProfit: lastData.netProfit,
+    thisNetProfitPct: thisData.netProfitPct, lastNetProfitPct: lastData.netProfitPct,
+    thisMktFee: thisData.mktFee, thisMktFeePct: thisData.mktFeePct,
+    lastMktFeePct: lastData.mktFeePct,
+    thisOrderCount, lastOrderCount, thisAOV, lastAOV,
+    thisByPlatform, lastByPlatform,
+    top5, monthName,
+  }
 }
 
 // ─── Weekly AI insights ───────────────────────────────────────────────────────
