@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase'
 import { formatBaht } from '../utils/calculations'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
+import ConfirmModal from '../components/ConfirmModal'
 
 // ─── Category Config ──────────────────────────────────────────
 
@@ -172,8 +173,9 @@ function AddEntryModal({ book, onClose, onSaved }) {
 
         {/* Date */}
         <div>
-          <label className="text-xs font-medium text-gray-500 block mb-1">วันที่</label>
+          <label htmlFor="entry-modal-date" className="text-xs font-medium text-gray-500 block mb-1">วันที่</label>
           <input
+            id="entry-modal-date"
             type="date"
             value={form.date}
             onChange={e => set('date', e.target.value)}
@@ -183,8 +185,9 @@ function AddEntryModal({ book, onClose, onSaved }) {
 
         {/* Description */}
         <div>
-          <label className="text-xs font-medium text-gray-500 block mb-1">รายละเอียด</label>
+          <label htmlFor="entry-modal-desc" className="text-xs font-medium text-gray-500 block mb-1">รายละเอียด</label>
           <input
+            id="entry-modal-desc"
             type="text"
             placeholder="เช่น ซื้อนมสดสำหรับสัปดาห์..."
             value={form.description}
@@ -215,10 +218,11 @@ function AddEntryModal({ book, onClose, onSaved }) {
 
         {/* Amount */}
         <div>
-          <label className="text-xs font-medium text-gray-500 block mb-1">จำนวนเงิน (บาท)</label>
+          <label htmlFor="entry-modal-amount" className="text-xs font-medium text-gray-500 block mb-1">จำนวนเงิน (บาท)</label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">฿</span>
             <input
+              id="entry-modal-amount"
               type="number"
               inputMode="decimal"
               min="0"
@@ -233,8 +237,9 @@ function AddEntryModal({ book, onClose, onSaved }) {
 
         {/* Notes */}
         <div>
-          <label className="text-xs font-medium text-gray-500 block mb-1">หมายเหตุ (ไม่บังคับ)</label>
+          <label htmlFor="entry-modal-notes" className="text-xs font-medium text-gray-500 block mb-1">หมายเหตุ (ไม่บังคับ)</label>
           <textarea
+            id="entry-modal-notes"
             rows={2}
             placeholder="รายละเอียดเพิ่มเติม..."
             value={form.notes}
@@ -269,6 +274,7 @@ export default function CashFlowPage() {
   const [loading,    setLoading]    = useState(true)
   const [showAdd,    setShowAdd]    = useState(false)
   const [deleting,   setDeleting]   = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null) // entry id pending delete confirm
 
   const start = format(startOfMonth(new Date(month + '-01')), 'yyyy-MM-dd')
   const end   = format(endOfMonth(new Date(month + '-01')),   'yyyy-MM-dd')
@@ -288,13 +294,15 @@ export default function CashFlowPage() {
           .select('*')
           .order('date', { ascending: false }),
       ])
+      if (tsRes.error) throw tsRes.error
+      if (entRes.error) throw entRes.error
       setTsData(tsRes.data ?? [])
       setEntries(entRes.data ?? [])
     } catch (err) {
-      console.error(err)
+      addToast('โหลดข้อมูลรายรับรายจ่ายไม่สำเร็จ: ' + err.message, 'error')
     }
     setLoading(false)
-  }, [])
+  }, [addToast])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -329,8 +337,12 @@ export default function CashFlowPage() {
 
   // ── Delete ──
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('ลบรายการนี้?')) return
+  const requestDelete = (id) => setDeleteTarget(id)
+
+  const handleDelete = async () => {
+    const id = deleteTarget
+    if (!id) return
+    setDeleteTarget(null)
     setDeleting(id)
     const { error } = await supabase.from('cashbook_entries').delete().eq('id', id)
     setDeleting(null)
@@ -476,10 +488,11 @@ export default function CashFlowPage() {
                 <div className="text-right shrink-0">
                   <p className="text-sm font-bold text-red-600">-{formatBaht(entry.amount)}</p>
                   {isAdmin && (
-                    <button
-                      onClick={() => handleDelete(entry.id)}
+                           <button
+                      onClick={() => requestDelete(entry.id)}
                       disabled={deleting === entry.id}
-                      className="text-gray-300 hover:text-red-400 transition-colors mt-0.5"
+                      aria-label="ลบรายการ"
+                      className="text-gray-300 hover:text-red-400 transition-colors mt-0.5 p-1.5 -m-1.5"
                     >
                       <Trash2 size={13} />
                     </button>
@@ -499,6 +512,16 @@ export default function CashFlowPage() {
           onSaved={loadData}
         />
       )}
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="ลบรายการนี้?"
+        confirmLabel="ลบ"
+        danger
+        icon={Trash2}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

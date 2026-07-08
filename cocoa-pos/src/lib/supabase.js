@@ -15,3 +15,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     storageKey: 'cocoa-pos-auth',   // แยก key จาก Sales App
   },
 })
+
+// ── Settings helper — key เดียวกันที่ใช้ในเว็บหลัก (cocoa-house/src/lib/supabase.js) ──
+export async function getSetting(key) {
+  const { data } = await supabase
+    .from('settings')
+    .select('value')
+    .eq('key', key)
+    .single()
+  return data?.value
+}

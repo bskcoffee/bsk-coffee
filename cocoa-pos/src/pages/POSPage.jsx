@@ -120,6 +120,7 @@ export default function POSPage({ onDateChange }) {
   const [loadingOrders,  setLoadingOrders]  = useState(false)
   const [deletingId,     setDeletingId]     = useState(null)
   const [time,           setTime]           = useState(new Date())
+  const [platforms,      setPlatforms]      = useState(PLATFORMS) // sync กับ platform_config ใน Supabase
 
   // ── Drag hooks ──
   const catDrag  = useDragSort()   // { draggingIdx, startDrag }
@@ -216,6 +217,8 @@ export default function POSPage({ onDateChange }) {
         try {
           const cfg = JSON.parse(platConfigRow.value)
           setPlatFees(Object.fromEntries(cfg.map(p => [p.name, p.fee ?? 0])))
+          const names = cfg.map(p => p.name).filter(Boolean)
+          if (names.length > 0) setPlatforms(names)
         } catch {}
       }
     } catch (err) { console.error(err) }
@@ -1077,9 +1080,9 @@ export default function POSPage({ onDateChange }) {
       {optionMenu && (
         <MenuOptionModal
           menu={optionMenu}
-          platform={selectedPlat ?? PLATFORMS[0]}
-          addons={addonsForModal.map(a => ({ ...a, price: a.prices?.[selectedPlat ?? PLATFORMS[0]] ?? 0 }))}
-          refills={refillsForModal.map(r => ({ ...r, price: r.prices?.[selectedPlat ?? PLATFORMS[0]] ?? 0 }))}
+          platform={selectedPlat ?? platforms[0]}
+          addons={addonsForModal.map(a => ({ ...a, price: a.prices?.[selectedPlat ?? platforms[0]] ?? 0 }))}
+          refills={refillsForModal.map(r => ({ ...r, price: r.prices?.[selectedPlat ?? platforms[0]] ?? 0 }))}
           initial={null}
           onConfirm={handleOptionConfirm}
           onClose={() => setOptionMenu(null)}
@@ -1108,7 +1111,7 @@ export default function POSPage({ onDateChange }) {
               <div>
                 <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">เลือก Platform</p>
                 <div className="grid grid-cols-3 gap-2">
-                  {PLATFORMS.map(p => (
+                  {platforms.map(p => (
                     <button key={p} onClick={() => { setSelectedPlat(p); setOrderRef('') }}
                       className={`py-3 rounded-xl text-sm font-bold transition-all active:scale-95
                         ${selectedPlat === p ? (PLAT_STYLE[p] ?? 'bg-cocoa-600 text-white') : PLAT_INACTIVE}`}>

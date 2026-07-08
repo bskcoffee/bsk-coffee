@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
 import { Save, Eye, EyeOff, UserPlus, Users, LogOut, AlertTriangle, ShieldCheck, Shield } from 'lucide-react'
+import ConfirmModal from '../components/ConfirmModal'
 
 const CREATE_COOLDOWN_SEC = 30
 
@@ -19,6 +20,7 @@ export default function UserManagementPage() {
 
   // --- จัดการผู้ใช้งาน ---
   const [userList, setUserList]               = useState([])
+  const [usersLoading, setUsersLoading]       = useState(true)
   const [newUserEmail, setNewUserEmail]       = useState('')
   const [newUserPass, setNewUserPass]         = useState('')
   const [showNewUserPass, setShowNewUserPass] = useState(false)
@@ -26,6 +28,8 @@ export default function UserManagementPage() {
   const [userMgmtStatus, setUserMgmtStatus]   = useState('')
   const [cooldown, setCooldown]               = useState(0)
   const cooldownRef                           = useRef(null)
+  const [roleChangeTarget, setRoleChangeTarget] = useState(null) // { id, role } | null
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
 
   useEffect(() => { loadUsers() }, [])
   useEffect(() => () => { if (cooldownRef.current) clearInterval(cooldownRef.current) }, [])
@@ -42,22 +46,31 @@ export default function UserManagementPage() {
 
   // ── Load users from profiles table (no admin.listUsers needed) ───────────
   const loadUsers = async () => {
+    setUsersLoading(true)
     try {
       const { data, error } = await supabase
         .from('profiles')
         .select('id, email, role, created_at')
         .order('created_at', { ascending: true })
-      if (!error && data) setUserList(data)
-    } catch {
-      // silently ignore
+      if (error) throw error
+      setUserList(data ?? [])
+    } catch (err) {
+      addToast('โหลดรายชื่อผู้ใช้งานไม่สำเร็จ: ' + err.message, 'error')
     }
+    setUsersLoading(false)
   }
 
   // ── Change role via secure RPC (admin-only check happens in DB) ──────────
-  const changeRole = async (userId, currentRole) => {
+  const requestChangeRole = (userId, currentRole) => {
+    setRoleChangeTarget({ id: userId, role: currentRole })
+  }
+
+  const confirmChangeRole = async () => {
+    if (!roleChangeTarget) return
+    const { id: userId, role: currentRole } = roleChangeTarget
     const newRole = currentRole === 'admin' ? 'staff' : 'admin'
     const label   = newRole === 'admin' ? 'ผู้ดูแลระบบ' : 'พนักงาน'
-    if (!window.confirm(`เปลี่ยน role เป็น "${label}"?`)) return
+    setRoleChangeTarget(null)
     const { error } = await supabase.rpc('change_user_role', {
       target_id: userId,
       new_role:  newRole,
@@ -142,15 +155,16 @@ export default function UserManagementPage() {
         </p>
 
         <div>
-          <label className="label">อีเมลใหม่</label>
-          <input type="email" className="input" value={newEmail}
+          <label htmlFor="my-email" className="label">อีเมลใหม่</label>
+          <input id="my-email" type="email" className="input" value={newEmail}
             onChange={e => setNewEmail(e.target.value)} />
         </div>
 
         <div>
-          <label className="label">รหัสผ่านใหม่</label>
+          <label htmlFor="my-password" className="label">รหัสผ่านใหม่</label>
           <div className="relative">
             <input
+              id="my-password"
               type={showPassword ? 'text' : 'password'}
               className="input pr-10"
               placeholder="เว้นว่างถ้าไม่ต้องการเปลี่ยน"
@@ -158,6 +172,7 @@ export default function UserManagementPage() {
               onChange={e => setNewPassword(e.target.value)}
             />
             <button type="button" onClick={() => setShowPassword(v => !v)}
+              aria-label={showPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
               {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
@@ -166,8 +181,8 @@ export default function UserManagementPage() {
 
         {newPassword && (
           <div>
-            <label className="label">ยืนยันรหัสผ่านใหม่</label>
-            <input type={showPassword ? 'text' : 'password'} className="input"
+            <label htmlFor="my-password-confirm" className="label">ยืนยันรหัสผ่านใหม่</label>
+            <input id="my-password-confirm" type={showPassword ? 'text' : 'password'} className="input"
               value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
           </div>
         )}
@@ -186,7 +201,9 @@ export default function UserManagementPage() {
           <span className="ml-auto text-xs text-gray-400">{userList.length} บัญชี</span>
         </div>
 
-        {userList.length > 0 ? (
+        {usersLoading ? (
+          <p className="text-sm text-gray-400 text-center py-4">กำลังโหลด...</p>
+        ) : userList.length > 0 ? (
           <div className="space-y-2">
             {userList.map(u => {
               const isMe = u.id === session?.user?.id
@@ -209,7 +226,7 @@ export default function UserManagementPage() {
                   </div>
                   {!isMe && (
                     <button
-                      onClick={() => changeRole(u.id, u.role)}
+                      onClick={() => requestChangeRole(u.id, u.role)}
                       className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors shrink-0 ${
                         u.role === 'admin'
                           ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
@@ -224,7 +241,7 @@ export default function UserManagementPage() {
             })}
           </div>
         ) : (
-          <p className="text-sm text-gray-400 text-center py-4">กำลังโหลด...</p>
+          <p className="text-sm text-gray-400 text-center py-4">ยังไม่มีผู้ใช้งานในระบบ</p>
         )}
       </div>
 
@@ -242,16 +259,17 @@ export default function UserManagementPage() {
         </div>
 
         <div>
-          <label className="label">อีเมล</label>
-          <input type="email" className="input" placeholder="email@example.com"
+          <label htmlFor="new-user-email" className="label">อีเมล</label>
+          <input id="new-user-email" type="email" className="input" placeholder="email@example.com"
             value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)}
             disabled={cooldown > 0} />
         </div>
 
         <div>
-          <label className="label">รหัสผ่านเริ่มต้น (อย่างน้อย 6 ตัว)</label>
+          <label htmlFor="new-user-password" className="label">รหัสผ่านเริ่มต้น (อย่างน้อย 6 ตัว)</label>
           <div className="relative">
             <input
+              id="new-user-password"
               type={showNewUserPass ? 'text' : 'password'}
               className="input pr-10"
               placeholder="••••••••"
@@ -260,6 +278,7 @@ export default function UserManagementPage() {
               disabled={cooldown > 0}
             />
             <button type="button" onClick={() => setShowNewUserPass(v => !v)}
+              aria-label={showNewUserPass ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
               {showNewUserPass ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
@@ -296,12 +315,30 @@ export default function UserManagementPage() {
       {/* ── ออกจากระบบ ──────────────────────────────────────────────── */}
       <div className="card">
         <button
-          onClick={() => { if (window.confirm('ต้องการออกจากระบบ?')) signOut() }}
+          onClick={() => setShowSignOutConfirm(true)}
           className="btn-danger flex items-center gap-2"
         >
           <LogOut size={16} /> ออกจากระบบ
         </button>
       </div>
+
+      <ConfirmModal
+        open={!!roleChangeTarget}
+        title={`เปลี่ยน role เป็น "${roleChangeTarget?.role === 'admin' ? 'พนักงาน' : 'ผู้ดูแลระบบ'}"?`}
+        confirmLabel="ยืนยัน"
+        onConfirm={confirmChangeRole}
+        onCancel={() => setRoleChangeTarget(null)}
+      />
+
+      <ConfirmModal
+        open={showSignOutConfirm}
+        title="ต้องการออกจากระบบ?"
+        confirmLabel="ออกจากระบบ"
+        danger
+        icon={LogOut}
+        onConfirm={() => { setShowSignOutConfirm(false); signOut() }}
+        onCancel={() => setShowSignOutConfirm(false)}
+      />
     </div>
   )
 }
