@@ -991,8 +991,8 @@ async function fetchWeeklyMenuMetrics(monday, sunday) {
   // ใช้สูตรเดียวกับ Daily — mat + labor + platform fee
   const aggMenu = (orders, pCosts) => {
     const agg = {}
+    const platSalesMap = {}
     let totalSales = 0, totalMatCost = 0, totalGpCost = 0, totalLaborCost = 0
-    const platNormal = {}, platCampaign = {}
     for (const o of orders) {
       const plat = (o.platform ?? 'other').toUpperCase()
       for (const i of o.order_items ?? []) {
@@ -1008,8 +1008,7 @@ async function fetchWeeklyMenuMetrics(monday, sunday) {
         totalMatCost += qty * matUnit
         totalLaborCost += qty * laborUnit
         totalGpCost += qty * platFeeUnit
-        if (isCampaign) platCampaign[plat] = (platCampaign[plat] ?? 0) + itemSales
-        else platNormal[plat] = (platNormal[plat] ?? 0) + itemSales
+        platSalesMap[plat] = (platSalesMap[plat] ?? 0) + itemSales
         const id = i.menu_id ?? 'x'
         if (!agg[id]) agg[id] = { name: i.menus?.name || id, qty: 0, sales: 0, matCost: 0, laborCost: 0, platFee: 0 }
         agg[id].qty += qty
@@ -1035,7 +1034,7 @@ async function fetchWeeklyMenuMetrics(monday, sunday) {
         ? ((m.sales - m.platFee - m.matCost - m.laborCost - m.sales * actualMktPct) / m.sales) * 100
         : 0
     }
-    return { agg, totalSales, netProfit, netProfitPct, mktFeePct }
+    return { agg, totalSales, netProfit, netProfitPct, mktFeePct, platSalesMap }
   }
 
   const thisData = aggMenu(thisWeek, platCostsThis)
@@ -1047,6 +1046,7 @@ async function fetchWeeklyMenuMetrics(monday, sunday) {
     thisNetProfit: thisData.netProfit, lastNetProfit: lastData.netProfit,
     thisNetProfitPct: thisData.netProfitPct, lastNetProfitPct: lastData.netProfitPct,
     thisMktFeePct: thisData.mktFeePct, lastMktFeePct: lastData.mktFeePct,
+    thisPlatSales: thisData.platSalesMap, lastPlatSales: lastData.platSalesMap,
   }
 }
 
@@ -1172,9 +1172,16 @@ async function fetchMonthlyMenuMetrics(year, month) {
 async function getWeeklyAIInsights(weekData, monday, sunday, memory = []) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return '• (AI ไม่พร้อมใช้งาน)'
+
   const salesChange = weekData.lastSales > 0
     ? ((weekData.thisSales - weekData.lastSales) / weekData.lastSales * 100).toFixed(1)
     : null
+  const profitChange = weekData.lastNetProfitPct != null
+    ? (weekData.thisNetProfitPct - weekData.lastNetProfitPct).toFixed(1)
+    : null
+  const checkProfit = (weekData.thisNetProfitPct ?? 0) >= 20 ? '✅' : (weekData.thisNetProfitPct ?? 0) >= 10 ? '🟡' : '🔴'
+  const checkMkt    = (weekData.thisMktFeePct ?? 0) <= 20 ? '✅' : (weekData.thisMktFeePct ?? 0) <= 25 ? '🟡' : '🔴'
+
   const topMenuLines = Object.values(weekData.thisAgg)
     .sort((a, b) => b.qty - a.qty).slice(0, 5)
     .map(m => {
@@ -1183,29 +1190,42 @@ async function getWeeklyAIInsights(weekData, monday, sunday, memory = []) {
       const tag  = m.margin >= 20 ? '✅ Push' : m.margin < 10 ? '🔴 ตรวจต้นทุน' : '🟡 ระวัง'
       return `  • ${m.name}: ×${m.qty}${vs} | Margin ${m.margin.toFixed(1)}% ${tag}`
     }).join('\n')
+
+  const platLines = Object.entries(weekData.thisPlatSales ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([plat, sales]) => {
+      const lastS = weekData.lastPlatSales?.[plat] ?? 0
+      const vsStr = lastS > 0 ? ` (${((sales - lastS) / lastS * 100).toFixed(1)}% vs สัปดาห์ก่อน)` : ''
+      const pct   = weekData.thisSales > 0 ? (sales / weekData.thisSales * 100).toFixed(1) : 0
+      return `  • ${plat}: ฿${fmt(sales)} (${pct}%)${vsStr}`
+    }).join('\n')
+
   const memoryBlock = buildMemoryContext(memory, 'weekly')
-  const profitChange = weekData.lastNetProfitPct != null
-    ? (weekData.thisNetProfitPct - weekData.lastNetProfitPct).toFixed(1)
-    : null
-  const prompt = `คุณคือ CMO+CFO ร้าน Cocoa House — วิเคราะห์สัปดาห์ที่ผ่านมาและวางแผนการตลาดสัปดาห์หน้า${memoryBlock}
-═══ ผลสัปดาห์ ${monday} ถึง ${sunday} ═══
-ยอดขายสัปดาห์นี้  ฿${fmt(weekData.thisSales)}  ${salesChange ? `(${Number(salesChange) >= 0 ? '↑' : '↓'}${Math.abs(salesChange)}% vs สัปดาห์ก่อน)` : ''}
-Net Profit          ${fmtPct(weekData.thisNetProfitPct ?? 0)}  ${profitChange ? `(${Number(profitChange) >= 0 ? '+' : ''}${profitChange}pp vs สัปดาห์ก่อน)` : ''}
-ยอดขายสัปดาห์ก่อน ฿${fmt(weekData.lastSales)}  Net Profit ${fmtPct(weekData.lastNetProfitPct ?? 0)}
+
+  const prompt = `คุณคือ Mirai — AI วิเคราะห์ธุรกิจ Cocoa House
+[Context: ร้านเป็น Delivery 100% ผ่าน LINE MAN และ GrabFood ไม่มีหน้าร้าน เปิด จ-ศ ช่วงเย็น-ดึก | ส-อา ทั้งวัน
+Action ต้องอยู่ในขอบเขตที่ทำได้จริง: ปรับราคา/เมนู/แคมเปญ platform/โปรโมต digital เท่านั้น]${memoryBlock}
+สัปดาห์ ${monday} – ${sunday}
+ยอดขาย ฿${fmt(weekData.thisSales)} ${salesChange ? `(${Number(salesChange) >= 0 ? '↑' : '↓'}${Math.abs(salesChange)}% vs สัปดาห์ก่อน)` : ''} | Net Profit ${fmtPct(weekData.thisNetProfitPct ?? 0)} ${checkProfit}${profitChange ? ` (${Number(profitChange) >= 0 ? '+' : ''}${profitChange}pp)` : ''} | Mkt ${fmtPct(weekData.thisMktFeePct ?? 0)} ${checkMkt}
+สัปดาห์ก่อน ฿${fmt(weekData.lastSales)} | Net Profit ${fmtPct(weekData.lastNetProfitPct ?? 0)}
+
+Platform:
+${platLines || 'ไม่มีข้อมูล'}
 
 Top 5 เมนู + Margin:
 ${topMenuLines || 'ไม่มีข้อมูล'}
 
-═══ วิเคราะห์ 4 ข้อ ═══
-ข้อ 1 — ผลสัปดาห์นี้: ยอดโต/ลด เมนูไหนขับเคลื่อน trend เป็นอย่างไร
-ข้อ 2 — แคมเปญที่ผ่านมาได้ผลไหม: เปรียบ volume เมนูและยอดขาย vs สัปดาห์ก่อน (อ้างอิง memory ถ้ามี)
-ข้อ 3 — Pricing/Campaign สัปดาห์หน้า: แนะนำ 1 action ชัดเจน เช่น ขึ้นราคาเมนู X ฿Y บน platform Z หรือลดราคา % เพื่อเพิ่ม volume โดยระบุเป้าที่คาดหวัง
-ข้อ 4 — KPI เป้าสัปดาห์หน้า: ยอดขาย ฿X และ Profit %Y
+ตอบ 4 bullet เท่านั้น แต่ละข้อ 1 บรรทัด:
+• 📊 [ผลสัปดาห์]: ยอดโต/ลด root cause + เมนู/platform ที่ขับเคลื่อน + ตัวเลขจริง
+• ⚡ [แคมเปญ]: แคมเปญที่ผ่านมาได้ผลไหม เทียบ volume vs สัปดาห์ก่อน (อ้างอิง memory ถ้ามี)
+• 💡 [Action สัปดาห์หน้า]: แนะนำ 1 action ชัดเจน platform/ราคา/เมนู พร้อมตัวเลขเป้าที่คาดหวัง
+• 🎯 [KPI สัปดาห์หน้า]: ยอดขาย ฿X และ Net Profit %Y
 
-กฎ: ภาษาไทย ตรงๆ ระบุตัวเลขจริง แต่ละข้อขึ้นต้น "• " ขึ้นบรรทัดใหม่`
+ห้ามใช้ prefix "ข้อ 1/2" ห้ามมี intro/outro ตัวเลขจริงทุกข้อ แต่ละ bullet ห้ามเกิน 40 คำ`
+
   const ai  = new Anthropic({ apiKey })
   const msg = await ai.messages.create({
-    model: 'claude-sonnet-4-6', max_tokens: 600,
+    model: 'claude-sonnet-4-6', max_tokens: 900,
     messages: [{ role: 'user', content: prompt }],
   })
   return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้'
@@ -1215,48 +1235,62 @@ ${topMenuLines || 'ไม่มีข้อมูล'}
 async function getMonthlyAIInsights(monthData, memory = []) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return '• (AI ไม่พร้อมใช้งาน)'
+
+  const salesChange = monthData.lastSales > 0
+    ? ((monthData.thisSales - monthData.lastSales) / monthData.lastSales * 100).toFixed(1)
+    : null
+  const profitChange = monthData.lastNetProfitPct != null
+    ? (monthData.thisNetProfitPct - monthData.lastNetProfitPct).toFixed(1)
+    : null
+  const checkProfit = monthData.thisNetProfitPct >= 20 ? '✅' : monthData.thisNetProfitPct >= 10 ? '🟡' : '🔴'
+  const checkMkt    = monthData.thisMktFeePct <= 20 ? '✅' : monthData.thisMktFeePct <= 25 ? '🟡' : '🔴'
+
+  const aovChange = monthData.lastAOV > 0
+    ? ((monthData.thisAOV - monthData.lastAOV) / monthData.lastAOV * 100).toFixed(1)
+    : null
+
   const top5Lines = monthData.top5.map(m => {
     const tag = m.margin >= 20 ? '✅ Push' : m.margin < 10 ? '🔴 ตรวจต้นทุน' : '🟡 ระวัง'
     return `  • ${m.name}: ×${m.qty} | Margin ${m.margin.toFixed(1)}% ${tag}`
   }).join('\n')
+
   const platLines = Object.entries(monthData.thisByPlatform)
     .sort((a, b) => b[1].sales - a[1].sales)
     .map(([plat, d]) => {
-      const last    = monthData.lastByPlatform[plat]
-      const growth  = last?.sales > 0 ? ((d.sales - last.sales) / last.sales * 100).toFixed(1) : null
-      const pct     = monthData.thisSales > 0 ? (d.sales / monthData.thisSales * 100).toFixed(1) : 0
-      return `  • ${plat}: ฿${fmt(d.sales)} (${pct}%)${growth !== null ? `  ${Number(growth) >= 0 ? '↑' : '↓'}${Math.abs(growth)}% vs เดือนก่อน` : ' (ใหม่)'}`
+      const last   = monthData.lastByPlatform[plat]
+      const growth = last?.sales > 0 ? ((d.sales - last.sales) / last.sales * 100).toFixed(1) : null
+      const pct    = monthData.thisSales > 0 ? (d.sales / monthData.thisSales * 100).toFixed(1) : 0
+      return `  • ${plat}: ฿${fmt(d.sales)} (${pct}%)${growth !== null ? ` ${Number(growth) >= 0 ? '↑' : '↓'}${Math.abs(growth)}% vs เดือนก่อน` : ' (ใหม่)'}`
     }).join('\n')
-  const aovChange = monthData.lastAOV > 0
-    ? ((monthData.thisAOV - monthData.lastAOV) / monthData.lastAOV * 100).toFixed(1)
-    : null
-  const aovLine = `฿${monthData.thisAOV.toFixed(0)}/ออเดอร์  (เดือนก่อน ฿${monthData.lastAOV.toFixed(0)}${aovChange !== null ? ` | ${Number(aovChange) >= 0 ? '↑' : '↓'}${Math.abs(aovChange)}%` : ''})`
-  const memoryBlock = buildMemoryContext(memory, 'monthly')
-  const prompt = `คุณคือ CMO+CFO ร้าน Cocoa House — สรุปเดือนที่ผ่านมาและวางกลยุทธ์การตลาดเดือนหน้า${memoryBlock}
-═══ ผลรวม ${monthData.monthName} ═══
-ยอดขายรวม    ฿${fmt(monthData.thisSales)}  (เดือนก่อน ฿${fmt(monthData.lastSales)})
-Net Profit    ${fmtPct(monthData.thisNetProfitPct)}  (เดือนก่อน ${fmtPct(monthData.lastNetProfitPct)})  [เป้า >20%]
-Marketing Fee ${fmtPct(monthData.thisMktFeePct)}  (เดือนก่อน ${fmtPct(monthData.lastMktFeePct)})  [เป้า ≤20%]
-จำนวนออเดอร์  ${monthData.thisOrderCount} ออเดอร์  (เดือนก่อน ${monthData.lastOrderCount} ออเดอร์)
-AOV ต่อออเดอร์ ${aovLine}
 
-ยอดขายแยก Platform:
+  const memoryBlock = buildMemoryContext(memory, 'monthly')
+
+  const prompt = `คุณคือ Mirai — AI วิเคราะห์ธุรกิจ Cocoa House
+[Context: ร้านเป็น Delivery 100% ผ่าน LINE MAN และ GrabFood ไม่มีหน้าร้าน เปิด จ-ศ ช่วงเย็น-ดึก | ส-อา ทั้งวัน
+Action ต้องอยู่ในขอบเขตที่ทำได้จริง: ปรับราคา/เมนู/แคมเปญ platform/โปรโมต digital เท่านั้น ห้ามแนะนำสิ่งที่ต้องการหน้าร้านหรือพนักงาน]${memoryBlock}
+${monthData.monthName}
+ยอดขาย ฿${fmt(monthData.thisSales)} ${salesChange ? `(${Number(salesChange) >= 0 ? '↑' : '↓'}${Math.abs(salesChange)}% vs เดือนก่อน)` : ''} | Net Profit ${fmtPct(monthData.thisNetProfitPct)} ${checkProfit}${profitChange ? ` (${Number(profitChange) >= 0 ? '+' : ''}${profitChange}pp)` : ''} | Mkt ${fmtPct(monthData.thisMktFeePct)} ${checkMkt}
+Orders: ${monthData.thisOrderCount} ออเดอร์ | AOV ฿${monthData.thisAOV.toFixed(0)}${aovChange !== null ? ` (${Number(aovChange) >= 0 ? '↑' : '↓'}${Math.abs(aovChange)}% vs เดือนก่อน)` : ''}
+เดือนก่อน ฿${fmt(monthData.lastSales)} | Net Profit ${fmtPct(monthData.lastNetProfitPct)} | ${monthData.lastOrderCount} ออเดอร์ | AOV ฿${monthData.lastAOV.toFixed(0)}
+
+Platform:
 ${platLines || 'ไม่มีข้อมูล'}
 
 Top 5 เมนู + Margin:
 ${top5Lines || 'ไม่มีข้อมูล'}
 
-═══ วิเคราะห์ 5 ข้อ ═══
-ข้อ 1 — สรุปภาพรวม: ยอดขายโตหรือหด Marketing Fee คุ้มไหม เทียบเป้า (อ้างอิง memory ถ้ามี)
-ข้อ 2 — Platform Strategy: Platform ไหนเติบโต/หด ควรเพิ่ม/ลดงบ ปรับราคาบน Platform ใด
-ข้อ 3 — AOV & Pricing: AOV เพิ่ม/ลด — แนะนำ pricing เมนูที่ควรปรับ (ขึ้น/ลง ฿เท่าไหร่) และ bundle ที่เพิ่ม AOV ได้จริง
-ข้อ 4 — Menu Optimization: เมนู margin สูงที่ควร push หนัก เมนูที่ควรปรับต้นทุนหรือตัดออก พร้อมเหตุผลจากตัวเลข
-ข้อ 5 — กลยุทธ์เดือนหน้า: 1 แผนหลักพร้อม KPI วัดได้ (ยอดขาย ฿X / Profit Y% / AOV ฿Z) และขั้นตอนที่ทำได้จริง
+ตอบ 5 bullet เท่านั้น แต่ละข้อ 1 บรรทัด:
+• 📊 [ภาพรวมเดือน]: ยอดโต/ลด root cause + Marketing Fee คุ้มไหม (อ้างอิง memory ถ้ามี)
+• 🏪 [Platform]: Platform ไหนเติบโต/หด + ควรปรับงบ/ราคาที่ Platform ใด
+• 💰 [AOV & Pricing]: AOV เพิ่ม/ลด + เมนูที่ควรปรับราคา (฿เท่าไหร่) หรือ bundle เพิ่ม AOV
+• 🍫 [Menu]: เมนู margin สูงควร push / เมนู margin ต่ำควรแก้ต้นทุนหรือตัดออก + เหตุผลตัวเลข
+• 🎯 [กลยุทธ์เดือนหน้า]: 1 แผนหลัก + KPI วัดได้ (ยอดขาย ฿X / Profit %Y / AOV ฿Z)
 
-กฎ: ภาษาไทย ตรงๆ ระบุตัวเลขจริงทุกข้อ แต่ละข้อขึ้นต้น "• " ขึ้นบรรทัดใหม่ ห้ามพูดกว้างๆ`
+ห้ามใช้ prefix "ข้อ 1/2" ห้ามมี intro/outro ตัวเลขจริงทุกข้อ แต่ละ bullet ห้ามเกิน 40 คำ`
+
   const ai  = new Anthropic({ apiKey })
   const msg = await ai.messages.create({
-    model: 'claude-sonnet-4-6', max_tokens: 700,
+    model: 'claude-sonnet-4-6', max_tokens: 1100,
     messages: [{ role: 'user', content: prompt }],
   })
   return msg.content[0]?.text ?? '• ไม่สามารถวิเคราะห์ได้'
