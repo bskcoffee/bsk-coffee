@@ -1,20 +1,20 @@
 /**
- * SystemPage.jsx — Cocoa House System Architecture
+ * SystemPage.jsx — BSK coffee&bakery System Architecture
  * แสดง structure ของระบบทั้งหมด: pages, data flow, supabase tables
  */
 
-const COCOA_BROWN = '#7c4a1e'
+const COCOA_BROWN = '#1e40af'
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
 const APPS = [
   {
     id: 'cocoa-house',
-    label: 'Cocoa House',
-    sublabel: 'cocoa-house.vercel.app',
-    color: '#7c4a1e',
-    bg: '#fdf6f0',
-    border: '#e8c9a8',
+    label: 'BSK coffee&bakery',
+    sublabel: 'bsk-coffee.vercel.app',
+    color: '#1e40af',
+    bg: '#eff6ff',
+    border: '#bfdbfe',
     pages: [
       {
         path: '/',
@@ -260,7 +260,7 @@ export default function SystemPage() {
           System Architecture
         </h1>
         <p style={{ color: '#6b7280', marginTop: 4, fontSize: 13 }}>
-          โครงสร้างระบบ Cocoa House — แอพ, หน้า, ตาราง Supabase และกฎการคำนวณ
+          โครงสร้างระบบ BSK coffee&bakery — แอพ, หน้า, ตาราง Supabase และกฎการคำนวณ
         </p>
       </div>
 
@@ -388,7 +388,7 @@ export default function SystemPage() {
       </section>
 
       <p style={{ fontSize: 11, color: '#d1d5db', textAlign: 'right' }}>
-        Cocoa House · System Architecture · อัปเดต {new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}
+        BSK coffee&bakery · System Architecture · อัปเดต {new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}
       </p>
     </div>
   )

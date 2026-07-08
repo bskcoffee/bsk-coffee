@@ -4,8 +4,8 @@
   "description": "ระบบบันทึกและวิเคราะห์ยอดขายสำหรับร้าน BSK coffee&bakery",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#fdf8f5",
-  "theme_color": "#a13911",
+  "background_color": "#eff6ff",
+  "theme_color": "#1d4ed8",
   "orientation": "portrait-primary",
   "lang": "th",
   "icons": [

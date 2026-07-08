@@ -86,7 +86,7 @@ function SuperAdminRoute({ children }) {
         <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-xs space-y-5">
           <div className="text-center">
             <div className="w-12 h-12 bg-cocoa-100 rounded-full flex items-center justify-center mx-auto mb-3">
-              <svg width="22" height="22" fill="none" stroke="#7c4a1e" strokeWidth="2" viewBox="0 0 24 24">
+              <svg width="22" height="22" fill="none" stroke="#1e40af" strokeWidth="2" viewBox="0 0 24 24">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
               </svg>
             </div>

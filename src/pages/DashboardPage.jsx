@@ -1260,7 +1260,7 @@ export default function DashboardPage() {
                           <YAxis tick={{ fontSize: 11 }} />
                           <Tooltip formatter={(v) => formatBaht(v)} />
                           <Legend />
-                          <Line type="monotone" dataKey="ยอดขาย" stroke="#a13911" strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="ยอดขาย" stroke="#1d4ed8" strokeWidth={2} dot={false} />
                           <Line type="monotone" dataKey="กำไร" stroke="#22c55e" strokeWidth={2} dot={false} />
                         </LineChart>
                       </ResponsiveContainer>
