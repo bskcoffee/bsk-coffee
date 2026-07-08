@@ -22,8 +22,8 @@ export default function LoginPage() {
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-8 w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="text-4xl mb-2">🍫</div>
-          <h1 className="text-2xl font-bold text-cocoa-800">Cocoa House POS</h1>
-          <p className="text-gray-400 text-sm mt-1">เข้าสู่ระบบด้วยบัญชี Cocoa House</p>
+          <h1 className="text-2xl font-bold text-cocoa-800">BSK coffee&bakery POS</h1>
+          <p className="text-gray-400 text-sm mt-1">เข้าสู่ระบบด้วยบัญชี BSK coffee&bakery</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -70,6 +70,4 @@ export default function LoginPage() {
           </button>
         </form>
       </div>
-    </div>
-  )
-}
+    </di

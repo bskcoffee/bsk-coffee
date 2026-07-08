@@ -29,7 +29,7 @@ export default function LoginPage() {
           <div className="w-20 h-20 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Coffee size={40} className="text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white">Cocoa House</h1>
+          <h1 className="text-2xl font-bold text-white">BSK coffee&bakery</h1>
           <p className="text-cocoa-200 text-sm mt-1">ระบบจัดการยอดขาย</p>
         </div>
 
@@ -92,5 +92,4 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
-  )
-}
+  

@@ -1,7 +1,7 @@
 {
-  "name": "Cocoa House — ระบบจัดการยอดขาย",
-  "short_name": "Cocoa House",
-  "description": "ระบบบันทึกและวิเคราะห์ยอดขายสำหรับร้าน Cocoa House",
+  "name": "BSK coffee&bakery — ระบบจัดการยอดขาย",
+  "short_name": "BSK coffee&bakery",
+  "description": "ระบบบันทึกและวิเคราะห์ยอดขายสำหรับร้าน BSK coffee&bakery",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#fdf8f5",
@@ -26,7 +26,4 @@
     {
       "name": "Dashboard",
       "url": "/",
-      "description": "ดูสรุปยอดขาย"
-    }
-  ]
-}
+      "description": "ดูสรุปยอดขาย
