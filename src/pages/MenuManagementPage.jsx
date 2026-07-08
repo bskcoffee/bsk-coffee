@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase, updateMenuPrice } from '../lib/supabase'
+import { supabase, updateMenuPrice, getSetting } from '../lib/supabase'
 import { formatBaht } from '../utils/calculations'
 import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban, ImagePlus, Loader2 } from 'lucide-react'
 
-const PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
+// Fallback เมื่อยังไม่มีการตั้งค่า platform ใน Supabase (ต้องตรงกับ LEGACY_PLATFORMS ใน SettingsPage.jsx)
+const DEFAULT_PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU', 'Other']
 const CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun', 'Refill', 'Addon']
 
 const PLAT_BADGE = {
@@ -14,18 +15,33 @@ const PLAT_BADGE = {
   'The metro': 'bg-blue-100 text-blue-800',
   TU:          'bg-purple-100 text-purple-800',
 }
+const DEFAULT_BADGE = 'bg-gray-100 text-gray-700'
 
-function MenuModal({ menu, onClose, onSave }) {
+// โหลดรายชื่อ platform ปัจจุบันจาก Supabase (key เดียวกับที่หน้าตั้งค่าใช้บันทึก)
+async function loadPlatformNames() {
+  try {
+    const raw = await getSetting('platform_config')
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map(p => p.name).filter(Boolean)
+      }
+    }
+  } catch { /* fall through to default */ }
+  return DEFAULT_PLATFORMS
+}
+
+function MenuModal({ menu, platforms, onClose, onSave }) {
   const [form, setForm] = useState({
     name: menu?.name ?? '',
     category: menu?.category ?? 'Cocoa',
     image_url: menu?.image_url ?? '',
     prices: {
-      GRAB: 0, LINE: 0, SHOPEE: 0, 'The metro': 0, TU: 0,
+      ...Object.fromEntries(platforms.map(p => [p, 0])),
       ...(menu?.prices ?? {}),
     },
     originalPrices: {
-      GRAB: 0, LINE: 0, SHOPEE: 0, 'The metro': 0, TU: 0,
+      ...Object.fromEntries(platforms.map(p => [p, 0])),
       ...(menu?.originalPrices ?? {}),
     },
   })
@@ -150,7 +166,7 @@ function MenuModal({ menu, onClose, onSave }) {
         }).eq('id', menu.id)
 
         // Update prices (close old, open new) + original_price
-        for (const plat of PLATFORMS) {
+        for (const plat of platforms) {
           const oldPrice    = menu.prices?.[plat]         ?? 0
           const newPrice    = form.prices[plat]           ?? 0
           const origPrice   = form.originalPrices[plat]  ?? 0
@@ -173,7 +189,7 @@ function MenuModal({ menu, onClose, onSave }) {
           .single()
 
         if (newMenu) {
-          for (const plat of PLATFORMS) {
+          for (const plat of platforms) {
             await supabase.from('menu_prices').insert({
               menu_id:        newMenu.id,
               platform:       plat,
@@ -307,7 +323,7 @@ function MenuModal({ menu, onClose, onSave }) {
               <span className="text-xs font-medium text-gray-400 text-right">ราคาขายตอนนี้</span>
             </div>
             <div className="flex flex-col gap-2">
-              {PLATFORMS.map(plat => {
+              {platforms.map(plat => {
                 const orig   = form.originalPrices[plat] ?? 0
                 const cur    = form.prices[plat] ?? 0
                 const disc   = orig > 0 && cur < orig
@@ -315,7 +331,7 @@ function MenuModal({ menu, onClose, onSave }) {
                 return (
                   <div key={plat} className="grid grid-cols-3 gap-2 items-center">
                     <div className="flex items-center gap-1.5">
-                      <span className={`badge text-xs ${PLAT_BADGE[plat]}`}>{plat}</span>
+                      <span className={`badge text-xs ${PLAT_BADGE[plat] || DEFAULT_BADGE}`}>{plat}</span>
                       {disc > 0 && (
                         <span className="text-[10px] bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded-full">
                           -{disc}%
@@ -399,7 +415,7 @@ function PriceHistoryModal({ menu, onClose }) {
               {history.map(h => (
                 <div key={h.id} className="flex items-center justify-between text-sm border-b pb-2">
                   <div>
-                    <span className={`badge mr-2 ${PLAT_BADGE[h.platform]}`}>{h.platform}</span>
+                    <span className={`badge mr-2 ${PLAT_BADGE[h.platform] || DEFAULT_BADGE}`}>{h.platform}</span>
                     <span className="font-medium">{formatBaht(h.price)}</span>
                   </div>
                   <div className="text-xs text-gray-400">
@@ -425,6 +441,7 @@ export default function MenuManagementPage() {
   const [editMenu, setEditMenu] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [historyMenu, setHistoryMenu] = useState(null)
+  const [platforms, setPlatforms] = useState(DEFAULT_PLATFORMS)
   const dragId = useRef(null)
   const dragOverId = useRef(null)
 
@@ -465,6 +482,7 @@ export default function MenuManagementPage() {
   useEffect(() => {
     loadMenus()
     loadMenuCosts()
+    loadPlatformNames().then(setPlatforms)
   }, [])
 
   const handleDragStart = (id) => { dragId.current = id }
@@ -655,13 +673,13 @@ export default function MenuManagementPage() {
                       </div>
 
                       <div className="flex gap-1.5 flex-wrap">
-                        {PLATFORMS.map(p => {
+                        {platforms.map(p => {
                           const orig    = originalPrices[p] ?? 0
                           const cur     = prices[p] ?? 0
                           const discPct = orig > 0 && cur < orig
                             ? Math.round((orig - cur) / orig * 100) : 0
                           return (
-                            <span key={p} className={`badge ${PLAT_BADGE[p]}`}>
+                            <span key={p} className={`badge ${PLAT_BADGE[p] || DEFAULT_BADGE}`}>
                               {p} {formatBaht(cur)}
                               {discPct > 0 && (
                                 <span className="ml-1 text-[10px] bg-red-100 text-red-700 font-bold px-1 rounded">
@@ -727,6 +745,7 @@ export default function MenuManagementPage() {
       {(showAdd || editMenu) && (
         <MenuModal
           menu={editMenu}
+          platforms={platforms}
           onClose={() => { setShowAdd(false); setEditMenu(null) }}
           onSave={loadMenus}
         />
