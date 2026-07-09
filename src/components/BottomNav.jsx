@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, ShoppingCart, ClipboardList, BarChart3,
   Settings, UtensilsCrossed, Calculator, Users, LogOut,
-  MoreHorizontal, X, FileUp, Wallet, Tablet,
+  MoreHorizontal, X, FileUp, Wallet, Tablet, Lock,
 } from 'lucide-react'
 
 const PASSKEY = '18879'
@@ -77,6 +77,8 @@ export default function BottomNav() {
     return () => window.removeEventListener('keydown', onKey)
   }, [sheetOpen, showPasskey])
 
+  // Items without access are still shown (not filtered out) — just greyed
+  // out and non-navigable — so users can see what exists without entering it.
   const canSee = (item) => {
     if (item.special) return canAccessAdminPage(role, adminPageAccess, item.to)
     if (STAFF_GATED.has(item.to)) return role !== 'staff' || staffPageAccess.includes(item.to)
@@ -84,14 +86,13 @@ export default function BottomNav() {
   }
 
   const mainItems = items
-    .filter(i => MAIN_TOS.has(i.to) && canSee(i))
+    .filter(i => MAIN_TOS.has(i.to))
     .slice(0, 4)
 
-  const sheetItems = items.filter(
-    i => !MAIN_TOS.has(i.to) && canSee(i)
-  )
+  const sheetItems = items.filter(i => !MAIN_TOS.has(i.to))
 
-  const handleSheetNav = (to) => {
+  const handleSheetNav = (to, allowed) => {
+    if (!allowed) return
     setSheetOpen(false)
     navigate(to)
   }
@@ -100,26 +101,46 @@ export default function BottomNav() {
     <>
       <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 safe-bottom z-50">
         <div className="flex">
-          {mainItems.map(({ to, icon: Icon, label, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) =>
-                `flex-1 flex flex-col items-center justify-center py-2 text-xs gap-0.5 transition-colors ${
-                  isActive ? 'text-cocoa-700' : 'text-gray-500'
-                }`
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <Icon size={22} strokeWidth={isActive ? 2.5 : 1.5} />
-                  <span className={isActive ? 'font-semibold' : ''}>{label}</span>
-                  <span className={`w-1 h-1 rounded-full transition-all ${isActive ? 'bg-cocoa-700' : 'bg-transparent'}`} />
-                </>
-              )}
-            </NavLink>
-          ))}
+          {mainItems.map((item) => {
+            const { to, icon: Icon, label, end } = item
+            const allowed = canSee(item)
+
+            if (!allowed) {
+              return (
+                <div
+                  key={to}
+                  aria-disabled="true"
+                  title="ไม่มีสิทธิ์เข้าถึงเมนูนี้"
+                  className="flex-1 flex flex-col items-center justify-center py-2 text-xs gap-0.5 text-gray-300 cursor-not-allowed select-none"
+                >
+                  <Icon size={22} strokeWidth={1.5} className="opacity-50" />
+                  <span className="flex items-center gap-0.5">{label} <Lock size={9} /></span>
+                  <span className="w-1 h-1 rounded-full bg-transparent" />
+                </div>
+              )
+            }
+
+            return (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                className={({ isActive }) =>
+                  `flex-1 flex flex-col items-center justify-center py-2 text-xs gap-0.5 transition-colors ${
+                    isActive ? 'text-cocoa-700' : 'text-gray-500'
+                  }`
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    <Icon size={22} strokeWidth={isActive ? 2.5 : 1.5} />
+                    <span className={isActive ? 'font-semibold' : ''}>{label}</span>
+                    <span className={`w-1 h-1 rounded-full transition-all ${isActive ? 'bg-cocoa-700' : 'bg-transparent'}`} />
+                  </>
+                )}
+              </NavLink>
+            )
+          })}
 
           <button
             onClick={() => setSheetOpen(true)}
@@ -155,18 +176,33 @@ export default function BottomNav() {
             </div>
 
             <div className="grid grid-cols-4 gap-2 mb-4">
-              {sheetItems.map(({ to, icon: Icon, label }) => (
-                <button
-                  key={to}
-                  onClick={() => handleSheetNav(to)}
-                  className="flex flex-col items-center gap-1.5 py-3 px-1 rounded-xl hover:bg-gray-100 active:bg-gray-200 transition-colors"
-                >
-                  <div className="w-12 h-12 bg-cocoa-50 rounded-xl flex items-center justify-center">
-                    <Icon size={22} className="text-cocoa-700" />
-                  </div>
-                  <span className="text-xs text-gray-600 text-center leading-tight">{label}</span>
-                </button>
-              ))}
+              {sheetItems.map((item) => {
+                const { to, icon: Icon, label } = item
+                const allowed = canSee(item)
+                return (
+                  <button
+                    key={to}
+                    onClick={() => handleSheetNav(to, allowed)}
+                    aria-disabled={!allowed}
+                    title={!allowed ? 'ไม่มีสิทธิ์เข้าถึงเมนูนี้' : undefined}
+                    className={`flex flex-col items-center gap-1.5 py-3 px-1 rounded-xl transition-colors ${
+                      allowed
+                        ? 'hover:bg-gray-100 active:bg-gray-200'
+                        : 'cursor-not-allowed'
+                    }`}
+                  >
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center relative ${
+                      allowed ? 'bg-cocoa-50' : 'bg-gray-100'
+                    }`}>
+                      <Icon size={22} className={allowed ? 'text-cocoa-700' : 'text-gray-300'} />
+                      {!allowed && (
+                        <Lock size={11} className="absolute -top-1 -right-1 text-gray-400 bg-white rounded-full p-0.5" />
+                      )}
+                    </div>
+                    <span className={`text-xs text-center leading-tight ${allowed ? 'text-gray-600' : 'text-gray-300'}`}>{label}</span>
+                  </button>
+                )
+              })}
             </div>
 
             <div className="border-t border-gray-100 pt-3 space-y-1">

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network, Brain, ChevronUp, ChevronDown } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network, Brain, ChevronUp, ChevronDown, Lock } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions, canAccessAdminPage } from '../contexts/PermissionsContext'
 import { supabase } from '../lib/supabase'
@@ -130,14 +130,15 @@ export default function Sidebar() {
       })
   }, [])
 
-  // 3-tier visibility: special pages follow admin_page_access (super_admin
+  // 3-tier access: special pages follow admin_page_access (super_admin
   // always in, admin only if granted); ops pages follow staff_page_access
-  // for staff (admin/super_admin always see them).
-  const visibleItems = items.filter(item => {
+  // for staff (admin/super_admin always have access). Items without access
+  // are still rendered (per menu-visibility rule below) but disabled.
+  const hasAccess = (item) => {
     if (item.special) return canAccessAdminPage(role, adminPageAccess, item.to)
     if (STAFF_GATED.has(item.to)) return role !== 'staff' || staffPageAccess.includes(item.to)
     return true
-  })
+  }
 
   const handleDragStart = (e, idx) => {
     dragIdx.current = idx
@@ -186,13 +187,13 @@ export default function Sidebar() {
   }
 
   // Keyboard-accessible alternative to drag-and-drop: move item up/down
-  // among the currently visible items, persisting the same way as drop.
+  // among all items (in display order), persisting the same way as drop.
   const moveItem = async (to, direction) => {
-    const visibleTos = visibleItems.map(i => i.to)
-    const pos       = visibleTos.indexOf(to)
+    const tos       = items.map(i => i.to)
+    const pos       = tos.indexOf(to)
     const targetPos = pos + direction
-    if (pos === -1 || targetPos < 0 || targetPos >= visibleTos.length) return
-    const neighborTo = visibleTos[targetPos]
+    if (pos === -1 || targetPos < 0 || targetPos >= tos.length) return
+    const neighborTo = tos[targetPos]
 
     const reordered  = [...items]
     const fromIdx     = reordered.findIndex(i => i.to === to)
@@ -226,12 +227,16 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Nav — draggable */}
+      {/* Nav — draggable. Items without access are still shown, greyed out
+          and non-clickable, so staff/admin can see what exists without
+          being able to enter it. */}
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {visibleItems.map(({ to, iconName, label, end }, idx) => {
+        {items.map((navItem, idx) => {
+          const { to, iconName, label, end } = navItem
           const Icon       = ICON_MAP[iconName]
           const isOver     = dragOver === idx
           const isDragging = dragging && dragIdx.current === idx
+          const allowed    = hasAccess(navItem)
 
           return (
             <div
@@ -247,44 +252,59 @@ export default function Sidebar() {
                 <div className="absolute -top-px left-2 right-2 h-0.5 bg-cocoa-300 rounded-full z-10" />
               )}
 
-              <NavLink
-                to={to}
-                end={end}
-                className={({ isActive }) =>
-                  `flex items-center gap-2 px-2 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-grab active:cursor-grabbing ${
-                    isActive
-                      ? 'bg-cocoa-600 text-white'
-                      : 'text-cocoa-200 hover:bg-cocoa-700 hover:text-white'
-                  } ${isOver && dragIdx.current !== idx ? 'bg-cocoa-700' : ''}`
-                }
-              >
-                <GripVertical size={14} className="shrink-0 text-cocoa-500 group-hover:text-cocoa-300 transition-colors" aria-hidden="true" />
-                <Icon size={16} className="shrink-0" />
-                <span className="truncate flex-1">{label}</span>
-                {/* Keyboard-accessible reorder alternative to drag-and-drop */}
-                <span className="hidden group-hover:flex group-focus-within:flex shrink-0 flex-col -my-1">
-                  <button
-                    type="button"
-                    draggable={false}
-                    onClick={e => { e.preventDefault(); e.stopPropagation(); moveItem(to, -1) }}
-                    disabled={idx === 0}
-                    aria-label={`ย้าย ${label} ขึ้น`}
-                    className="p-0.5 rounded text-cocoa-300 hover:text-white hover:bg-cocoa-600 disabled:opacity-30 disabled:pointer-events-none"
-                  >
-                    <ChevronUp size={12} />
-                  </button>
-                  <button
-                    type="button"
-                    draggable={false}
-                    onClick={e => { e.preventDefault(); e.stopPropagation(); moveItem(to, 1) }}
-                    disabled={idx === visibleItems.length - 1}
-                    aria-label={`ย้าย ${label} ลง`}
-                    className="p-0.5 rounded text-cocoa-300 hover:text-white hover:bg-cocoa-600 disabled:opacity-30 disabled:pointer-events-none"
-                  >
-                    <ChevronDown size={12} />
-                  </button>
-                </span>
-              </NavLink>
+              {allowed ? (
+                <NavLink
+                  to={to}
+                  end={end}
+                  className={({ isActive }) =>
+                    `flex items-center gap-2 px-2 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-grab active:cursor-grabbing ${
+                      isActive
+                        ? 'bg-cocoa-600 text-white'
+                        : 'text-cocoa-200 hover:bg-cocoa-700 hover:text-white'
+                    } ${isOver && dragIdx.current !== idx ? 'bg-cocoa-700' : ''}`
+                  }
+                >
+                  <GripVertical size={14} className="shrink-0 text-cocoa-500 group-hover:text-cocoa-300 transition-colors" aria-hidden="true" />
+                  <Icon size={16} className="shrink-0" />
+                  <span className="truncate flex-1">{label}</span>
+                  {/* Keyboard-accessible reorder alternative to drag-and-drop */}
+                  <span className="hidden group-hover:flex group-focus-within:flex shrink-0 flex-col -my-1">
+                    <button
+                      type="button"
+                      draggable={false}
+                      onClick={e => { e.preventDefault(); e.stopPropagation(); moveItem(to, -1) }}
+                      disabled={idx === 0}
+                      aria-label={`ย้าย ${label} ขึ้น`}
+                      className="p-0.5 rounded text-cocoa-300 hover:text-white hover:bg-cocoa-600 disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      <ChevronUp size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      draggable={false}
+                      onClick={e => { e.preventDefault(); e.stopPropagation(); moveItem(to, 1) }}
+                      disabled={idx === items.length - 1}
+                      aria-label={`ย้าย ${label} ลง`}
+                      className="p-0.5 rounded text-cocoa-300 hover:text-white hover:bg-cocoa-600 disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      <ChevronDown size={12} />
+                    </button>
+                  </span>
+                </NavLink>
+              ) : (
+                <div
+                  aria-disabled="true"
+                  title="ไม่มีสิทธิ์เข้าถึงเมนูนี้"
+                  className={`flex items-center gap-2 px-2 py-2.5 rounded-lg text-sm font-medium text-cocoa-400/40 cursor-not-allowed select-none ${
+                    isOver && dragIdx.current !== idx ? 'bg-cocoa-700/40' : ''
+                  }`}
+                >
+                  <GripVertical size={14} className="shrink-0 text-cocoa-500/40" aria-hidden="true" />
+                  <Icon size={16} className="shrink-0 opacity-50" />
+                  <span className="truncate flex-1">{label}</span>
+                  <Lock size={12} className="shrink-0 opacity-60" aria-hidden="true" />
+                </div>
+              )}
             </div>
           )
         })}
