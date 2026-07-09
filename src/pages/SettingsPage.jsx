@@ -25,78 +25,6 @@ function StatusMessage({ status }) {
   )
 }
 
-// ─── LIFF Config Section ───────────────────────────────────────────────────
-
-const LIFF_FIELDS = [
-  { key: 'promptpay_qr_url',    label: 'URL รูป QR PromptPay',    placeholder: '/promptpay-qr.png',           type: 'text'   },
-  { key: 'line_oa_url',         label: 'LINE OA URL (Add Friend)', placeholder: 'https://line.me/R/ti/p/@...', type: 'text'   },
-  { key: 'delivery_radius_km',  label: 'รัศมีจัดส่ง (กม.)',        placeholder: '3',                           type: 'number' },
-  { key: 'delivery_fee_per_km', label: 'ค่าส่งต่อ กม. (฿)',        placeholder: '15',                          type: 'number' },
-  { key: 'free_delivery_min',   label: 'ยอดสั่งฟรีค่าส่ง (฿)',     placeholder: '249',                         type: 'number' },
-  { key: 'store_status',        label: 'สถานะร้าน',                 placeholder: '',                            type: 'select',
-    options: [{ value: 'open', label: '🟢 เปิดร้าน' }, { value: 'closed', label: '🔴 ปิดร้าน' }] },
-]
-
-function LiffConfigSection() {
-  const [config,  setConfig]  = useState({})
-  const [loading, setLoading] = useState(true)
-  const [saving,  setSaving]  = useState(false)
-  const [status,  setStatus]  = useState('')
-
-  useEffect(() => {
-    supabase.from('liff_config').select('key, value')
-      .then(({ data }) => {
-        setConfig(Object.fromEntries((data ?? []).map(r => [r.key, r.value])))
-        setLoading(false)
-      })
-  }, [])
-
-  const handleSave = async () => {
-    setSaving(true)
-    const upserts = Object.entries(config).map(([key, value]) => ({ key, value }))
-    const { error } = await supabase.from('liff_config').upsert(upserts, { onConflict: 'key' })
-    setSaving(false)
-    const msg = error ? 'เกิดข้อผิดพลาด — กรุณาลองอีกครั้ง' : 'บันทึกสำเร็จ!'
-    setStatus(msg)
-    if (!error) setTimeout(() => setStatus(''), 3000)
-  }
-
-  if (loading) return <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-cocoa-400" /></div>
-
-  return (
-    <div className="space-y-4">
-      {LIFF_FIELDS.map(f => (
-        <div key={f.key}>
-          <label className="block text-sm font-semibold text-gray-700 mb-1.5">{f.label}</label>
-          {f.type === 'select' ? (
-            <select
-              value={config[f.key] ?? 'open'}
-              onChange={e => setConfig(p => ({ ...p, [f.key]: e.target.value }))}
-              className="input"
-            >
-              {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          ) : (
-            <input
-              type={f.type}
-              value={config[f.key] ?? ''}
-              onChange={e => setConfig(p => ({ ...p, [f.key]: e.target.value }))}
-              placeholder={f.placeholder}
-              className="input"
-            />
-          )}
-        </div>
-      ))}
-      <div className="flex items-center gap-3">
-        <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">
-          {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-          {saving ? 'กำลังบันทึก...' : 'บันทึก'}
-        </button>
-        <StatusMessage status={status} />
-      </div>
-    </div>
-  )
-}
 
 // ─── Menu Categories Section ───────────────────────────────────────────────
 
@@ -644,12 +572,6 @@ export default function SettingsPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-5">
       <h1 className="text-xl font-bold text-gray-900">ตั้งค่า</h1>
-
-      {/* ── 0. LIFF / LINE@ Config ─────────────────────────────── */}
-      <div className="card space-y-4">
-        <h2 className="font-semibold text-gray-800">📱 LINE@ / LIFF Config</h2>
-        <LiffConfigSection />
-      </div>
 
       {/* ── 0b. Menu Categories ────────────────────────────────── */}
       <div className="card space-y-4">
