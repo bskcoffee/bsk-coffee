@@ -2,11 +2,18 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, updateMenuPrice, getSetting } from '../lib/supabase'
 import { formatBaht } from '../utils/calculations'
-import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban, ImagePlus, Loader2 } from 'lucide-react'
+import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban, ImagePlus, Loader2, Tags, Trash2, ChevronUp, ChevronDown, Lock } from 'lucide-react'
+import ConfirmModal from '../components/ConfirmModal'
 
 // Fallback เมื่อยังไม่มีการตั้งค่า platform ใน Supabase (ต้องตรงกับ LEGACY_PLATFORMS ใน SettingsPage.jsx)
 const DEFAULT_PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU', 'Other']
-const CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun', 'Refill', 'Addon']
+// ค่าเริ่มต้นเมื่อยังไม่มี settings.menu_categories — ตรงกับ list เดิมที่เคย hardcode ไว้
+const DEFAULT_CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun', 'Refill', 'Addon']
+const CATEGORIES_KEY = 'menu_categories'
+// หมวดหมู่ที่ฝั่ง POS (cocoa-pos/src/pages/POSPage.jsx) ผูก logic พิเศษไว้ตรงชื่อ —
+// ห้ามเปลี่ยนชื่อ/ลบจากหน้านี้ เพื่อไม่ให้พฤติกรรม POS พัง
+const RESERVED_CATEGORIES = new Set(['Bun', 'Refill', 'Addon'])
+const NEW_CATEGORY_VALUE = '__new_category__'
 
 const PLAT_BADGE = {
   GRAB:        'bg-green-100 text-green-800',
@@ -31,10 +38,30 @@ async function loadPlatformNames() {
   return DEFAULT_PLATFORMS
 }
 
-function MenuModal({ menu, platforms, onClose, onSave }) {
+// โหลดรายชื่อหมวดหมู่สินค้าปัจจุบันจาก Supabase
+async function loadCategoryNames() {
+  try {
+    const raw = await getSetting(CATEGORIES_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.filter(Boolean)
+      }
+    }
+  } catch { /* fall through to default */ }
+  return DEFAULT_CATEGORIES
+}
+
+async function saveCategoryNames(list) {
+  return supabase
+    .from('settings')
+    .upsert({ key: CATEGORIES_KEY, value: JSON.stringify(list) }, { onConflict: 'key' })
+}
+
+function MenuModal({ menu, platforms, categories, onAddCategory, onClose, onSave }) {
   const [form, setForm] = useState({
     name: menu?.name ?? '',
-    category: menu?.category ?? 'Cocoa',
+    category: menu?.category ?? categories[0] ?? 'Cocoa',
     image_url: menu?.image_url ?? '',
     prices: {
       ...Object.fromEntries(platforms.map(p => [p, 0])),
@@ -51,6 +78,12 @@ function MenuModal({ menu, platforms, onClose, onSave }) {
   const [pendingFile,  setPendingFile]  = useState(null)   // raw File
   const [pendingDims,  setPendingDims]  = useState(null)   // { w, h }
   const [cropPos,      setCropPos]      = useState({ x: 50, y: 50 }) // 0-100%
+
+  // --- เพิ่มหมวดหมู่ใหม่แบบด่วนจากในฟอร์มนี้ ---
+  const [addingCat,   setAddingCat]   = useState(false)
+  const [newCatName,  setNewCatName]  = useState('')
+  const [catError,    setCatError]    = useState('')
+  const [savingCat,   setSavingCat]   = useState(false)
 
   const imgInputRef = useRef(null)
   const previewRef  = useRef(null)
@@ -150,6 +183,35 @@ function MenuModal({ menu, platforms, onClose, onSave }) {
       cancelPending()
     } catch (err) { alert('อัปโหลดรูปไม่สำเร็จ: ' + err.message) }
     setUploadingImg(false)
+  }
+
+  const handleCategoryChange = (value) => {
+    if (value === NEW_CATEGORY_VALUE) {
+      setAddingCat(true)
+      setCatError('')
+      return
+    }
+    setForm(f => ({ ...f, category: value }))
+  }
+
+  const handleAddCategory = async () => {
+    const trimmed = newCatName.trim()
+    if (!trimmed) return
+    if (categories.some(c => c.toLowerCase() === trimmed.toLowerCase())) {
+      setCatError('มีหมวดหมู่นี้อยู่แล้ว')
+      return
+    }
+    setSavingCat(true)
+    try {
+      await onAddCategory(trimmed)
+      setForm(f => ({ ...f, category: trimmed }))
+      setAddingCat(false)
+      setNewCatName('')
+      setCatError('')
+    } catch (err) {
+      setCatError('เพิ่มหมวดหมู่ไม่สำเร็จ: ' + err.message)
+    }
+    setSavingCat(false)
   }
 
   const handleSubmit = async (e) => {
@@ -302,10 +364,35 @@ function MenuModal({ menu, platforms, onClose, onSave }) {
             <select
               className="input"
               value={form.category}
-              onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+              onChange={e => handleCategoryChange(e.target.value)}
             >
-              {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value={NEW_CATEGORY_VALUE}>+ เพิ่มหมวดหมู่ใหม่...</option>
             </select>
+
+            {addingCat && (
+              <div className="mt-2">
+                <div className="flex gap-2">
+                  <input
+                    autoFocus
+                    className="input flex-1"
+                    placeholder="ชื่อหมวดหมู่ใหม่"
+                    value={newCatName}
+                    onChange={e => { setNewCatName(e.target.value); setCatError('') }}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddCategory() } }}
+                  />
+                  <button type="button" onClick={handleAddCategory} disabled={savingCat}
+                    className="btn-primary px-3 text-sm shrink-0">
+                    {savingCat ? '...' : 'เพิ่ม'}
+                  </button>
+                  <button type="button" onClick={() => { setAddingCat(false); setNewCatName(''); setCatError('') }}
+                    className="btn-secondary px-3 text-sm shrink-0">
+                    ยกเลิก
+                  </button>
+                </div>
+                {catError && <p className="text-xs text-red-500 mt-1">{catError}</p>}
+              </div>
+            )}
           </div>
 
           {/* หมายเหตุ GP Cost */}
@@ -431,6 +518,184 @@ function PriceHistoryModal({ menu, onClose }) {
   )
 }
 
+// จัดการหมวดหมู่สินค้าเต็มรูปแบบ: เพิ่ม / เปลี่ยนชื่อ / ลบ / เรียงลำดับ
+// หมวดหมู่ที่ POS ผูก logic พิเศษไว้ (Bun/Refill/Addon) แก้ชื่อ/ลบจากตรงนี้ไม่ได้
+function CategoryManagerModal({ categories, menuCountByCategory, onClose, onSaved }) {
+  const [rows, setRows]           = useState(categories.map(c => ({ original: c, name: c })))
+  const [newName, setNewName]     = useState('')
+  const [saving, setSaving]       = useState(false)
+  const [error, setError]         = useState('')
+  const [deleteIdx, setDeleteIdx] = useState(null) // index รอ confirm ลบ
+
+  const countFor = (row) => menuCountByCategory[row.original ?? row.name] ?? 0
+
+  const addRow = () => {
+    const trimmed = newName.trim()
+    if (!trimmed) return
+    if (rows.some(r => r.name.toLowerCase() === trimmed.toLowerCase())) {
+      setError('มีหมวดหมู่นี้อยู่แล้ว')
+      return
+    }
+    setRows(prev => [...prev, { original: null, name: trimmed }])
+    setNewName('')
+    setError('')
+  }
+
+  const renameRow = (idx, value) => {
+    setRows(prev => prev.map((r, i) => i === idx ? { ...r, name: value } : r))
+    setError('')
+  }
+
+  const requestDelete = (idx) => {
+    const row = rows[idx]
+    const count = countFor(row)
+    if (count > 0) {
+      setError(`ลบไม่ได้ — ยังมีเมนู ${count} รายการใช้หมวดหมู่ "${row.name}" อยู่ ย้ายเมนูเหล่านั้นไปหมวดหมู่อื่นก่อน`)
+      return
+    }
+    setDeleteIdx(idx)
+  }
+
+  const confirmDelete = () => {
+    setRows(prev => prev.filter((_, i) => i !== deleteIdx))
+    setDeleteIdx(null)
+  }
+
+  const moveRow = (idx, direction) => {
+    const target = idx + direction
+    if (target < 0 || target >= rows.length) return
+    setRows(prev => {
+      const next = [...prev]
+      ;[next[idx], next[target]] = [next[target], next[idx]]
+      return next
+    })
+  }
+
+  const handleSave = async () => {
+    const names = rows.map(r => r.name.trim())
+    if (names.some(n => !n)) { setError('ชื่อหมวดหมู่ห้ามว่าง'); return }
+    const lower = names.map(n => n.toLowerCase())
+    if (new Set(lower).size !== lower.length) { setError('มีชื่อหมวดหมู่ซ้ำกัน'); return }
+
+    setSaving(true)
+    setError('')
+    try {
+      // ย้ายเมนูเก่าตามชื่อหมวดหมู่ที่เปลี่ยน (category เก็บเป็น string ตรงๆ บน menus table)
+      for (const row of rows) {
+        const trimmedName = row.name.trim()
+        if (row.original && row.original !== trimmedName) {
+          const { error: renameErr } = await supabase
+            .from('menus')
+            .update({ category: trimmedName })
+            .eq('category', row.original)
+          if (renameErr) throw renameErr
+        }
+      }
+      const finalList = names
+      const { error: saveErr } = await saveCategoryNames(finalList)
+      if (saveErr) throw saveErr
+      onSaved(finalList)
+      onClose()
+    } catch (err) {
+      setError('บันทึกไม่สำเร็จ: ' + err.message)
+    }
+    setSaving(false)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b">
+          <h2 className="font-bold text-lg flex items-center gap-2"><Tags size={18} /> จัดการหมวดหมู่</h2>
+          <button onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <p className="text-xs text-gray-500">
+            เพิ่ม เปลี่ยนชื่อ ลบ หรือเรียงลำดับหมวดหมู่สินค้า — หมวดหมู่ที่มี <Lock size={11} className="inline -mt-0.5" /> ถูกใช้งานพิเศษในหน้า POS แก้ไข/ลบไม่ได้
+          </p>
+
+          <div className="space-y-1.5">
+            {rows.map((row, idx) => {
+              const reserved = RESERVED_CATEGORIES.has(row.original)
+              const count    = countFor(row)
+              return (
+                <div key={idx} className="flex items-center gap-1.5 bg-gray-50 rounded-lg px-2 py-1.5">
+                  <div className="flex flex-col -my-1 shrink-0">
+                    <button type="button" onClick={() => moveRow(idx, -1)} disabled={idx === 0}
+                      aria-label={`ย้าย ${row.name} ขึ้น`}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-200 disabled:opacity-30 disabled:pointer-events-none">
+                      <ChevronUp size={13} />
+                    </button>
+                    <button type="button" onClick={() => moveRow(idx, 1)} disabled={idx === rows.length - 1}
+                      aria-label={`ย้าย ${row.name} ลง`}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-200 disabled:opacity-30 disabled:pointer-events-none">
+                      <ChevronDown size={13} />
+                    </button>
+                  </div>
+                  <input
+                    className="input flex-1 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+                    value={row.name}
+                    disabled={reserved}
+                    onChange={e => renameRow(idx, e.target.value)}
+                  />
+                  {count > 0 && (
+                    <span className="text-[11px] text-gray-400 shrink-0">{count} เมนู</span>
+                  )}
+                  {reserved ? (
+                    <span title="หมวดหมู่นี้มีพฤติกรรมพิเศษใน POS แก้ไข/ลบไม่ได้" className="p-2 text-gray-300 shrink-0">
+                      <Lock size={15} />
+                    </span>
+                  ) : (
+                    <button type="button" onClick={() => requestDelete(idx)}
+                      title="ลบหมวดหมู่"
+                      className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 shrink-0">
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              className="input flex-1 text-sm"
+              placeholder="ชื่อหมวดหมู่ใหม่"
+              value={newName}
+              onChange={e => { setNewName(e.target.value); setError('') }}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addRow() } }}
+            />
+            <button type="button" onClick={addRow} className="btn-secondary px-3 text-sm shrink-0 flex items-center gap-1">
+              <Plus size={14} /> เพิ่ม
+            </button>
+          </div>
+
+          {error && <p className="text-xs text-red-500">{error}</p>}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">ยกเลิก</button>
+            <button type="button" onClick={handleSave} disabled={saving} className="btn-primary flex-1">
+              {saving ? 'กำลังบันทึก...' : 'บันทึก'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <ConfirmModal
+        open={deleteIdx !== null}
+        title={`ลบหมวดหมู่ "${deleteIdx !== null ? rows[deleteIdx]?.name : ''}"?`}
+        message="ยังไม่มีเมนูใดใช้หมวดหมู่นี้ ลบได้ทันที"
+        confirmLabel="ลบ"
+        danger
+        icon={Trash2}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteIdx(null)}
+      />
+    </div>
+  )
+}
+
 export default function MenuManagementPage() {
   const navigate = useNavigate()
   const [menus, setMenus] = useState([])
@@ -442,6 +707,8 @@ export default function MenuManagementPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [historyMenu, setHistoryMenu] = useState(null)
   const [platforms, setPlatforms] = useState(DEFAULT_PLATFORMS)
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES)
+  const [showCatManager, setShowCatManager] = useState(false)
   const dragId = useRef(null)
   const dragOverId = useRef(null)
 
@@ -483,7 +750,15 @@ export default function MenuManagementPage() {
     loadMenus()
     loadMenuCosts()
     loadPlatformNames().then(setPlatforms)
+    loadCategoryNames().then(setCategories)
   }, [])
+
+  const handleAddCategory = async (name) => {
+    const next = [...categories, name]
+    setCategories(next)
+    const { error } = await saveCategoryNames(next)
+    if (error) throw error
+  }
 
   const handleDragStart = (id) => { dragId.current = id }
 
@@ -559,9 +834,14 @@ export default function MenuManagementPage() {
     return true
   })
 
-  const grouped = CATEGORIES.reduce((acc, cat) => {
+  const grouped = categories.reduce((acc, cat) => {
     const items = filtered.filter(m => m.category === cat)
     if (items.length > 0) acc[cat] = items
+    return acc
+  }, {})
+
+  const menuCountByCategory = menus.reduce((acc, m) => {
+    acc[m.category] = (acc[m.category] ?? 0) + 1
     return acc
   }, {})
 
@@ -578,6 +858,9 @@ export default function MenuManagementPage() {
               <Ban size={14} /> เปิดขายทั้งหมด ({menus.filter(m => m.is_sold_out).length})
             </button>
           )}
+          <button onClick={() => setShowCatManager(true)} className="btn-secondary flex items-center gap-2">
+            <Tags size={16} /> จัดการหมวดหมู่
+          </button>
           <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2">
             <Plus size={16} /> เพิ่มเมนู
           </button>
@@ -592,7 +875,7 @@ export default function MenuManagementPage() {
         >
           ทั้งหมด ({menus.filter(m => showInactive || m.is_active).length})
         </button>
-        {CATEGORIES.map(cat => {
+        {categories.map(cat => {
           const count = menus.filter(m => m.category === cat && (showInactive || m.is_active)).length
           if (count === 0) return null
           return (
@@ -746,12 +1029,22 @@ export default function MenuManagementPage() {
         <MenuModal
           menu={editMenu}
           platforms={platforms}
+          categories={categories}
+          onAddCategory={handleAddCategory}
           onClose={() => { setShowAdd(false); setEditMenu(null) }}
           onSave={loadMenus}
         />
       )}
       {historyMenu && (
         <PriceHistoryModal menu={historyMenu} onClose={() => setHistoryMenu(null)} />
+      )}
+      {showCatManager && (
+        <CategoryManagerModal
+          categories={categories}
+          menuCountByCategory={menuCountByCategory}
+          onClose={() => setShowCatManager(false)}
+          onSaved={(list) => { setCategories(list); loadMenus() }}
+        />
       )}
     </div>
   )

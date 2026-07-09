@@ -61,9 +61,9 @@ const APPS = [
         path: '/menu',
         label: 'MenuManagementPage',
         labelTh: 'จัดการเมนู',
-        desc: 'เพิ่ม/แก้ไข/เรียงลำดับเมนู ราคาแต่ละ Platform',
+        desc: 'เพิ่ม/แก้ไข/เรียงลำดับเมนู ราคาแต่ละ Platform + จัดการหมวดหมู่สินค้า (settings.menu_categories)',
         mode: 'readwrite',
-        tables: ['menus', 'menu_prices'],
+        tables: ['menus', 'menu_prices', 'settings'],
       },
       {
         path: '/cost',
@@ -164,7 +164,7 @@ const TABLES = [
   { name: 'menu_prices',       desc: 'ราคาเมนูแต่ละ Platform',   cols: 'menu_id, platform, price' },
   { name: 'menu_costs',        desc: 'ต้นทุนวัตถุดิบต่อเมนู',    cols: 'menu_id, main_ingredient, milk_*, packaging_type, custom_costs, effective_from/to' },
   { name: 'cost_settings',     desc: 'ค่า shared cost (packaging, labor%)', cols: 'key, value, effective_from' },
-  { name: 'settings',          desc: 'ตั้งค่า global (platform fee%, store name, staff_page_access, admin_page_access)', cols: 'key, value' },
+  { name: 'settings',          desc: 'ตั้งค่า global (platform fee%, store name, staff_page_access, admin_page_access, menu_categories)', cols: 'key, value' },
   { name: 'cashbook_entries',  desc: 'รายการเงินสด รายรับ/รายจ่าย', cols: 'id, date, type, amount, note, category' },
   { name: 'transfer_status',   desc: 'สถานะโอนเงิน',              cols: 'date, platform, status' },
   { name: 'auth.users',        desc: 'ผู้ใช้งานระบบ (Supabase Auth)', cols: 'id, email' },
@@ -196,6 +196,8 @@ const DATA_FLOW = [
   { from: 'UserManagementPage', arrow: '→', to: 'settings.staff_page_access', note: 'Admin/Super Admin กำหนดหน้าที่ Staff เข้าถึงได้' },
   { from: 'UserManagementPage', arrow: '→', to: 'settings.admin_page_access', note: 'Super Admin เท่านั้น กำหนดหน้าพิเศษที่ Admin เข้าถึงได้' },
   { from: 'Sidebar / BottomNav / App.jsx', arrow: '←', to: 'settings.staff_page_access + admin_page_access', note: 'ซ่อน/แสดงเมนู และกันเส้นทางตามสิทธิ์ของ role' },
+  { from: 'MenuManagementPage', arrow: '→', to: 'settings.menu_categories', note: 'เพิ่ม/เปลี่ยนชื่อ/ลบ/เรียงลำดับหมวดหมู่สินค้า — เปลี่ยนชื่อจะ sync ไปทุกเมนูที่ใช้หมวดหมู่นั้นด้วย' },
+  { from: 'BSK POS (POSPage)', arrow: '←', to: 'menus.category', note: 'จัดกลุ่มเมนู/แท็บหมวดหมู่ตามชื่อจริงในเมนู (ไม่ hardcode) — Bun/Refill/Addon มี logic พิเศษผูกชื่อไว้' },
 ]
 
 const LEGEND = [
