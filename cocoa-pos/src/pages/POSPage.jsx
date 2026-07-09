@@ -122,6 +122,7 @@ export default function POSPage({ onDateChange }) {
   const [time,           setTime]           = useState(new Date())
   const [platforms,      setPlatforms]      = useState(PLATFORMS) // sync กับ platform_config ใน Supabase
   const [optionGroups,   setOptionGroups]   = useState([]) // กลุ่มตัวเลือกเสริม ผูกกับหมวดหมู่เมนู (จากหน้าจัดการเมนู)
+  const [printEnabled,   setPrintEnabled]   = useState(true)   // toggle พิมพ์ฉลาก — ไม่ persist, reset เป็นเปิดทุกครั้งที่รีโหลดหน้า
 
   // ── Drag hooks ──
   const catDrag  = useDragSort()   // { draggingIdx, startDrag }
@@ -566,6 +567,9 @@ export default function POSPage({ onDateChange }) {
       })()
 
       // ── Auto-print: ส่งไป print server (fire-and-forget, ไม่ block UX) ──
+      if (!printEnabled) {
+        // พิมพ์ปิดอยู่ — ข้ามการพิมพ์ทั้งหมด
+      } else
       try {
         const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
         const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
@@ -712,6 +716,18 @@ export default function POSPage({ onDateChange }) {
               </>
             )}
           </div>
+          <button
+            onClick={() => setPrintEnabled(p => !p)}
+            aria-label={printEnabled ? 'ปิดการพิมพ์ฉลาก' : 'เปิดการพิมพ์ฉลาก'}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors border
+              ${printEnabled
+                ? 'bg-green-600/20 border-green-500/40 text-green-300 hover:bg-green-600/30'
+                : 'bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30'
+              }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${printEnabled ? 'bg-green-400' : 'bg-red-400'}`} />
+            {printEnabled ? '🖨️ พิมพ์ฉลาก' : '🖨️ ปิดพิมพ์'}
+          </button>
           <button onClick={() => setShowOrders(true)}
             className="flex items-center gap-1.5 bg-cocoa-700 hover:bg-cocoa-600 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">
             <ClipboardList size={14} />
@@ -1311,6 +1327,12 @@ export default function POSPage({ onDateChange }) {
                     <span className="text-sm text-gray-600 font-medium">ยอดสุทธิ</span>
                     <span className="text-xl font-bold text-cocoa-700">{fmt(finalTotal)}</span>
                   </div>
+                </div>
+              )}
+              {!printEnabled && (
+                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 mb-3">
+                  <span className="text-base shrink-0">🖨️</span>
+                  <p className="text-sm text-red-700 font-medium">พิมพ์ฉลากปิดอยู่ — บันทึกโดยไม่พิมพ์</p>
                 </div>
               )}
               {saveError && (
