@@ -6,7 +6,7 @@ import LoginPage       from './pages/LoginPage'
 import POSPage         from './pages/POSPage'
 import OrderManagePage from './pages/OrderManagePage'
 import MenuOptionModal from './components/MenuOptionModal'
-import { supabase } from './lib/supabase'
+import { supabase, getSetting } from './lib/supabase'
 import { ShoppingCart, ClipboardList, LayoutDashboard, X, Printer, Search, Loader2, ChevronRight, ScrollText } from 'lucide-react'
 
 async function sendLabelPrint(menu, options) {
@@ -304,16 +304,16 @@ const TABS = [
   { key: 'orders', label: 'ออเดอร์',   icon: ClipboardList },
 ]
 
-const PASSKEY   = '18879'
+const DEFAULT_PASSKEY = '18879'
 const HOUSE_URL = 'https://cocoa-house.vercel.app'
 
-function PasskeyModal({ title, onConfirm, onClose }) {
+function PasskeyModal({ title, expectedPasskey, onConfirm, onClose }) {
   const [val, setVal]     = useState('')
   const [error, setError] = useState(false)
   const inputRef          = useRef(null)
 
   const handleSubmit = () => {
-    if (val === PASSKEY) {
+    if (val === (expectedPasskey || DEFAULT_PASSKEY)) {
       onConfirm()
     } else {
       setError(true)
@@ -369,6 +369,12 @@ function AppInner() {
   const [showPrintModal, setShowPrintModal] = useState(false)
   const [showLogModal,   setShowLogModal]   = useState(false)
   const [printLog,       setPrintLog]       = useState([])
+  const [navPasskey,     setNavPasskey]     = useState(DEFAULT_PASSKEY)
+
+  // Passkey for cross-app nav button — configurable from User Management (admin/super_admin only)
+  useEffect(() => {
+    getSetting('nav_passkey').then(v => { if (v) setNavPasskey(v) })
+  }, [])
 
   const addPrintLog    = (entry)       => setPrintLog(prev => [entry, ...prev])
   const updatePrintLog = (id, status)  => setPrintLog(prev => prev.map(e => e.id === id ? { ...e, status } : e))
@@ -467,6 +473,7 @@ function AppInner() {
       {showPasskey && (
         <PasskeyModal
           title="ไปที่ BSK coffee&bakery"
+          expectedPasskey={navPasskey}
           onConfirm={() => { setShowPasskey(false); window.open(HOUSE_URL, '_blank') }}
           onClose={() => setShowPasskey(false)}
         />

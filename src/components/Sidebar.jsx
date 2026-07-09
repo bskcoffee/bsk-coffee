@@ -3,13 +3,13 @@ import { NavLink } from 'react-router-dom'
 import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Network, Brain, ChevronUp, ChevronDown, Lock } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions, canAccessAdminPage } from '../contexts/PermissionsContext'
-import { supabase } from '../lib/supabase'
+import { supabase, getSetting } from '../lib/supabase'
 import ConfirmModal from './ConfirmModal'
 
-const PASSKEY   = '18879'
+const DEFAULT_PASSKEY = '18879'
 const POS_URL  = 'https://bsk-pos.vercel.app'
 
-function PasskeyModal({ title = 'ไปที่ BSK POS', onConfirm, onClose }) {
+function PasskeyModal({ title = 'ไปที่ BSK POS', expectedPasskey, onConfirm, onClose }) {
   const [val, setVal]     = useState('')
   const [error, setError] = useState(false)
 
@@ -20,7 +20,7 @@ function PasskeyModal({ title = 'ไปที่ BSK POS', onConfirm, onClose })
   }, [onClose])
 
   const handleSubmit = () => {
-    if (val === PASSKEY) { onConfirm() }
+    if (val === (expectedPasskey || DEFAULT_PASSKEY)) { onConfirm() }
     else { setError(true); setVal('') }
   }
 
@@ -108,6 +108,7 @@ export default function Sidebar() {
   const [dragOver, setDragOver] = useState(null)
   const [showSignOutModal, setShowSignOutModal] = useState(false)
   const [showPasskey, setShowPasskey]           = useState(false)
+  const [navPasskey, setNavPasskey]             = useState(DEFAULT_PASSKEY)
 
   // Fetch nav order from Supabase on mount — syncs across all devices
   useEffect(() => {
@@ -126,6 +127,11 @@ export default function Sidebar() {
           } catch {}
         }
       })
+  }, [])
+
+  // Passkey for cross-app nav buttons — configurable from User Management (admin/super_admin only)
+  useEffect(() => {
+    getSetting('nav_passkey').then(v => { if (v) setNavPasskey(v) })
   }, [])
 
   // 3-tier access: special pages follow admin_page_access (super_admin
@@ -331,6 +337,7 @@ export default function Sidebar() {
     {showPasskey && (
       <PasskeyModal
         title="ไปที่ BSK POS"
+        expectedPasskey={navPasskey}
         onConfirm={() => { setShowPasskey(false); window.open(POS_URL, '_blank') }}
         onClose={() => setShowPasskey(false)}
       />

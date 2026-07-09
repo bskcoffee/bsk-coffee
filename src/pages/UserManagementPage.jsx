@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, getSetting, setSetting } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
 import { usePermissions, STAFF_PAGES, ADMIN_PAGES } from '../contexts/PermissionsContext'
-import { Save, Eye, EyeOff, UserPlus, Users, LogOut, AlertTriangle, ShieldCheck, Shield, Crown, KeyRound } from 'lucide-react'
+import { Save, Eye, EyeOff, UserPlus, Users, LogOut, AlertTriangle, ShieldCheck, Shield, Crown, KeyRound, KeySquare } from 'lucide-react'
 import ConfirmModal from '../components/ConfirmModal'
 
 const CREATE_COOLDOWN_SEC = 30
@@ -82,6 +82,33 @@ export default function UserManagementPage() {
   const cooldownRef                           = useRef(null)
   const [roleChangeTarget, setRoleChangeTarget] = useState(null) // { id, newRole } | null
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
+
+  // --- Passkey เข้าใช้งานข้ามระบบ (ปุ่ม BSK POS / BSK coffee&bakery) ---
+  // มองเห็น/แก้ไขได้เฉพาะ admin หรือ super_admin เท่านั้น (หน้านี้ทั้งหน้าถูกจำกัดสิทธิ์ไว้แล้วที่ระดับ route)
+  const [navPasskey, setNavPasskey]         = useState('')
+  const [savingPasskey, setSavingPasskey]   = useState(false)
+  const [passkeyStatus, setPasskeyStatus]   = useState('')
+
+  useEffect(() => {
+    getSetting('nav_passkey').then(v => setNavPasskey(v || '18879'))
+  }, [])
+
+  const savePasskey = async () => {
+    if (!/^\d{4,8}$/.test(navPasskey)) {
+      setPasskeyStatus('Passkey ต้องเป็นตัวเลข 4-8 หลัก')
+      setTimeout(() => setPasskeyStatus(''), 3000)
+      return
+    }
+    setSavingPasskey(true)
+    try {
+      const { error } = await setSetting('nav_passkey', navPasskey)
+      if (error) throw error
+      addToast('บันทึก Passkey แล้ว', 'success')
+    } catch (err) {
+      addToast('บันทึก Passkey ไม่สำเร็จ: ' + err.message, 'error')
+    }
+    setSavingPasskey(false)
+  }
 
   // Non-super_admin viewers (admin, staff) never see super_admin accounts in this list
   const visibleUsers = myRole === 'super_admin'
@@ -325,6 +352,36 @@ export default function UserManagementPage() {
           <p className="text-sm text-gray-400 text-center py-4">ยังไม่มีผู้ใช้งานในระบบ</p>
         )}
       </div>
+
+      {/* ── Passkey เข้าใช้งานข้ามระบบ (admin/super_admin เท่านั้นที่เห็น) ─ */}
+      {(myRole === 'admin' || myRole === 'super_admin') && (
+        <div className="card space-y-4">
+          <div className="flex items-center gap-2">
+            <KeySquare size={18} className="text-cocoa-600" />
+            <h2 className="font-semibold text-gray-800">Passkey เข้าใช้งานข้ามระบบ</h2>
+          </div>
+          <p className="text-xs text-gray-500">
+            ใช้ตอนกดปุ่ม &ldquo;BSK POS&rdquo; หรือ &ldquo;BSK coffee&bakery&rdquo; เพื่อสลับไปมาระหว่างสองระบบ — ไม่เกี่ยวกับรหัสผ่านเข้าสู่ระบบปกติ
+          </p>
+          <div className="max-w-[180px]">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={navPasskey}
+              onChange={e => setNavPasskey(e.target.value.replace(/\D/g, '').slice(0, 8))}
+              className="input font-mono tracking-widest text-center"
+              placeholder="18879"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={savePasskey} disabled={savingPasskey} className="btn-primary flex items-center gap-2">
+              <Save size={16} />
+              {savingPasskey ? 'กำลังบันทึก...' : 'บันทึก Passkey'}
+            </button>
+            {passkeyStatus && <p className="text-sm text-red-600">{passkeyStatus}</p>}
+          </div>
+        </div>
+      )}
 
       {/* ── สิทธิ์การเข้าถึงเมนู (พนักงาน) ──────────────────────────── */}
       <div className="card space-y-4">
