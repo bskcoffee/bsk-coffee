@@ -7,7 +7,7 @@ import POSPage         from './pages/POSPage'
 import OrderManagePage from './pages/OrderManagePage'
 import MenuOptionModal from './components/MenuOptionModal'
 import { supabase } from './lib/supabase'
-import { ShoppingCart, ClipboardList, LayoutDashboard, X, Package, Printer, Search, Loader2, ChevronRight, ScrollText } from 'lucide-react'
+import { ShoppingCart, ClipboardList, LayoutDashboard, X, Printer, Search, Loader2, ChevronRight, ScrollText } from 'lucide-react'
 
 async function sendLabelPrint(menu, options) {
   const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
@@ -306,7 +306,6 @@ const TABS = [
 
 const PASSKEY   = '18879'
 const HOUSE_URL = 'https://cocoa-house.vercel.app'
-const LIFF_URL  = 'https://cocoa-liff.vercel.app'
 
 function PasskeyModal({ title, onConfirm, onClose }) {
   const [val, setVal]     = useState('')
@@ -367,7 +366,6 @@ function PasskeyModal({ title, onConfirm, onClose }) {
 function AppInner() {
   const { session, loading } = useAuth()
   const [showPasskey,    setShowPasskey]    = useState(false)
-  const [showLiff,       setShowLiff]       = useState(false)
   const [showPrintModal, setShowPrintModal] = useState(false)
   const [showLogModal,   setShowLogModal]   = useState(false)
   const [printLog,       setPrintLog]       = useState([])
@@ -457,15 +455,6 @@ function AppInner() {
           <LayoutDashboard size={16} />
           <span>BSK coffee&bakery</span>
         </button>
-        {/* Go to BSK LIFF */}
-        <button
-          onClick={() => setShowLiff(true)}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-700 text-white hover:bg-green-600 transition-all text-sm font-semibold border border-green-500/40"
-          title="ไปที่ BSK"
-        >
-          <Package size={16} />
-          <span>BSK</span>
-        </button>
       </div>
 
       {/* Page content */}
@@ -480,13 +469,6 @@ function AppInner() {
           title="ไปที่ BSK coffee&bakery"
           onConfirm={() => { setShowPasskey(false); window.open(HOUSE_URL, '_blank') }}
           onClose={() => setShowPasskey(false)}
-        />
-      )}
-      {showLiff && (
-        <PasskeyModal
-          title="ไปที่ BSK"
-          onConfirm={() => { setShowLiff(false); window.open(LIFF_URL, '_blank') }}
-          onClose={() => setShowLiff(false)}
         />
       )}
       {showPrintModal && (
