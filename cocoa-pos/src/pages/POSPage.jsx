@@ -6,7 +6,7 @@ import { th } from 'date-fns/locale'
 import {
   LogOut, ClipboardList, X, CheckCircle2, AlertCircle,
   Loader2, Trash2, Search, Minus, Plus, GripVertical,
-  LayoutGrid, Save,
+  LayoutGrid, Save, ChevronUp, ChevronDown,
 } from 'lucide-react'
 import MenuOptionModal from '../components/MenuOptionModal'
 import { useToast } from '../contexts/ToastContext'
@@ -300,6 +300,15 @@ export default function POSPage({ onDateChange }) {
     setSavingLayout(false)
   }
 
+  // Keyboard-accessible alternative to drag-and-drop for category order
+  const moveCatItem = (idx, direction) => {
+    const target = idx + direction
+    if (target < 0 || target >= catOrder.length) return
+    const next = [...catOrder]
+    ;[next[idx], next[target]] = [next[target], next[idx]]
+    setCatOrder(next)
+  }
+
   const enterMenuEdit = () => {
     // Only allow when specific category selected (not search, not "ทั้งหมด")
     menuOrderSnap.current = [...menuOrder]
@@ -309,6 +318,17 @@ export default function POSPage({ onDateChange }) {
     setMenuOrder(menuOrderSnap.current)
     setMenuEditMode(false)
   }
+
+  // Keyboard-accessible alternative to drag-and-drop for menu order
+  const moveMenuItem = (idx, direction) => {
+    const ids = displayMenus.map(m => m.id)
+    const target = idx + direction
+    if (target < 0 || target >= ids.length) return
+    const next = [...ids]
+    ;[next[idx], next[target]] = [next[target], next[idx]]
+    setMenuOrder(next)
+  }
+
   const saveMenuOrder = async () => {
     setSavingLayout(true)
     setLayoutSaveErr(null)
@@ -767,6 +787,28 @@ export default function POSPage({ onDateChange }) {
                     <GripVertical size={14} />
                   </div>
                 )}
+                {catEditMode && (
+                  <div className="flex gap-0.5">
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); moveCatItem(idx, -1) }}
+                      disabled={idx === 0}
+                      aria-label={`ย้าย ${cat} ขึ้น`}
+                      className="p-0.5 rounded text-amber-300 hover:text-white hover:bg-amber-800 disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      <ChevronUp size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); moveCatItem(idx, 1) }}
+                      disabled={idx === catOrder.length - 1}
+                      aria-label={`ย้าย ${cat} ลง`}
+                      className="p-0.5 rounded text-amber-300 hover:text-white hover:bg-amber-800 disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      <ChevronDown size={12} />
+                    </button>
+                  </div>
+                )}
                 <span className="text-xl leading-none">
                   {cat === 'ทั้งหมด' ? '🍽️' : (CAT_EMOJI[cat] ?? '🍹')}
                 </span>
@@ -868,6 +910,28 @@ export default function POSPage({ onDateChange }) {
                             )}
                           >
                             <GripVertical size={28} className="text-amber-500" />
+                          </div>
+                        )}
+                        {menuEditMode && (
+                          <div className="absolute top-1 right-1 z-20 flex flex-col gap-0.5">
+                            <button
+                              type="button"
+                              onClick={e => { e.stopPropagation(); moveMenuItem(idx, -1) }}
+                              disabled={idx === 0}
+                              aria-label={`ย้าย ${menu.name} ขึ้น`}
+                              className="p-1 rounded bg-white/90 text-amber-600 hover:bg-amber-100 disabled:opacity-30 disabled:pointer-events-none shadow-sm"
+                            >
+                              <ChevronUp size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={e => { e.stopPropagation(); moveMenuItem(idx, 1) }}
+                              disabled={idx === displayMenus.length - 1}
+                              aria-label={`ย้าย ${menu.name} ลง`}
+                              className="p-1 rounded bg-white/90 text-amber-600 hover:bg-amber-100 disabled:opacity-30 disabled:pointer-events-none shadow-sm"
+                            >
+                              <ChevronDown size={13} />
+                            </button>
                           </div>
                         )}
                         {!menuEditMode && (
