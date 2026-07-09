@@ -12,10 +12,18 @@ import { useToast } from '../contexts/ToastContext'
 const PW = 250
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
+// ใส่ตัวอย่างกลุ่มตัวเลือกเสริม (single + multi ที่มีจำนวน) ด้วย — เพื่อให้ preview
+// ตรงกับสิ่งที่จะพิมพ์จริงเมื่อลูกค้าเลือกตัวเลือกเสริมจากหน้า POS
 const MOCK = {
   name: 'Cocoa Latte',
   qty: 2,
-  options: { milk: 'นมสด', sweetness: 50, refill: false, note: 'ไม่ใส่น้ำแข็ง', packaging: 'แยกน้ำแข็ง' },
+  options: {
+    milk: 'นมสด', sweetness: 50, refill: false, note: 'ไม่ใส่น้ำแข็ง', packaging: 'แยกน้ำแข็ง',
+    optionGroups: [
+      { groupId: 'mock-1', groupName: 'ชนิดนม', choices: [{ id: 'c1', label: 'อัลมอนด์มิลค์', qty: 1 }] },
+      { groupId: 'mock-2', groupName: 'เพิ่มถุงพรุ่งนี้', choices: [{ id: 'c2', label: 'เพิ่มถุงพรุ่งนี้ ตราดัชมิลค์', qty: 2 }] },
+    ],
+  },
   orderId: 'GF-012',
   platform: 'GRAB',
 }
@@ -113,7 +121,16 @@ function getContent(field, storeName) {
       if (o.milk)           opts.push(o.milk)
       if (o.sweetness != null) opts.push(`${o.sweetness}%`)
       if (o.packaging)      opts.push(o.packaging)
-      return opts.join(' · ') || '–'
+      // กลุ่มตัวเลือกเสริม (menu_option_groups) — ให้ตรงกับ print-server/server.js เป๊ะๆ
+      if (Array.isArray(o.optionGroups)) {
+        for (const g of o.optionGroups) {
+          for (const c of (g.choices ?? [])) {
+            if (c.label) opts.push(c.qty > 1 ? `${c.label} x${c.qty}` : c.label)
+          }
+        }
+      }
+      if (o.note) opts.push(o.note)
+      return opts.join(' / ') || '–'
     }
     case 'order_id':   return `#${MOCK.orderId}`
     case 'qty':        return `×${MOCK.qty}`
@@ -157,6 +174,32 @@ function tsplMeta(fontSize) {
   if (fontSize >= 13) return { dh: 20, dw: 10 }  // font '3' xm=1 ym=1
   if (fontSize >= 10) return { dh: 16, dw: 8  }  // font '2' xm=1 ym=1
   return                      { dh: 12, dw: 6  }  // font '1' xm=1 ym=1
+}
+
+// ─── Preview line-wrap (mirrors wrapAsciiLines/wrapThaiLines in print-server/server.js) ──
+// ให้ preview ขึ้นบรรทัดใหม่เหมือนของจริงที่พิมพ์ออกมา แทนที่จะปล่อยให้ข้อความยาวล้นออกจาก canvas
+function wrapPreviewLines(content, maxWidthDot, dw) {
+  const maxChars = Math.max(4, Math.floor(maxWidthDot / dw))
+  if (content.length <= maxChars) return [content]
+  const words = content.split(' ')
+  const lines = []
+  let cur = ''
+  for (const w of words) {
+    const candidate = cur ? `${cur} ${w}` : w
+    if (candidate.length > maxChars) {
+      if (cur) lines.push(cur)
+      let rest = w
+      while (rest.length > maxChars) {
+        lines.push(rest.slice(0, maxChars))
+        rest = rest.slice(maxChars)
+      }
+      cur = rest
+    } else {
+      cur = candidate
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines
 }
 
 // ─── Label Canvas (TSPL-accurate preview) ─────────────────────────────────────
@@ -235,26 +278,43 @@ function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph, 
         }
 
         const content = getContent(field, storeName)
-        const { dh } = tsplMeta(field.fontSize || 9)
+        const { dh, dw } = tsplMeta(field.fontSize || 9)
         const fontSizePx = Math.max(5, dh * scaleY)
-        const xPx = fieldLeftPx(field, content)
         const yPx = (field.y / 100) * ph
 
+        // ความกว้างที่พิมพ์ได้จริง (dots) ตามตำแหน่ง/align — สูตรเดียวกับ print-server/server.js
+        // เพื่อให้ preview ขึ้นบรรทัดใหม่ตรงกับของจริงเป๊ะๆ แทนที่จะปล่อยล้น canvas
+        const xBaseDot = (field.x / 100) * wDot
+        const margin = 4
+        const maxWidthDot = field.align === 'center'
+          ? Math.max(30, 2 * Math.min(xBaseDot, wDot - xBaseDot) - margin)
+          : field.align === 'right'
+            ? Math.max(30, xBaseDot - margin)
+            : Math.max(30, wDot - xBaseDot - margin)
+
+        const lines         = wrapPreviewLines(content, maxWidthDot, dw)
+        const lineHeightDot = dh + 3
+
         return (
-          <div key={field.id}
-            style={{
-              position: 'absolute',
-              left: xPx, top: yPx,
-              fontSize: fontSizePx,
-              fontWeight: field.bold ? 'bold' : 'normal',
-              lineHeight: 1, whiteSpace: 'nowrap',
-              cursor: 'grab', padding: '0 1px',
-              ...selStyle,
-            }}
-            onMouseDown={e => startDrag(e, field)}
-            title={field.label}
-          >
-            {content}
+          <div key={field.id} onMouseDown={e => startDrag(e, field)} title={field.label}>
+            {lines.map((line, i) => {
+              const xPx = fieldLeftPx(field, line)
+              return (
+                <div key={i}
+                  style={{
+                    position: 'absolute',
+                    left: xPx, top: yPx + i * lineHeightDot * scaleY,
+                    fontSize: fontSizePx,
+                    fontWeight: field.bold ? 'bold' : 'normal',
+                    lineHeight: 1, whiteSpace: 'nowrap',
+                    cursor: 'grab', padding: '0 1px',
+                    ...selStyle,
+                  }}
+                >
+                  {line}
+                </div>
+              )
+            })}
           </div>
         )
       })}
