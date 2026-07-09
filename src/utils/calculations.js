@@ -1,5 +1,5 @@
 /**
- * Cocoa House — Profit Calculations
+ * BSK coffee&bakery — Profit Calculations
  *
  * 5-Layer Order Profit (existing):
  *   Layer 1: Sales = Σ (qty × unit_price)

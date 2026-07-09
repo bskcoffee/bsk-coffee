@@ -663,7 +663,7 @@ export default function POSPage({ onDateChange }) {
         <div className="flex items-center gap-2.5">
           <span className="text-lg">🍫</span>
           <div>
-            <p className="font-bold text-sm leading-tight">Cocoa House POS</p>
+            <p className="font-bold text-sm leading-tight">BSK coffee&bakery POS</p>
             <p className="text-cocoa-300 text-[11px]">{format(time, 'EEEE d MMM yyyy', { locale: th })}</p>
           </div>
         </div>

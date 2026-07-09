@@ -351,7 +351,7 @@ export default function SalesHistoryPage() {
     const html = `<html><head><meta charset="UTF-8">
     <style>body{font-family:sans-serif;font-size:12px;padding:24px}h2{margin-bottom:4px}.sub{color:#666;margin-bottom:16px}table{width:100%;border-collapse:collapse}th{background:#f3f4f6;text-align:left;padding:6px 8px}td{padding:5px 8px;border-bottom:1px solid #e5e7eb}.sum{font-weight:bold;background:#f9fafb}</style>
     </head><body>
-    <h2>Cocoa House</h2>
+    <h2>BSK coffee&bakery</h2>
     <div class="sub">${thaiMonth(month)} · ${dayData.length} วันที่มีข้อมูล</div>
     <table>
       <thead><tr><th>วันที่</th><th>Platform</th><th style="text-align:right">ยอดขาย</th><th style="text-align:right">กำไรสุทธิ</th></tr></thead>

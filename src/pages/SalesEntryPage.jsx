@@ -433,7 +433,7 @@ export default function SalesEntryPage() {
         .total { font-weight: bold; font-size: 15px; }
         .footer { text-align: center; color: #999; margin-top: 12px; font-size: 11px; }
       </style></head><body>
-      <h2>☕ Cocoa House</h2>
+      <h2>☕ BSK coffee&bakery</h2>
       <div class="sub">${platform} · ${date}</div>
       <hr>
       ${selectedMenus.map(m => {

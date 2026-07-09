@@ -202,7 +202,7 @@ export default function Sidebar() {
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 bg-cocoa-500 rounded-lg flex items-center justify-center text-xl">☕</div>
           <div>
-            <p className="font-bold text-sm leading-tight">Cocoa House</p>
+            <p className="font-bold text-sm leading-tight">BSK coffee&bakery</p>
             <p className="text-cocoa-300 text-xs">
               {role === 'admin' ? 'ผู้ดูแลระบบ' : role === 'staff' ? 'พนักงาน' : 'ระบบจัดการยอดขาย'}
             </p>

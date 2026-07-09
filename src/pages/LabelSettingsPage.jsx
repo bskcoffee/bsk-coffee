@@ -119,7 +119,7 @@ function getContent(field, storeName) {
     case 'qty':        return `×${MOCK.qty}`
     case 'time':       return new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
     case 'index':      return '1/3'
-    case 'store_name': return storeName || 'Cocoa House'
+    case 'store_name': return storeName || 'BSK coffee&bakery'
     case 'platform':   return MOCK.platform
     case 'date':       return new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
     case 'note':       return MOCK.options.note ? `Note : ${MOCK.options.note}` : ''
@@ -371,7 +371,7 @@ export default function LabelSettingsPage() {
   const { addToast } = useToast()
   const [layout,     setLayout]     = useState(DEFAULT_LAYOUT.map(f => ({ ...f })))
   const [selectedId, setSelectedId] = useState(null)
-  const [storeName,  setStoreName]  = useState('Cocoa House')
+  const [storeName,  setStoreName]  = useState('BSK coffee&bakery')
   const [copies,     setCopies]     = useState(1)
   const [printerIp,  setPrinterIp]  = useState('192.168.1.100')
   const [printerPort,setPrinterPort]= useState(3001)

@@ -436,14 +436,14 @@ function AppInner() {
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Go to Cocoa House */}
+        {/* Go to BSK coffee&bakery */}
         <button
           onClick={() => setShowPasskey(true)}
           className="flex items-center gap-2 px-3 py-2 rounded-xl bg-cocoa-600 text-white hover:bg-cocoa-500 transition-all text-sm font-semibold border border-cocoa-400"
-          title="ไปที่ Cocoa House"
+          title="ไปที่ BSK coffee&bakery"
         >
           <LayoutDashboard size={16} />
-          <span>Cocoa House</span>
+          <span>BSK coffee&bakery</span>
         </button>
         {/* Go to Cocoa LIFF */}
         <button
@@ -465,7 +465,7 @@ function AppInner() {
       {/* Passkey Modal */}
       {showPasskey && (
         <PasskeyModal
-          title="ไปที่ Cocoa House"
+          title="ไปที่ BSK coffee&bakery"
           onConfirm={() => { setShowPasskey(false); window.open(HOUSE_URL, '_blank') }}
           onClose={() => setShowPasskey(false)}
         />
