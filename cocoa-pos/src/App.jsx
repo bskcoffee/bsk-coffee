@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { format } from 'date-fns'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ToastProvider } from './contexts/ToastContext'
@@ -8,10 +8,6 @@ import OrderManagePage from './pages/OrderManagePage'
 import MenuOptionModal from './components/MenuOptionModal'
 import { supabase } from './lib/supabase'
 import { ShoppingCart, ClipboardList, LayoutDashboard, X, Package, Printer, Search, Loader2, ChevronRight, ScrollText } from 'lucide-react'
-
-const ADDON_CATS  = ['Addon', 'addon', 'ADDON']
-const REFILL_CATS = ['Refill', 'refill', 'REFILL']
-const HIDDEN_CATS = [...ADDON_CATS, ...REFILL_CATS]
 
 async function sendLabelPrint(menu, options) {
   const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
@@ -34,15 +30,17 @@ async function sendLabelPrint(menu, options) {
 
 function buildOptionsSummary(options) {
   const parts = []
-  if (options?.milk?.name)       parts.push(options.milk.name)
   if (options?.sweetness != null) parts.push(`หวาน ${options.sweetness}%`)
   if (options?.packaging)        parts.push(options.packaging)
-  if (options?.refill?.length)   parts.push(`Refill ×${options.refill.reduce((s, r) => s + r.qty, 0)}`)
+  ;(options?.optionGroups ?? []).forEach(g => {
+    (g.choices ?? []).forEach(c => parts.push(`${c.label}${c.qty > 1 ? ` ×${c.qty}` : ''}`))
+  })
   return parts.join(' · ') || '—'
 }
 
 function PrintLabelModal({ onClose, onAddLog }) {
-  const [menus,       setMenus]       = useState([])
+  const [menus,        setMenus]        = useState([])
+  const [optionGroups, setOptionGroups] = useState([])
   const [loadingM,    setLoadingM]    = useState(true)
   const [search,      setSearch]      = useState('')
   const [selected,    setSelected]    = useState(null)
@@ -51,18 +49,33 @@ function PrintLabelModal({ onClose, onAddLog }) {
   const [printStatus,  setPrintStatus]  = useState(null)  // null | 'success' | 'error'
 
   useEffect(() => {
-    supabase
-      .from('menus')
-      .select('id, name, category, image_url, menu_prices(platform, price)')
-      .eq('is_active', true)
-      .order('sort_order')
-      .then(({ data }) => { setMenus(data ?? []); setLoadingM(false) })
+    Promise.all([
+      supabase
+        .from('menus')
+        .select('id, name, category, image_url, menu_prices(platform, price)')
+        .eq('is_active', true)
+        .order('sort_order'),
+      supabase.from('menu_option_groups')
+        .select('*, menu_option_choices(*)')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true }),
+    ]).then(([menusRes, optionGroupsRes]) => {
+      setMenus(menusRes.data ?? [])
+      setOptionGroups((optionGroupsRes.data ?? []).map(g => ({
+        ...g,
+        choices: (g.menu_option_choices ?? [])
+          .filter(c => c.is_active)
+          .sort((a, b) => a.sort_order - b.sort_order),
+      })))
+      setLoadingM(false)
+    })
   }, [])
 
-  const mainMenus   = menus.filter(m => !HIDDEN_CATS.includes(m.category))
-  const addonMenus  = menus.filter(m => ADDON_CATS.includes(m.category))
-  const refillMenus = menus.filter(m => REFILL_CATS.includes(m.category))
-  const filtered    = mainMenus.filter(m => m.name.toLowerCase().includes(search.toLowerCase()))
+  const filtered = menus.filter(m => m.name.toLowerCase().includes(search.toLowerCase()))
+  const groupsForSelected = useMemo(() => {
+    if (!selected) return []
+    return optionGroups.filter(g => (g.categories ?? []).includes(selected.category))
+  }, [optionGroups, selected])
 
   const handlePrint = async (options) => {
     setPrinting(true)
@@ -95,8 +108,7 @@ function PrintLabelModal({ onClose, onAddLog }) {
       <MenuOptionModal
         menu={selected}
         platform="GRAB"
-        addons={addonMenus}
-        refills={refillMenus}
+        optionGroups={groupsForSelected}
         onConfirm={handlePrint}
         onClose={() => setShowOptions(false)}
         confirmLabel={printing ? 'กำลังพิมพ์...' : '🖨 พิมพ์ฉลาก'}

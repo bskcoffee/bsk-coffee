@@ -2,17 +2,14 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, updateMenuPrice, getSetting } from '../lib/supabase'
 import { formatBaht } from '../utils/calculations'
-import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban, ImagePlus, Loader2, Tags, Trash2, ChevronUp, ChevronDown, Lock, ListChecks } from 'lucide-react'
+import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban, ImagePlus, Loader2, Tags, Trash2, ChevronUp, ChevronDown, ListChecks } from 'lucide-react'
 import ConfirmModal from '../components/ConfirmModal'
 
 // Fallback เมื่อยังไม่มีการตั้งค่า platform ใน Supabase (ต้องตรงกับ LEGACY_PLATFORMS ใน SettingsPage.jsx)
 const DEFAULT_PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU', 'Other']
 // ค่าเริ่มต้นเมื่อยังไม่มี settings.menu_categories — ตรงกับ list เดิมที่เคย hardcode ไว้
-const DEFAULT_CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun', 'Refill', 'Addon']
+const DEFAULT_CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun']
 const CATEGORIES_KEY = 'menu_categories'
-// หมวดหมู่ที่ฝั่ง POS (cocoa-pos/src/pages/POSPage.jsx) ผูก logic พิเศษไว้ตรงชื่อ —
-// ห้ามเปลี่ยนชื่อ/ลบจากหน้านี้ เพื่อไม่ให้พฤติกรรม POS พัง
-const RESERVED_CATEGORIES = new Set(['Bun', 'Refill', 'Addon'])
 const NEW_CATEGORY_VALUE = '__new_category__'
 
 const PLAT_BADGE = {
@@ -612,12 +609,11 @@ function CategoryManagerModal({ categories, menuCountByCategory, onClose, onSave
 
         <div className="p-5 space-y-4">
           <p className="text-xs text-gray-500">
-            เพิ่ม เปลี่ยนชื่อ ลบ หรือเรียงลำดับหมวดหมู่สินค้า — หมวดหมู่ที่มี <Lock size={11} className="inline -mt-0.5" /> ถูกใช้งานพิเศษในหน้า POS แก้ไข/ลบไม่ได้
+            เพิ่ม เปลี่ยนชื่อ ลบ หรือเรียงลำดับหมวดหมู่สินค้า
           </p>
 
           <div className="space-y-1.5">
             {rows.map((row, idx) => {
-              const reserved = RESERVED_CATEGORIES.has(row.original)
               const count    = countFor(row)
               return (
                 <div key={idx} className="flex items-center gap-1.5 bg-gray-50 rounded-lg px-2 py-1.5">
@@ -634,25 +630,18 @@ function CategoryManagerModal({ categories, menuCountByCategory, onClose, onSave
                     </button>
                   </div>
                   <input
-                    className="input flex-1 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+                    className="input flex-1 text-sm"
                     value={row.name}
-                    disabled={reserved}
                     onChange={e => renameRow(idx, e.target.value)}
                   />
                   {count > 0 && (
                     <span className="text-[11px] text-gray-400 shrink-0">{count} เมนู</span>
                   )}
-                  {reserved ? (
-                    <span title="หมวดหมู่นี้มีพฤติกรรมพิเศษใน POS แก้ไข/ลบไม่ได้" className="p-2 text-gray-300 shrink-0">
-                      <Lock size={15} />
-                    </span>
-                  ) : (
-                    <button type="button" onClick={() => requestDelete(idx)}
-                      title="ลบหมวดหมู่"
-                      className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 shrink-0">
-                      <Trash2 size={15} />
-                    </button>
-                  )}
+                  <button type="button" onClick={() => requestDelete(idx)}
+                    title="ลบหมวดหมู่"
+                    className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 shrink-0">
+                    <Trash2 size={15} />
+                  </button>
                 </div>
               )
             })}
@@ -700,9 +689,7 @@ function CategoryManagerModal({ categories, menuCountByCategory, onClose, onSave
 // กลุ่มตัวเลือกเสริม (menu_option_groups + menu_option_choices)
 // แอดมินสร้างกลุ่มตัวเลือกเอง (เช่น "เพิ่มอีกถุงไว้ดื่มพรุ่งนี้ ลดเพิ่ม 20%")
 // แล้วผูกกับหมวดหมู่เมนู — เมนูในหมวดหมู่นั้นจะเห็นกลุ่มนี้โผล่อัตโนมัติในหน้า POS
-// ไม่กระทบ category หลัก / การคำนวณ GP / logic พิเศษของ Bun-Refill-Addon เดิม
 // ─────────────────────────────────────────────────────────────────
-const RESERVED_FOR_GROUPS = new Set(['Addon', 'Refill']) // หมวดพิเศษที่มี logic ของตัวเองอยู่แล้ว ไม่ให้ผูกกลุ่มเสริมซ้ำ
 
 function OptionGroupEditor({ group, categories, onClose, onSaved }) {
   const [name,          setName]          = useState(group?.name ?? '')
@@ -718,7 +705,7 @@ function OptionGroupEditor({ group, categories, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
-  const selectableCats = categories.filter(c => !RESERVED_FOR_GROUPS.has(c))
+  const selectableCats = categories
 
   const toggleCat = (cat) => {
     setSelectedCats(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])

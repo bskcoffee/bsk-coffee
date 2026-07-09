@@ -199,8 +199,8 @@ const DATA_FLOW = [
   { from: 'UserManagementPage', arrow: '→', to: 'settings.admin_page_access', note: 'Super Admin เท่านั้น กำหนดหน้าพิเศษที่ Admin เข้าถึงได้' },
   { from: 'Sidebar / BottomNav / App.jsx', arrow: '←', to: 'settings.staff_page_access + admin_page_access', note: 'ซ่อน/แสดงเมนู และกันเส้นทางตามสิทธิ์ของ role' },
   { from: 'MenuManagementPage', arrow: '→', to: 'settings.menu_categories', note: 'เพิ่ม/เปลี่ยนชื่อ/ลบ/เรียงลำดับหมวดหมู่สินค้า — เปลี่ยนชื่อจะ sync ไปทุกเมนูที่ใช้หมวดหมู่นั้นด้วย' },
-  { from: 'BSK POS (POSPage)', arrow: '←', to: 'menus.category', note: 'จัดกลุ่มเมนู/แท็บหมวดหมู่ตามชื่อจริงในเมนู (ไม่ hardcode) — Bun/Refill/Addon มี logic พิเศษผูกชื่อไว้' },
-  { from: 'MenuManagementPage', arrow: '→', to: 'menu_option_groups + menu_option_choices', note: 'สร้าง/แก้ไข "กลุ่มตัวเลือกเสริม" (เช่น แพ็คคละแบรนด์) แล้วผูกกับหมวดหมู่เมนู — ไม่กระทบ category หลัก/GP calc/Bun-Refill-Addon เดิม' },
+  { from: 'BSK POS (POSPage)', arrow: '←', to: 'menus.category', note: 'จัดกลุ่มเมนู/แท็บหมวดหมู่ตามชื่อจริงในเมนู (ไม่ hardcode) — ทุกเมนูเปิด popup ตัวเลือกเหมือนกันหมด ไม่มีหมวดหมู่พิเศษอีกต่อไป' },
+  { from: 'MenuManagementPage', arrow: '→', to: 'menu_option_groups + menu_option_choices', note: 'สร้าง/แก้ไข "กลุ่มตัวเลือกเสริม" (single เลือก 1 หรือ multi ใส่จำนวน +/-) แล้วผูกกับหมวดหมู่เมนูใดก็ได้ — ไม่กระทบ category หลัก/GP calc' },
   { from: 'BSK POS (MenuOptionModal)', arrow: '←', to: 'menu_option_groups + menu_option_choices', note: 'กรองกลุ่มตัวเลือกที่ categories ตรงกับ menus.category ของเมนูที่เลือก แล้วโผล่เป็นตัวเลือกเสริมอัตโนมัติ — บันทึกลง order_items.item_options.optionGroups' },
 ]
 

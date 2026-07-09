@@ -397,14 +397,10 @@ export default function POSPage({ onDateChange }) {
         const menu = menus.find(m => m.id === l.menuId)
         const opts = l.options ?? {}
         const basePrice   = Object.values(menu?.prices ?? {})[0] ?? 0
-        const milkPrice   = opts.milk?.price ?? 0
-        const refillPrice = Array.isArray(opts.refill)
-          ? opts.refill.reduce((sum, r) => sum + (r.price ?? 0) * (r.qty ?? 1), 0)
-          : (opts.refill?.price ?? 0)
         const optionGroupsPrice = (opts.optionGroups ?? []).reduce((sum, g) =>
           sum + (g.choices ?? []).reduce((s, c) => s + (c.price ?? 0), 0), 0)
         return { lineId: l.lineId, menuId: l.menuId, qty: l.qty, name: menu?.name ?? '',
-          image_url: menu?.image_url ?? null, basePrice, extras: milkPrice + refillPrice + optionGroupsPrice,
+          image_url: menu?.image_url ?? null, basePrice, extras: optionGroupsPrice,
           isCampaign: l.isCampaign, options: opts, menu }
       }),
   [lineItems, menus])
@@ -415,15 +411,11 @@ export default function POSPage({ onDateChange }) {
     if (!selectedPlat) return orderItems
     return orderItems.map(item => {
       const basePrice   = item.menu?.prices[selectedPlat] ?? 0
-      const milkPrice   = item.options.milk?.prices?.[selectedPlat] ?? item.options.milk?.price ?? 0
-      const refillPrice = Array.isArray(item.options.refill)
-        ? item.options.refill.reduce((sum, r) => sum + (r.prices?.[selectedPlat] ?? r.price ?? 0) * (r.qty ?? 1), 0)
-        : (item.options.refill?.prices?.[selectedPlat] ?? item.options.refill?.price ?? 0)
       const optionGroupsPrice = (item.options.optionGroups ?? []).reduce((sum, g) =>
         sum + (g.choices ?? []).reduce((s, c) => s + (c.price ?? 0), 0), 0)
-      const unitPrice   = basePrice + milkPrice + refillPrice + optionGroupsPrice
+      const unitPrice   = basePrice + optionGroupsPrice
       const feePct      = item.isCampaign ? CAMPAIGN_GP_PCT : (platFees[selectedPlat] ?? 0)
-      return { ...item, basePrice, extras: milkPrice + refillPrice + optionGroupsPrice,
+      return { ...item, basePrice, extras: optionGroupsPrice,
         unitPrice, subtotal: item.qty * unitPrice, unitGpCost: basePrice * feePct / 100 }
     })
   }, [orderItems, selectedPlat, platFees])
@@ -547,9 +539,7 @@ export default function POSPage({ onDateChange }) {
           unit_gp_cost:  item.unitGpCost   ?? 0,
           is_campaign:   item.isCampaign   ?? false,
           item_options: {
-            milk:         item.options.milk         ?? null,
             sweetness:    item.options.sweetness    ?? 100,
-            refill:       item.options.refill       ?? null,
             note:         item.options.note         ?? '',
             packaging:    item.options.packaging    ?? null,
             optionGroups: item.options.optionGroups ?? null,
@@ -1010,11 +1000,6 @@ export default function POSPage({ onDateChange }) {
                               </span>
                             ) : (
                               <>
-                                {opts.milk && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">{opts.milk.name}</span>}
-                                {Array.isArray(opts.refill)
-                                  ? opts.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
-                                  : opts.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{opts.refill.name}</span>
-                                }
                                 {opts.sweetness != null && opts.sweetness !== 100 && (
                                   <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{opts.sweetness}%</span>
                                 )}
@@ -1098,12 +1083,7 @@ export default function POSPage({ onDateChange }) {
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-gray-900 leading-tight truncate">{item.name}</p>
                     <div className="flex flex-wrap gap-1 mt-0.5">
-                      {item.options.milk && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">🥛 {item.options.milk.name}</span>}
                       {item.options.packaging === 'พร้อมดื่ม' && <span className="text-[9px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">🧋 พร้อมดื่ม</span>}
-                      {Array.isArray(item.options.refill)
-                        ? item.options.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
-                        : item.options.refill && <span className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">🔄{item.options.refill.name}</span>
-                      }
                       {item.options.sweetness != null && item.options.sweetness !== 100 && (
                         <span className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">{item.options.sweetness}%</span>
                       )}
@@ -1274,11 +1254,6 @@ export default function POSPage({ onDateChange }) {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
                           <div className="flex gap-1 flex-wrap mt-0.5">
-                            {item.options.milk && <span className="text-[10px] text-blue-600">{item.options.milk.name}</span>}
-                            {Array.isArray(item.options.refill)
-                              ? item.options.refill.map(r => <span key={r.id} className="text-[10px] text-purple-600">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
-                              : item.options.refill && <span className="text-[10px] text-purple-600">🔄{item.options.refill.name}</span>
-                            }
                             {(item.options.optionGroups ?? []).flatMap(g => g.choices ?? []).map(c => (
                               <span key={c.id} className="text-[10px] text-pink-600">✦{c.label}</span>
                             ))}

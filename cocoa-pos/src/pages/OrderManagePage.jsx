@@ -460,16 +460,9 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
     orders.filter(o => o.status === 'delivered').reduce((s, o) => s + o.total, 0),
   [orders])
 
-  // ── Addon / Refill menus (for MenuOptionModal) ──────────
-  const ADDON_CATS  = ['Addon', 'addon', 'ADDON']
-  const REFILL_CATS = ['Refill', 'refill', 'REFILL']
-  const addonMenus  = useMemo(() => menus.filter(m => ADDON_CATS.includes(m.category)),  [menus])
-  const refillMenus = useMemo(() => menus.filter(m => REFILL_CATS.includes(m.category)), [menus])
-
   // ── Menu for editing (filtered) ──────────────────────────
   const editableMenus = useMemo(() => {
-    const HIDDEN = [...ADDON_CATS, ...REFILL_CATS]
-    let list = menus.filter(m => !HIDDEN.includes(m.category))
+    let list = menus
     if (menuSearch.trim()) {
       const q = menuSearch.toLowerCase()
       list = list.filter(m => m.name.toLowerCase().includes(q))
@@ -488,17 +481,13 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
     if (!optionTarget) return
     const { menu, order } = optionTarget
     const basePrice = menu.menu_prices?.find(p => p.platform === order.platform)?.price ?? 0
-    const milkPrice   = opts.milk?.price   ?? 0
-    const refillPrice = Array.isArray(opts.refill)
-      ? opts.refill.reduce((s, r) => s + (r.price ?? 0) * (r.qty ?? 1), 0)
-      : (opts.refill?.price ?? 0)
     const optionGroupsPrice = (opts.optionGroups ?? []).reduce((sum, g) =>
       sum + (g.choices ?? []).reduce((s, c) => s + (c.price ?? 0), 0), 0)
     setEditItems(prev => ({ ...prev, [menu.id]: prev[menu.id] ?? 1 }))
     setEditItemMeta(prev => ({
       ...prev,
       [menu.id]: {
-        unit_price:  basePrice + milkPrice + refillPrice + optionGroupsPrice,
+        unit_price:  basePrice + optionGroupsPrice,
         is_campaign: false,
         item_options: opts,
       },
@@ -881,7 +870,7 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
                                 onClick={() => {
                                   const qty = editItems[menu.id] ?? 0
                                   if (qty === 0) {
-                                    // เมนูใหม่ — เปิด MenuOptionModal เพื่อเลือกนม/Refill/ความหวาน
+                                    // เมนูใหม่ — เปิด MenuOptionModal เพื่อเลือกตัวเลือกเสริม/ความหวาน
                                     setOptionTarget({ menu, order })
                                   } else {
                                     // มีอยู่แล้ว — เพิ่มจำนวนได้เลย
@@ -1061,8 +1050,6 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
         <MenuOptionModal
           menu={optionTarget.menu}
           platform={optionTarget.order.platform}
-          addons={addonMenus}
-          refills={refillMenus}
           optionGroups={groupsForOptionTarget}
           initial={editItemMeta[optionTarget.menu.id]?.item_options ?? null}
           onConfirm={handleEditOptionConfirm}
