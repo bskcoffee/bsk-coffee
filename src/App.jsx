@@ -1,7 +1,9 @@
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
 import { useState } from 'react'
+import { ShieldOff } from 'lucide-react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ToastProvider } from './contexts/ToastContext'
+import { PermissionsProvider, usePermissions } from './contexts/PermissionsContext'
 import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
@@ -44,6 +46,7 @@ function PublicRoute({ children }) {
   return children
 }
 
+// Admin-level pages: reachable by 'admin' AND 'super_admin'.
 function AdminRoute({ children }) {
   const { role, loading } = useAuth()
   if (loading || role === null) return (
@@ -51,17 +54,51 @@ function AdminRoute({ children }) {
       <div className="w-6 h-6 border-2 border-cocoa-300 border-t-cocoa-600 rounded-full animate-spin" />
     </div>
   )
-  if (role !== 'admin') return <Navigate to="/" replace />
+  if (role !== 'admin' && role !== 'super_admin') return <Navigate to="/" replace />
   return children
 }
 
-// ── Super Admin Route — เฉพาะ chaiyapord.k@gmail.com + Passkey ทุกครั้ง ──────
+// Super-Admin-only pages (Import, AI Memory): role check only, no passkey —
+// these are gated purely by the 'super_admin' role in the profiles table.
+function SuperAdminOnlyRoute({ children }) {
+  const { role, loading } = useAuth()
+  if (loading || role === null) return (
+    <div className="flex items-center justify-center py-16 text-gray-400">
+      <div className="w-6 h-6 border-2 border-cocoa-300 border-t-cocoa-600 rounded-full animate-spin" />
+    </div>
+  )
+  if (role !== 'super_admin') return <Navigate to="/" replace />
+  return children
+}
 
-const SUPER_ADMIN_EMAIL  = 'chaiyapord.k@gmail.com'
+// Daily-ops pages (Dashboard, Sales Entry, History, Reports, Menu, Cost, Cash
+// Flow): Admin/Super Admin always allowed; Staff is gated by the
+// staff_page_access setting (configurable from UserManagementPage).
+function StaffPageRoute({ path, children }) {
+  const { role, loading } = useAuth()
+  const { staffPageAccess, loaded } = usePermissions()
+  if (loading || role === null || !loaded) return (
+    <div className="flex items-center justify-center py-16 text-gray-400">
+      <div className="w-6 h-6 border-2 border-cocoa-300 border-t-cocoa-600 rounded-full animate-spin" />
+    </div>
+  )
+  if (role === 'staff' && !staffPageAccess.includes(path)) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-gray-400 gap-2">
+        <ShieldOff size={32} />
+        <p className="text-sm">คุณไม่มีสิทธิ์เข้าถึงหน้านี้</p>
+      </div>
+    )
+  }
+  return children
+}
+
+// ── System Architecture Route — เฉพาะ super_admin + Passkey ทุกครั้ง ──────
+
 const SUPER_ADMIN_PASSKEY = '18879'
 
-function SuperAdminRoute({ children }) {
-  const { session, role, loading } = useAuth()
+function SystemRoute({ children }) {
+  const { role, loading } = useAuth()
   const [unlocked, setUnlocked]   = useState(false)
   const [val, setVal]             = useState('')
   const [error, setError]         = useState(false)
@@ -72,8 +109,8 @@ function SuperAdminRoute({ children }) {
     </div>
   )
 
-  // 1. ต้องเป็น email ที่กำหนดเท่านั้น
-  if (session?.user?.email !== SUPER_ADMIN_EMAIL) return <Navigate to="/" replace />
+  // 1. ต้องเป็น super_admin เท่านั้น
+  if (role !== 'super_admin') return <Navigate to="/" replace />
 
   // 2. ต้องป้อน Passkey ทุกครั้ง (unlocked reset ทุกครั้งที่ mount)
   if (!unlocked) {
@@ -141,19 +178,19 @@ const router = createBrowserRouter([
       </PrivateRoute>
     ),
     children: [
-      { index: true,      element: <DashboardPage /> },
-      { path: 'sales',    element: <SalesEntryPage /> },
-      { path: 'menu',     element: <MenuManagementPage /> },
-      { path: 'cost',     element: <MenuCostPage /> },
-      { path: 'history',  element: <SalesHistoryPage /> },
-      { path: 'reports',  element: <ReportsPage /> },
+      { index: true,      element: <StaffPageRoute path="/"><DashboardPage /></StaffPageRoute> },
+      { path: 'sales',    element: <StaffPageRoute path="/sales"><SalesEntryPage /></StaffPageRoute> },
+      { path: 'menu',     element: <StaffPageRoute path="/menu"><MenuManagementPage /></StaffPageRoute> },
+      { path: 'cost',     element: <StaffPageRoute path="/cost"><MenuCostPage /></StaffPageRoute> },
+      { path: 'history',  element: <StaffPageRoute path="/history"><SalesHistoryPage /></StaffPageRoute> },
+      { path: 'reports',  element: <StaffPageRoute path="/reports"><ReportsPage /></StaffPageRoute> },
       { path: 'settings', element: <AdminRoute><SettingsPage /></AdminRoute> },
       { path: 'users',    element: <AdminRoute><UserManagementPage /></AdminRoute> },
-      { path: 'import',    element: <AdminRoute><ImportPage /></AdminRoute> },
-      { path: 'cashflow',  element: <CashFlowPage /> },
+      { path: 'import',    element: <SuperAdminOnlyRoute><ImportPage /></SuperAdminOnlyRoute> },
+      { path: 'cashflow',  element: <StaffPageRoute path="/cashflow"><CashFlowPage /></StaffPageRoute> },
       { path: 'label-settings', element: <AdminRoute><LabelSettingsPage /></AdminRoute> },
-      { path: 'system',  element: <SuperAdminRoute><SystemPage /></SuperAdminRoute> },
-      { path: 'ai',      element: <AdminRoute><AIPage /></AdminRoute> },
+      { path: 'system',  element: <SystemRoute><SystemPage /></SystemRoute> },
+      { path: 'ai',      element: <SuperAdminOnlyRoute><AIPage /></SuperAdminOnlyRoute> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },
@@ -166,7 +203,9 @@ export default function App() {
     <ErrorBoundary>
       <AuthProvider>
         <ToastProvider>
-          <RouterProvider router={router} />
+          <PermissionsProvider>
+            <RouterProvider router={router} />
+          </PermissionsProvider>
         </ToastProvider>
       </AuthProvider>
     </ErrorBoundary>

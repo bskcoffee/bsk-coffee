@@ -2,14 +2,42 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
-import { Save, Eye, EyeOff, UserPlus, Users, LogOut, AlertTriangle, ShieldCheck, Shield } from 'lucide-react'
+import { usePermissions, STAFF_PAGES } from '../contexts/PermissionsContext'
+import { Save, Eye, EyeOff, UserPlus, Users, LogOut, AlertTriangle, ShieldCheck, Shield, Crown, KeyRound } from 'lucide-react'
 import ConfirmModal from '../components/ConfirmModal'
 
 const CREATE_COOLDOWN_SEC = 30
 
+const ROLE_LABEL = { super_admin: 'ผู้ดูแลระบบสูงสุด', admin: 'ผู้ดูแลระบบ', staff: 'พนักงาน' }
+
 export default function UserManagementPage() {
-  const { signOut, updatePassword, updateEmail, session } = useAuth()
+  const { signOut, updatePassword, updateEmail, session, role: myRole } = useAuth()
   const { addToast } = useToast()
+  const { staffPageAccess, saveStaffPageAccess } = usePermissions()
+
+  // --- สิทธิ์การเข้าถึงเมนู (พนักงาน) ---
+  const [pendingAccess, setPendingAccess] = useState(staffPageAccess)
+  const [savingAccess, setSavingAccess]   = useState(false)
+
+  useEffect(() => { setPendingAccess(staffPageAccess) }, [staffPageAccess])
+
+  const toggleAccess = (path) => {
+    setPendingAccess(prev =>
+      prev.includes(path) ? prev.filter(p => p !== path) : [...prev, path]
+    )
+  }
+
+  const saveAccess = async () => {
+    setSavingAccess(true)
+    try {
+      const { error } = await saveStaffPageAccess(pendingAccess)
+      if (error) throw error
+      addToast('บันทึกสิทธิ์การเข้าถึงเมนูแล้ว', 'success')
+    } catch (err) {
+      addToast('บันทึกสิทธิ์ไม่สำเร็จ: ' + err.message, 'error')
+    }
+    setSavingAccess(false)
+  }
 
   // --- บัญชีของฉัน ---
   const [newEmail, setNewEmail]               = useState(session?.user?.email ?? '')
@@ -28,7 +56,7 @@ export default function UserManagementPage() {
   const [userMgmtStatus, setUserMgmtStatus]   = useState('')
   const [cooldown, setCooldown]               = useState(0)
   const cooldownRef                           = useRef(null)
-  const [roleChangeTarget, setRoleChangeTarget] = useState(null) // { id, role } | null
+  const [roleChangeTarget, setRoleChangeTarget] = useState(null) // { id, newRole } | null
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
 
   useEffect(() => { loadUsers() }, [])
@@ -60,16 +88,18 @@ export default function UserManagementPage() {
     setUsersLoading(false)
   }
 
-  // ── Change role via secure RPC (admin-only check happens in DB) ──────────
-  const requestChangeRole = (userId, currentRole) => {
-    setRoleChangeTarget({ id: userId, role: currentRole })
+  // ── Change role via secure RPC (authorization enforced in DB) ─────────────
+  // 3-tier rule: super_admin can move anyone between all 3 roles; admin can
+  // only toggle staff ⇄ admin and can't touch/grant super_admin (buttons for
+  // that are simply not rendered for an admin viewer — DB also enforces it).
+  const requestChangeRole = (userId, newRole) => {
+    setRoleChangeTarget({ id: userId, newRole })
   }
 
   const confirmChangeRole = async () => {
     if (!roleChangeTarget) return
-    const { id: userId, role: currentRole } = roleChangeTarget
-    const newRole = currentRole === 'admin' ? 'staff' : 'admin'
-    const label   = newRole === 'admin' ? 'ผู้ดูแลระบบ' : 'พนักงาน'
+    const { id: userId, newRole } = roleChangeTarget
+    const label = ROLE_LABEL[newRole] ?? newRole
     setRoleChangeTarget(null)
     const { error } = await supabase.rpc('change_user_role', {
       target_id: userId,
@@ -207,34 +237,56 @@ export default function UserManagementPage() {
           <div className="space-y-2">
             {userList.map(u => {
               const isMe = u.id === session?.user?.id
+              const canManageThisRow =
+                !isMe && (myRole === 'super_admin' || (myRole === 'admin' && u.role !== 'super_admin'))
+
               return (
                 <div key={u.id}
                   className="flex items-center gap-3 bg-gray-50 rounded-xl px-3 py-2.5 text-sm">
                   <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-                    u.role === 'admin' ? 'bg-cocoa-100' : 'bg-gray-200'
+                    u.role === 'super_admin' ? 'bg-purple-100'
+                    : u.role === 'admin' ? 'bg-cocoa-100' : 'bg-gray-200'
                   }`}>
-                    {u.role === 'admin'
-                      ? <ShieldCheck size={14} className="text-cocoa-700" />
-                      : <Shield size={14} className="text-gray-400" />}
+                    {u.role === 'super_admin'
+                      ? <Crown size={14} className="text-purple-700" />
+                      : u.role === 'admin'
+                        ? <ShieldCheck size={14} className="text-cocoa-700" />
+                        : <Shield size={14} className="text-gray-400" />}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-gray-800 truncate">{u.email || '(ไม่ระบุ)'}</p>
                     <p className="text-xs text-gray-400">
-                      {u.role === 'admin' ? 'ผู้ดูแลระบบ' : 'พนักงาน'}
+                      {ROLE_LABEL[u.role] ?? u.role}
                       {isMe && ' · คุณ'}
                     </p>
                   </div>
-                  {!isMe && (
-                    <button
-                      onClick={() => requestChangeRole(u.id, u.role)}
-                      className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors shrink-0 ${
-                        u.role === 'admin'
-                          ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                          : 'bg-cocoa-50 text-cocoa-700 hover:bg-cocoa-100'
-                      }`}
-                    >
-                      {u.role === 'admin' ? '→ Staff' : '→ Admin'}
-                    </button>
+                  {canManageThisRow && (
+                    <div className="flex gap-1.5 shrink-0">
+                      {u.role === 'staff' && (
+                        <button
+                          onClick={() => requestChangeRole(u.id, 'admin')}
+                          className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-cocoa-50 text-cocoa-700 hover:bg-cocoa-100"
+                        >→ Admin</button>
+                      )}
+                      {u.role === 'admin' && (
+                        <button
+                          onClick={() => requestChangeRole(u.id, 'staff')}
+                          className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-amber-50 text-amber-700 hover:bg-amber-100"
+                        >→ Staff</button>
+                      )}
+                      {u.role === 'admin' && myRole === 'super_admin' && (
+                        <button
+                          onClick={() => requestChangeRole(u.id, 'super_admin')}
+                          className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-purple-50 text-purple-700 hover:bg-purple-100"
+                        >→ Super Admin</button>
+                      )}
+                      {u.role === 'super_admin' && myRole === 'super_admin' && (
+                        <button
+                          onClick={() => requestChangeRole(u.id, 'admin')}
+                          className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-amber-50 text-amber-700 hover:bg-amber-100"
+                        >→ Admin</button>
+                      )}
+                    </div>
                   )}
                 </div>
               )
@@ -243,6 +295,34 @@ export default function UserManagementPage() {
         ) : (
           <p className="text-sm text-gray-400 text-center py-4">ยังไม่มีผู้ใช้งานในระบบ</p>
         )}
+      </div>
+
+      {/* ── สิทธิ์การเข้าถึงเมนู (พนักงาน) ──────────────────────────── */}
+      <div className="card space-y-4">
+        <div className="flex items-center gap-2">
+          <KeyRound size={18} className="text-cocoa-600" />
+          <h2 className="font-semibold text-gray-800">สิทธิ์การเข้าถึงเมนู (พนักงาน)</h2>
+        </div>
+        <p className="text-xs text-gray-500">
+          เลือกหน้าที่ role &ldquo;พนักงาน&rdquo; เข้าถึงได้ — ผู้ดูแลระบบและผู้ดูแลระบบสูงสุดเห็นทุกหน้าเสมอ
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {STAFF_PAGES.map(p => (
+            <label key={p.to} className="flex items-center gap-2 text-sm text-gray-700 bg-gray-50 rounded-lg px-3 py-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="rounded border-gray-300 text-cocoa-600 focus:ring-cocoa-400"
+                checked={pendingAccess.includes(p.to)}
+                onChange={() => toggleAccess(p.to)}
+              />
+              {p.label}
+            </label>
+          ))}
+        </div>
+        <button onClick={saveAccess} disabled={savingAccess} className="btn-primary flex items-center gap-2">
+          <Save size={16} />
+          {savingAccess ? 'กำลังบันทึก...' : 'บันทึกสิทธิ์'}
+        </button>
       </div>
 
       {/* ── เพิ่มผู้ใช้ใหม่ ──────────────────────────────────────────── */}
@@ -324,7 +404,7 @@ export default function UserManagementPage() {
 
       <ConfirmModal
         open={!!roleChangeTarget}
-        title={`เปลี่ยน role เป็น "${roleChangeTarget?.role === 'admin' ? 'พนักงาน' : 'ผู้ดูแลระบบ'}"?`}
+        title={`เปลี่ยน role เป็น "${ROLE_LABEL[roleChangeTarget?.newRole] ?? ''}"?`}
         confirmLabel="ยืนยัน"
         onConfirm={confirmChangeRole}
         onCancel={() => setRoleChangeTarget(null)}

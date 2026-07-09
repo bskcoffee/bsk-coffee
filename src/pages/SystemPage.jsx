@@ -104,28 +104,28 @@ const APPS = [
         path: '/users',
         label: 'UserManagementPage',
         labelTh: 'การจัดการผู้ใช้งาน',
-        desc: 'เพิ่ม/แก้ไขผู้ใช้ กำหนด role (admin)',
+        desc: 'เพิ่ม/แก้ไขผู้ใช้ กำหนด role และสิทธิ์เข้าถึงเมนูของ Staff (admin)',
         mode: 'readwrite',
-        tables: ['auth.users', 'user_roles'],
+        tables: ['auth.users', 'profiles', 'settings'],
         adminOnly: true,
       },
       {
         path: '/import',
         label: 'ImportPage',
         labelTh: 'นำเข้าข้อมูล',
-        desc: 'Import ออเดอร์จากไฟล์ CSV/Excel (admin)',
+        desc: 'Import ออเดอร์จากไฟล์ CSV/Excel (super admin เท่านั้น)',
         mode: 'write',
         tables: ['orders', 'order_items', 'platform_costs', 'menus', 'menu_costs', 'cost_settings'],
-        adminOnly: true,
+        superAdminOnly: true,
       },
       {
         path: '/ai',
         label: 'AIPage',
         labelTh: 'AI Memory',
-        desc: 'ดูคำแนะนำ AI ย้อนหลัง ผล outcome และ action ทำแล้ว/ข้ามไป (admin)',
+        desc: 'ดูคำแนะนำ AI ย้อนหลัง ผล outcome และ action ทำแล้ว/ข้ามไป (super admin เท่านั้น)',
         mode: 'readwrite',
         tables: ['ai_memory'],
-        adminOnly: true,
+        superAdminOnly: true,
       },
     ],
   },
@@ -164,11 +164,11 @@ const TABLES = [
   { name: 'menu_prices',       desc: 'ราคาเมนูแต่ละ Platform',   cols: 'menu_id, platform, price' },
   { name: 'menu_costs',        desc: 'ต้นทุนวัตถุดิบต่อเมนู',    cols: 'menu_id, main_ingredient, milk_*, packaging_type, custom_costs, effective_from/to' },
   { name: 'cost_settings',     desc: 'ค่า shared cost (packaging, labor%)', cols: 'key, value, effective_from' },
-  { name: 'settings',          desc: 'ตั้งค่า global (platform fee%, store name)', cols: 'key, value' },
+  { name: 'settings',          desc: 'ตั้งค่า global (platform fee%, store name, staff_page_access)', cols: 'key, value' },
   { name: 'cashbook_entries',  desc: 'รายการเงินสด รายรับ/รายจ่าย', cols: 'id, date, type, amount, note, category' },
   { name: 'transfer_status',   desc: 'สถานะโอนเงิน',              cols: 'date, platform, status' },
   { name: 'auth.users',        desc: 'ผู้ใช้งานระบบ (Supabase Auth)', cols: 'id, email' },
-  { name: 'user_roles',        desc: 'Role ของผู้ใช้งาน',         cols: 'user_id, role (admin/staff)' },
+  { name: 'profiles',          desc: 'Role ของผู้ใช้งาน (3 ระดับ)', cols: 'id, email, role (super_admin/admin/staff), created_at' },
 ]
 
 const CALC_RULES = [
@@ -193,6 +193,8 @@ const DATA_FLOW = [
   { from: 'SettingsPage', arrow: '→', to: 'settings', note: 'ตั้ง platform_fee_pct, labor_pct ที่ใช้คำนวณ GP' },
   { from: 'Dashboard / History', arrow: '←', to: 'orders + order_items + platform_costs', note: 'อ่านข้อมูลเพื่อคำนวณ 5-Layer Profit' },
   { from: 'LabelSettingsPage', arrow: '→', to: 'print-server (localhost TCP)', note: 'ส่ง ESC/POS command พิมพ์ฉลาก' },
+  { from: 'UserManagementPage', arrow: '→', to: 'settings.staff_page_access', note: 'Admin/Super Admin กำหนดหน้าที่ Staff เข้าถึงได้' },
+  { from: 'Sidebar / BottomNav', arrow: '←', to: 'settings.staff_page_access', note: 'ซ่อน/แสดงเมนูตามสิทธิ์ของ role' },
 ]
 
 const LEGEND = [
@@ -200,6 +202,24 @@ const LEGEND = [
   { label: 'เขียนอย่างเดียว', className: 'bg-green-100 text-green-700' },
   { label: 'อ่าน/เขียน', className: 'bg-yellow-100 text-amber-800' },
   { label: 'admin only', className: 'bg-red-100 text-red-700' },
+  { label: 'super admin only', className: 'bg-purple-100 text-purple-700' },
+]
+
+// 3-tier role system (profiles.role) — enforced both client-side (route
+// guards in App.jsx) and server-side (change_user_role RPC + RLS).
+const ROLE_TIERS = [
+  {
+    role: 'super_admin', label: 'Super Admin', className: 'bg-purple-100 text-purple-700 border-purple-200',
+    desc: 'เห็น/เข้าถึงทุกหน้า รวมถึงหน้าที่เสี่ยงต่อข้อมูลจริง (Import, AI Memory, System Architecture) และเป็นคนเดียวที่เลื่อน/ลด role Super Admin ให้คนอื่นได้',
+  },
+  {
+    role: 'admin', label: 'Admin', className: 'bg-cocoa-100 text-cocoa-700 border-cocoa-200',
+    desc: 'จัดการร้านประจำวันได้ครบ (ตั้งค่า, ตั้งค่าฉลาก, จัดการผู้ใช้, กำหนดสิทธิ์เมนูของ Staff) ยกเว้นหน้า super admin only และเลื่อน role ใครเป็น Super Admin ไม่ได้',
+  },
+  {
+    role: 'staff', label: 'Staff', className: 'bg-gray-100 text-gray-600 border-gray-200',
+    desc: 'เห็นเฉพาะหน้างานประจำวันที่ Admin/Super Admin เปิดให้ (ตั้งค่าที่ settings.staff_page_access) — ค่าเริ่มต้นเห็นทั้ง 7 หน้า',
+  },
 ]
 
 // ─── Components ──────────────────────────────────────────────────────────────
@@ -214,6 +234,10 @@ function ModeTag({ mode }) {
 
 function AdminTag() {
   return <span className="badge bg-red-100 text-red-700">admin</span>
+}
+
+function SuperAdminTag() {
+  return <span className="badge bg-purple-100 text-purple-700">super admin only</span>
 }
 
 function TableTag({ name }) {
@@ -231,7 +255,7 @@ function PageCard({ page, theme }) {
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="font-bold text-[13px] text-gray-800">{page.labelTh}</span>
         <ModeTag mode={page.mode} />
-        {page.adminOnly && <AdminTag />}
+        {page.superAdminOnly ? <SuperAdminTag /> : page.adminOnly && <AdminTag />}
       </div>
 
       {/* path + component */}
@@ -276,6 +300,25 @@ export default function SystemPage() {
           <span key={s.label} className={`badge ${s.className}`}>{s.label}</span>
         ))}
       </div>
+
+      {/* Role Tiers */}
+      <section className="mb-8">
+        <h2 className="text-[15px] font-bold text-gray-700 mb-3.5 border-b-2 border-gray-200 pb-2">
+          🔐 ระดับสิทธิ์ผู้ใช้งาน (profiles.role)
+        </h2>
+        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+          {ROLE_TIERS.map(t => (
+            <div key={t.role} className={`rounded-lg border px-3.5 py-2.5 ${t.className}`}>
+              <p className="font-bold text-[13px] mb-1">{t.label}</p>
+              <p className="text-xs leading-relaxed opacity-90">{t.desc}</p>
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-gray-400 mt-2.5">
+          บังคับใช้ผ่าน route guard ใน <code className="bg-slate-100 px-1 py-0.5 rounded">App.jsx</code> (AdminRoute / SuperAdminOnlyRoute / SystemRoute / StaffPageRoute)
+          {' '}และ RPC <code className="bg-slate-100 px-1 py-0.5 rounded">change_user_role</code> ฝั่ง Supabase (ดู super_admin_migration.sql)
+        </p>
+      </section>
 
       {/* Apps */}
       {APPS.map(app => (

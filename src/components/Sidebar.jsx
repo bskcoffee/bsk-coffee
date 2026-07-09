@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network, Brain, ChevronUp, ChevronDown } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../contexts/PermissionsContext'
 import { supabase } from '../lib/supabase'
 import ConfirmModal from './ConfirmModal'
 
@@ -66,11 +67,16 @@ const ALL_NAV = [
   { to: '/settings',       iconName: 'Settings',  label: 'ตั้งค่า',             adminOnly: true  },
   { to: '/label-settings', iconName: 'Printer',   label: 'ตั้งค่าฉลาก',         adminOnly: true  },
   { to: '/users',    iconName: 'Users',           label: 'การจัดการผู้ใช้งาน', adminOnly: true  },
-  { to: '/import',    iconName: 'FileUp',          label: 'นำเข้าข้อมูล',        adminOnly: true  },
+  { to: '/import',    iconName: 'FileUp',          label: 'นำเข้าข้อมูล',        superAdminOnly: true },
   { to: '/cashflow',  iconName: 'Wallet',          label: 'รายรับรายจ่าย',       adminOnly: false },
-  { to: '/ai',        iconName: 'Brain',           label: 'AI Memory',           adminOnly: true  },
-  { to: '/system',    iconName: 'Network',         label: 'System Architecture', adminOnly: true  },
+  { to: '/ai',        iconName: 'Brain',           label: 'AI Memory',           superAdminOnly: true },
+  { to: '/system',    iconName: 'Network',         label: 'System Architecture', superAdminOnly: true },
 ]
+
+// Operational pages whose visibility to 'staff' is controlled by the
+// staff_page_access setting (edited from UserManagementPage). Admin/Super
+// Admin always see these regardless of the setting.
+const STAFF_GATED = new Set(['/', '/sales', '/history', '/reports', '/menu', '/cost', '/cashflow'])
 
 const ICON_MAP = { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, FileUp, Wallet, Printer, Tablet, Network, Brain }
 const STORAGE_KEY = 'cocoa-nav-order'
@@ -95,6 +101,7 @@ function loadLocalOrder() {
 
 export default function Sidebar() {
   const { signOut, role } = useAuth()
+  const { staffPageAccess } = usePermissions()
   const [items, setItems] = useState(() => applyOrder(loadLocalOrder()))
   const dragIdx   = useRef(null)
   const overIdx   = useRef(null)
@@ -123,8 +130,15 @@ export default function Sidebar() {
       })
   }, [])
 
-  // Only show admin-only items when role is confirmed admin
-  const visibleItems = items.filter(item => !item.adminOnly || role === 'admin')
+  // 3-tier visibility: super_admin sees everything; admin sees admin+ops
+  // pages but not superAdminOnly ones; staff sees only ops pages it's been
+  // granted via staff_page_access.
+  const visibleItems = items.filter(item => {
+    if (item.superAdminOnly) return role === 'super_admin'
+    if (item.adminOnly) return role === 'admin' || role === 'super_admin'
+    if (STAFF_GATED.has(item.to)) return role !== 'staff' || staffPageAccess.includes(item.to)
+    return true
+  })
 
   const handleDragStart = (e, idx) => {
     dragIdx.current = idx
@@ -204,7 +218,10 @@ export default function Sidebar() {
           <div>
             <p className="font-bold text-sm leading-tight">BSK coffee&bakery</p>
             <p className="text-cocoa-300 text-xs">
-              {role === 'admin' ? 'ผู้ดูแลระบบ' : role === 'staff' ? 'พนักงาน' : 'ระบบจัดการยอดขาย'}
+              {role === 'super_admin' ? 'ผู้ดูแลระบบสูงสุด'
+                : role === 'admin' ? 'ผู้ดูแลระบบ'
+                : role === 'staff' ? 'พนักงาน'
+                : 'ระบบจัดการยอดขาย'}
             </p>
           </div>
         </div>

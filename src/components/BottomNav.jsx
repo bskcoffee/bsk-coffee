@@ -9,6 +9,7 @@ import {
 const PASSKEY = '18879'
 const POS_URL = 'https://cocoa-pos.vercel.app'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../contexts/PermissionsContext'
 import { supabase } from '../lib/supabase'
 import ConfirmModal from './ConfirmModal'
 
@@ -21,9 +22,12 @@ const ALL_ITEMS = [
   { to: '/menu',     icon: UtensilsCrossed, label: 'จัดการเมนู',            adminOnly: false },
   { to: '/cost',     icon: Calculator,      label: 'ต้นทุนเมนู',            adminOnly: false },
   { to: '/users',    icon: Users,           label: 'จัดการผู้ใช้',          adminOnly: true  },
-  { to: '/import',    icon: FileUp,          label: 'นำเข้าข้อมูล',          adminOnly: true  },
+  { to: '/import',    icon: FileUp,          label: 'นำเข้าข้อมูล',          superAdminOnly: true },
   { to: '/cashflow',  icon: Wallet,          label: 'รายรับรายจ่าย',         adminOnly: false },
 ]
+
+// Operational pages gated by staff_page_access for the 'staff' role only.
+const STAFF_GATED = new Set(['/', '/sales', '/history', '/reports', '/menu', '/cost', '/cashflow'])
 
 const MAIN_TOS   = new Set(['/', '/sales', '/history', '/reports'])
 const ITEM_MAP   = Object.fromEntries(ALL_ITEMS.map(i => [i.to, i]))
@@ -39,6 +43,7 @@ function applyOrder(order) {
 
 export default function BottomNav() {
   const { role, signOut } = useAuth()
+  const { staffPageAccess } = usePermissions()
   const navigate = useNavigate()
   const [items, setItems]           = useState(ALL_ITEMS)
   const [sheetOpen, setSheetOpen]       = useState(false)
@@ -72,14 +77,21 @@ export default function BottomNav() {
     return () => window.removeEventListener('keydown', onKey)
   }, [sheetOpen, showPasskey])
 
-  const isAdmin = role === 'admin'
+  const isAdmin      = role === 'admin' || role === 'super_admin'
+  const isSuperAdmin = role === 'super_admin'
+  const canSee = (item) => {
+    if (item.superAdminOnly) return isSuperAdmin
+    if (item.adminOnly) return isAdmin
+    if (STAFF_GATED.has(item.to)) return role !== 'staff' || staffPageAccess.includes(item.to)
+    return true
+  }
 
   const mainItems = items
-    .filter(i => MAIN_TOS.has(i.to) && (!i.adminOnly || isAdmin))
+    .filter(i => MAIN_TOS.has(i.to) && canSee(i))
     .slice(0, 4)
 
   const sheetItems = items.filter(
-    i => !MAIN_TOS.has(i.to) && (!i.adminOnly || isAdmin)
+    i => !MAIN_TOS.has(i.to) && canSee(i)
   )
 
   const handleSheetNav = (to) => {
