@@ -7,8 +7,23 @@ import {
   DEFAULT_COST_SCHEMA,
 } from '../lib/supabase'
 import { COST_KEY_LABELS, formatBaht } from '../utils/calculations'
-import { Save, AlertTriangle, History, Pencil, GripVertical, X, Plus, Eye, EyeOff, RefreshCw, Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Calendar } from 'lucide-react'
+import { Save, AlertTriangle, History, Pencil, GripVertical, X, Plus, Eye, EyeOff, RefreshCw, Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Calendar, CheckCircle2, XCircle, Info } from 'lucide-react'
 import ConfirmModal from '../components/ConfirmModal'
+
+// Status line with an icon alongside color, so success/error/neutral don't rely on color alone
+function StatusMessage({ status }) {
+  if (!status) return null
+  const isSuccess = status.includes('สำเร็จ')
+  const isNone = status.includes('ไม่มี')
+  const Icon = isSuccess ? CheckCircle2 : isNone ? Info : XCircle
+  const color = isSuccess ? 'text-green-600' : isNone ? 'text-gray-500' : 'text-red-600'
+  return (
+    <p className={`text-sm flex items-center gap-1.5 ${color}`}>
+      <Icon size={14} className="shrink-0" />
+      {status}
+    </p>
+  )
+}
 
 // ─── LIFF Config Section ───────────────────────────────────────────────────
 
@@ -77,7 +92,7 @@ function LiffConfigSection() {
           {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
           {saving ? 'กำลังบันทึก...' : 'บันทึก'}
         </button>
-        {status && <p className={`text-sm ${status.includes('สำเร็จ') ? 'text-green-600' : 'text-red-600'}`}>{status}</p>}
+        <StatusMessage status={status} />
       </div>
     </div>
   )
@@ -192,7 +207,7 @@ function MenuCategoriesSection() {
         <button onClick={loadCats} className="btn-secondary flex items-center gap-2">
           <RefreshCw size={14} /> รีเฟรช
         </button>
-        {status && <p className={`text-sm ${status.includes('สำเร็จ') ? 'text-green-600' : 'text-red-600'}`}>{status}</p>}
+        <StatusMessage status={status} />
       </div>
     </div>
   )
@@ -775,7 +790,7 @@ export default function SettingsPage() {
               </button>
               <button onClick={cancelFeeEdit} disabled={saving} className="btn-secondary">ยกเลิก</button>
             </div>
-            {feeStatus && <p className={`text-sm ${feeStatus.includes('สำเร็จ') ? 'text-green-600' : 'text-red-600'}`}>{feeStatus}</p>}
+            <StatusMessage status={feeStatus} />
           </>
         )}
       </div>
@@ -830,11 +845,7 @@ export default function SettingsPage() {
               </button>
               <button onClick={cancelOverheadEdit} disabled={savingOverhead} className="btn-secondary">ยกเลิก</button>
             </div>
-            {overheadStatus && (
-              <p className={`text-sm ${overheadStatus.includes('สำเร็จ') ? 'text-green-600' : overheadStatus.includes('ไม่มี') ? 'text-gray-500' : 'text-red-600'}`}>
-                {overheadStatus}
-              </p>
-            )}
+            <StatusMessage status={overheadStatus} />
           </>
         )}
       </div>
@@ -960,20 +971,12 @@ export default function SettingsPage() {
               </button>
               <button onClick={cancelCostEdit} disabled={savingCost} className="btn-secondary">ยกเลิก</button>
             </div>
-            {costStatus && (
-              <p className={`text-sm ${costStatus.includes('สำเร็จ') ? 'text-green-600' : costStatus.includes('ไม่มี') ? 'text-gray-500' : 'text-red-600'}`}>
-                {costStatus}
-              </p>
-            )}
+            <StatusMessage status={costStatus} />
           </>
         )}
 
         {/* Show status when read-only */}
-        {!costEditing && costStatus && (
-          <p className={`text-sm ${costStatus.includes('สำเร็จ') ? 'text-green-600' : costStatus.includes('ไม่มี') ? 'text-gray-500' : 'text-red-600'}`}>
-            {costStatus}
-          </p>
-        )}
+        {!costEditing && <StatusMessage status={costStatus} />}
 
         {showCostHistory && (
           <div className="border-t pt-4">
