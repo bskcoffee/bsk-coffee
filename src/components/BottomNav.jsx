@@ -4,13 +4,14 @@ import {
   LayoutDashboard, ShoppingCart, ClipboardList, BarChart3,
   Settings, UtensilsCrossed, Calculator, Users, LogOut,
   MoreHorizontal, X, FileUp, Wallet, Tablet, Lock,
+  Printer, Brain, Network,
 } from 'lucide-react'
 
-const PASSKEY = '18879'
+const DEFAULT_PASSKEY = '18879'
 const POS_URL = 'https://bsk-pos.vercel.app'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions, canAccessAdminPage } from '../contexts/PermissionsContext'
-import { supabase } from '../lib/supabase'
+import { supabase, getSetting } from '../lib/supabase'
 import ConfirmModal from './ConfirmModal'
 
 const ALL_ITEMS = [
@@ -24,6 +25,9 @@ const ALL_ITEMS = [
   { to: '/users',    icon: Users,           label: 'จัดการผู้ใช้',          special: true },
   { to: '/import',    icon: FileUp,          label: 'นำเข้าข้อมูล',          special: true },
   { to: '/cashflow',  icon: Wallet,          label: 'รายรับรายจ่าย',         adminOnly: false },
+  { to: '/label-settings', icon: Printer,    label: 'ตั้งค่าฉลาก',           special: true },
+  { to: '/ai',        icon: Brain,           label: 'AI Memory',             special: true },
+  { to: '/system',    icon: Network,         label: 'System Architecture',   special: true },
 ]
 
 // Operational pages gated by staff_page_access for the 'staff' role only.
@@ -51,6 +55,7 @@ export default function BottomNav() {
   const [showPasskey, setShowPasskey]   = useState(false)
   const [passkeyVal, setPasskeyVal]     = useState('')
   const [passkeyError, setPasskeyError] = useState(false)
+  const [navPasskey, setNavPasskey]     = useState(DEFAULT_PASSKEY)
 
   useEffect(() => {
     supabase
@@ -63,6 +68,11 @@ export default function BottomNav() {
           try { setItems(applyOrder(JSON.parse(data.value))) } catch {}
         }
       })
+  }, [])
+
+  // Passkey for the BSK POS button — configurable from User Management (admin/super_admin only)
+  useEffect(() => {
+    getSetting('nav_passkey').then(v => { if (v) setNavPasskey(v) })
   }, [])
 
   // Escape-to-close for the hand-rolled sheet + passkey modal
@@ -245,7 +255,7 @@ export default function BottomNav() {
                 onChange={e => { setPasskeyVal(e.target.value); setPasskeyError(false) }}
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
-                    if (passkeyVal === PASSKEY) { setShowPasskey(false); setPasskeyVal(''); window.open(POS_URL, '_blank') }
+                    if (passkeyVal === navPasskey) { setShowPasskey(false); setPasskeyVal(''); window.open(POS_URL, '_blank') }
                     else { setPasskeyError(true); setPasskeyVal('') }
                   }
                 }}
@@ -263,7 +273,7 @@ export default function BottomNav() {
               >ยกเลิก</button>
               <button
                 onClick={() => {
-                  if (passkeyVal === PASSKEY) { setShowPasskey(false); setPasskeyVal(''); window.open(POS_URL, '_blank') }
+                  if (passkeyVal === navPasskey) { setShowPasskey(false); setPasskeyVal(''); window.open(POS_URL, '_blank') }
                   else { setPasskeyError(true); setPasskeyVal('') }
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-cocoa-700 text-white text-sm font-bold"
