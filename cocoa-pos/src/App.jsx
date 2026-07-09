@@ -305,7 +305,7 @@ const TABS = [
 ]
 
 const DEFAULT_PASSKEY = '18879'
-const HOUSE_URL = 'https://cocoa-house.vercel.app'
+const HOUSE_URL = 'https://bsk-coffee.vercel.app'
 
 function PasskeyModal({ title, expectedPasskey, onConfirm, onClose }) {
   const [val, setVal]     = useState('')
