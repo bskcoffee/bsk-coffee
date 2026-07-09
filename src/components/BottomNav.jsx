@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 
 const PASSKEY = '18879'
-const POS_URL = 'https://cocoa-pos.vercel.app'
+const POS_URL = 'https://bsk-pos.vercel.app'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions, canAccessAdminPage } from '../contexts/PermissionsContext'
 import { supabase } from '../lib/supabase'

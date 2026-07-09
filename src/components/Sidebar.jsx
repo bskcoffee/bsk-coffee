@@ -7,7 +7,7 @@ import { supabase } from '../lib/supabase'
 import ConfirmModal from './ConfirmModal'
 
 const PASSKEY   = '18879'
-const POS_URL  = 'https://cocoa-pos.vercel.app'
+const POS_URL  = 'https://bsk-pos.vercel.app'
 const LIFF_URL = 'https://cocoa-liff.vercel.app'
 
 function PasskeyModal({ title = 'ไปที่ BSK POS', onConfirm, onClose }) {
