@@ -83,6 +83,11 @@ export default function UserManagementPage() {
   const [roleChangeTarget, setRoleChangeTarget] = useState(null) // { id, newRole } | null
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
 
+  // Non-super_admin viewers (admin, staff) never see super_admin accounts in this list
+  const visibleUsers = myRole === 'super_admin'
+    ? userList
+    : userList.filter(u => u.role !== 'super_admin')
+
   useEffect(() => { loadUsers() }, [])
   useEffect(() => () => { if (cooldownRef.current) clearInterval(cooldownRef.current) }, [])
 
@@ -180,7 +185,7 @@ export default function UserManagementPage() {
       const { error } = await supabase.auth.signUp({
         email: newUserEmail,
         password: newUserPass,
-        options: { emailRedirectTo: window.location.origin },
+        options: { emailRedirectTo: 'https://bsk-coffee.vercel.app' },
       })
       if (error) throw error
       setUserMgmtStatus(`✅ สร้างบัญชี ${newUserEmail} สำเร็จ! ระบบส่งอีเมลยืนยันให้แล้ว`)
@@ -252,14 +257,14 @@ export default function UserManagementPage() {
         <div className="flex items-center gap-2">
           <Users size={18} className="text-cocoa-600" />
           <h2 className="font-semibold text-gray-800">ผู้ใช้งานในระบบ</h2>
-          <span className="ml-auto text-xs text-gray-400">{userList.length} บัญชี</span>
+          <span className="ml-auto text-xs text-gray-400">{visibleUsers.length} บัญชี</span>
         </div>
 
         {usersLoading ? (
           <p className="text-sm text-gray-400 text-center py-4">กำลังโหลด...</p>
-        ) : userList.length > 0 ? (
+        ) : visibleUsers.length > 0 ? (
           <div className="space-y-2">
-            {userList.map(u => {
+            {visibleUsers.map(u => {
               const isMe = u.id === session?.user?.id
               const canManageThisRow =
                 !isMe && (myRole === 'super_admin' || (myRole === 'admin' && u.role !== 'super_admin'))
