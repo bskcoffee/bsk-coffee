@@ -121,3 +121,4 @@ vercel
 ---
 
 *Cocoa House Sales Management System v1.0*
+redeploy trigger: repo made public 2026-07-09
