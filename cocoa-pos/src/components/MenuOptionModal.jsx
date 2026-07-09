@@ -29,7 +29,13 @@ const initRefillQtys = (initial) => {
   return { [initial.refill.id]: 1 }
 }
 
-export default function MenuOptionModal({ menu, platform, addons, refills, initial, onConfirm, onClose, confirmLabel }) {
+// Convert initial.optionGroups ([{groupId, choices:[{id,...}]}]) → { [groupId]: [choiceId, ...] }
+const initGroupSelections = (initial) => {
+  if (!initial?.optionGroups) return {}
+  return Object.fromEntries(initial.optionGroups.map(g => [g.groupId, (g.choices ?? []).map(c => c.id)]))
+}
+
+export default function MenuOptionModal({ menu, platform, addons, refills, optionGroups = [], initial, onConfirm, onClose, confirmLabel }) {
   const basePrice = menu?.prices?.[platform] ?? 0
 
   const [milk,       setMilk]       = useState(initial?.milk      ?? null)
@@ -37,36 +43,67 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
   const [refillQtys, setRefillQtys] = useState(() => initRefillQtys(initial))
   const [packaging,  setPackaging]  = useState(initial?.packaging  ?? null)
   const [note,       setNote]       = useState(initial?.note       ?? '')
+  const [groupSelections, setGroupSelections] = useState(() => initGroupSelections(initial))
 
   useEffect(() => {
     if (!initial) {
-      setMilk(null); setSweetness(100); setRefillQtys({}); setPackaging(null); setNote('')
+      setMilk(null); setSweetness(100); setRefillQtys({}); setPackaging(null); setNote(''); setGroupSelections({})
     } else {
       setMilk(initial.milk ?? null)
       setSweetness(initial.sweetness ?? 100)
       setRefillQtys(initRefillQtys(initial))
       setPackaging(initial.packaging ?? null)
       setNote(initial.note ?? '')
+      setGroupSelections(initGroupSelections(initial))
     }
   }, [menu?.id])
 
   const refillTotal = refills.reduce((sum, r) => sum + (r.price ?? 0) * (refillQtys[r.id] ?? 0), 0)
-  const totalExtra  = (milk?.price ?? 0) + refillTotal
+  const groupsTotal = optionGroups.reduce((sum, g) =>
+    sum + (groupSelections[g.id] ?? []).reduce((s, cid) => s + (g.choices.find(c => c.id === cid)?.price ?? 0), 0), 0)
+  const totalExtra  = (milk?.price ?? 0) + refillTotal + groupsTotal
   const totalPrice  = basePrice + totalExtra
 
   const canConfirm = packaging !== null
+    && optionGroups.every(g => !g.required || (groupSelections[g.id]?.length ?? 0) > 0)
+
+  // เลือก/ยกเลิกตัวเลือกในกลุ่มตัวเลือกเสริม — single = เลือกได้ 1, multi = เลือกได้หลายอันจนถึง max_select
+  const toggleGroupChoice = (group, choiceId) => {
+    setGroupSelections(prev => {
+      const current = prev[group.id] ?? []
+      if (group.selection_type === 'single') {
+        return { ...prev, [group.id]: current[0] === choiceId ? [] : [choiceId] }
+      }
+      if (current.includes(choiceId)) {
+        return { ...prev, [group.id]: current.filter(id => id !== choiceId) }
+      }
+      if (group.max_select && current.length >= group.max_select) return prev
+      return { ...prev, [group.id]: [...current, choiceId] }
+    })
+  }
 
   const handleConfirm = () => {
     if (!canConfirm) return
     const selectedRefills = refills
       .filter(r => (refillQtys[r.id] ?? 0) > 0)
       .map(r => ({ id: r.id, name: r.name, price: r.price, prices: r.prices, qty: refillQtys[r.id] }))
+    const selectedGroups = optionGroups
+      .map(g => ({
+        groupId:   g.id,
+        groupName: g.name,
+        choices:   (groupSelections[g.id] ?? [])
+          .map(cid => g.choices.find(c => c.id === cid))
+          .filter(Boolean)
+          .map(c => ({ id: c.id, label: c.label, price: c.price })),
+      }))
+      .filter(g => g.choices.length > 0)
     onConfirm({
       milk,
       sweetness,
       refill: selectedRefills.length > 0 ? selectedRefills : null,
       note,
       packaging,
+      optionGroups: selectedGroups.length > 0 ? selectedGroups : null,
     })
   }
 
@@ -213,6 +250,56 @@ export default function MenuOptionModal({ menu, platform, addons, refills, initi
               ))}
             </div>
           </section>
+
+          {/* ── กลุ่มตัวเลือกเสริม (สร้าง/ผูกหมวดหมู่จากหน้าจัดการเมนู) ── */}
+          {optionGroups.map(group => {
+            const selected = groupSelections[group.id] ?? []
+            const atMax    = group.selection_type === 'multi' && group.max_select && selected.length >= group.max_select
+            return (
+              <section key={group.id}>
+                <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2 flex-wrap">
+                  {group.name}
+                  {group.required
+                    ? <RequiredBadge />
+                    : <span className="text-[10px] text-gray-400 font-normal bg-gray-100 px-1.5 py-0.5 rounded">ไม่บังคับ</span>}
+                  <span className="text-[10px] text-gray-400 font-normal">
+                    {group.selection_type === 'single' ? 'เลือกได้ 1' : `เลือกได้สูงสุด ${group.max_select ?? 'ไม่จำกัด'}`}
+                  </span>
+                </p>
+                {group.choices.length === 0 ? (
+                  <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">ยังไม่มีตัวเลือกในกลุ่มนี้</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {group.choices.map(choice => {
+                      const isSelected = selected.includes(choice.id)
+                      const disabled   = !isSelected && atMax
+                      return (
+                        <button
+                          key={choice.id}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => toggleGroupChoice(group, choice.id)}
+                          className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95 flex items-center gap-2
+                            ${isSelected ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 bg-white text-gray-600'}
+                            ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                        >
+                          <span className={`shrink-0 w-4 h-4 border-2 flex items-center justify-center text-[10px] leading-none
+                            ${group.selection_type === 'single' ? 'rounded-full' : 'rounded'}
+                            ${isSelected ? 'border-cocoa-600 bg-cocoa-600 text-white' : 'border-gray-300'}`}>
+                            {isSelected ? '✓' : ''}
+                          </span>
+                          <span className="flex-1">
+                            <div className="font-bold">{choice.label}</div>
+                            <div className="text-xs opacity-60 mt-0.5">{choice.price > 0 ? `+${fmt(choice.price)}` : 'ฟรี'}</div>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+            )
+          })}
 
           {/* ── 5. หมายเหตุ ────────────────────────────────── */}
           <section>

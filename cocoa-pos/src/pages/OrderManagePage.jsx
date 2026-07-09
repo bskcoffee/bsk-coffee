@@ -60,6 +60,7 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
   const [date,         setDate]         = useState(initialDate ?? today())
   const [orders,       setOrders]       = useState([])
   const [menus,        setMenus]        = useState([])
+  const [optionGroups, setOptionGroups] = useState([]) // กลุ่มตัวเลือกเสริม ผูกกับหมวดหมู่เมนู
   const [loading,      setLoading]      = useState(true)
   const [refreshing,   setRefreshing]   = useState(false)
   const [expandedId,   setExpandedId]   = useState(null)
@@ -93,6 +94,16 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
         .order('sort_order', { ascending: true })
         .order('name')
       setMenus(data ?? [])
+
+      const { data: groupsData } = await supabase
+        .from('menu_option_groups')
+        .select('*, menu_option_choices(*)')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
+      setOptionGroups((groupsData ?? []).map(g => ({
+        ...g,
+        choices: (g.menu_option_choices ?? []).filter(c => c.is_active).sort((a, b) => a.sort_order - b.sort_order),
+      })))
     }
     load()
   }, [])
@@ -466,18 +477,28 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
     return list
   }, [menus, menuSearch])
 
+  // กลุ่มตัวเลือกเสริมที่ผูกกับหมวดหมู่ของเมนูที่กำลังเปิด modal อยู่ (โหมดแก้ไข)
+  const groupsForOptionTarget = useMemo(() => {
+    if (!optionTarget) return []
+    return optionGroups.filter(g => (g.categories ?? []).includes(optionTarget.menu.category))
+  }, [optionGroups, optionTarget])
+
   // ── Handle option confirm from MenuOptionModal ────────────
   const handleEditOptionConfirm = (opts) => {
     if (!optionTarget) return
     const { menu, order } = optionTarget
     const basePrice = menu.menu_prices?.find(p => p.platform === order.platform)?.price ?? 0
     const milkPrice   = opts.milk?.price   ?? 0
-    const refillPrice = opts.refill?.price ?? 0
+    const refillPrice = Array.isArray(opts.refill)
+      ? opts.refill.reduce((s, r) => s + (r.price ?? 0) * (r.qty ?? 1), 0)
+      : (opts.refill?.price ?? 0)
+    const optionGroupsPrice = (opts.optionGroups ?? []).reduce((sum, g) =>
+      sum + (g.choices ?? []).reduce((s, c) => s + (c.price ?? 0), 0), 0)
     setEditItems(prev => ({ ...prev, [menu.id]: prev[menu.id] ?? 1 }))
     setEditItemMeta(prev => ({
       ...prev,
       [menu.id]: {
-        unit_price:  basePrice + milkPrice + refillPrice,
+        unit_price:  basePrice + milkPrice + refillPrice + optionGroupsPrice,
         is_campaign: false,
         item_options: opts,
       },
@@ -725,6 +746,9 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
                               {item.item_options?.note && (
                                 <span className="text-[9px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded">📝 {item.item_options.note}</span>
                               )}
+                              {(item.item_options?.optionGroups ?? []).flatMap(g => g.choices ?? []).map(c => (
+                                <span key={c.id} className="text-[9px] bg-pink-100 text-pink-700 px-1 py-0.5 rounded">✦ {c.label}</span>
+                              ))}
                             </div>
                           </div>
                           <div className="text-right shrink-0">
@@ -1039,6 +1063,7 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
           platform={optionTarget.order.platform}
           addons={addonMenus}
           refills={refillMenus}
+          optionGroups={groupsForOptionTarget}
           initial={editItemMeta[optionTarget.menu.id]?.item_options ?? null}
           onConfirm={handleEditOptionConfirm}
           onClose={() => setOptionTarget(null)}

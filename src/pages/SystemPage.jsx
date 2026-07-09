@@ -162,6 +162,8 @@ const TABLES = [
   { name: 'platform_costs',    desc: 'ต้นทุน Platform รายวัน',    cols: 'date, platform, net_sales, platform_fee, menu_discount, campaign, marketing_fee, delivery_discount, advertisement' },
   { name: 'menus',             desc: 'เมนูทั้งหมด',               cols: 'id, name, category, image_url, is_active, sort_order' },
   { name: 'menu_prices',       desc: 'ราคาเมนูแต่ละ Platform',   cols: 'menu_id, platform, price' },
+  { name: 'menu_option_groups',  desc: 'กลุ่มตัวเลือกเสริม ผูกกับหมวดหมู่เมนู (สร้างเองจากหน้าจัดการเมนู)', cols: 'id, name, selection_type (single/multi), max_select, required, categories, sort_order, is_active' },
+  { name: 'menu_option_choices', desc: 'ตัวเลือก+ราคาภายในแต่ละกลุ่มตัวเลือกเสริม', cols: 'id, group_id, label, price, sort_order, is_active' },
   { name: 'menu_costs',        desc: 'ต้นทุนวัตถุดิบต่อเมนู',    cols: 'menu_id, main_ingredient, milk_*, packaging_type, custom_costs, effective_from/to' },
   { name: 'cost_settings',     desc: 'ค่า shared cost (packaging, labor%)', cols: 'key, value, effective_from' },
   { name: 'settings',          desc: 'ตั้งค่า global (platform fee%, store name, staff_page_access, admin_page_access, menu_categories)', cols: 'key, value' },
@@ -198,6 +200,8 @@ const DATA_FLOW = [
   { from: 'Sidebar / BottomNav / App.jsx', arrow: '←', to: 'settings.staff_page_access + admin_page_access', note: 'ซ่อน/แสดงเมนู และกันเส้นทางตามสิทธิ์ของ role' },
   { from: 'MenuManagementPage', arrow: '→', to: 'settings.menu_categories', note: 'เพิ่ม/เปลี่ยนชื่อ/ลบ/เรียงลำดับหมวดหมู่สินค้า — เปลี่ยนชื่อจะ sync ไปทุกเมนูที่ใช้หมวดหมู่นั้นด้วย' },
   { from: 'BSK POS (POSPage)', arrow: '←', to: 'menus.category', note: 'จัดกลุ่มเมนู/แท็บหมวดหมู่ตามชื่อจริงในเมนู (ไม่ hardcode) — Bun/Refill/Addon มี logic พิเศษผูกชื่อไว้' },
+  { from: 'MenuManagementPage', arrow: '→', to: 'menu_option_groups + menu_option_choices', note: 'สร้าง/แก้ไข "กลุ่มตัวเลือกเสริม" (เช่น แพ็คคละแบรนด์) แล้วผูกกับหมวดหมู่เมนู — ไม่กระทบ category หลัก/GP calc/Bun-Refill-Addon เดิม' },
+  { from: 'BSK POS (MenuOptionModal)', arrow: '←', to: 'menu_option_groups + menu_option_choices', note: 'กรองกลุ่มตัวเลือกที่ categories ตรงกับ menus.category ของเมนูที่เลือก แล้วโผล่เป็นตัวเลือกเสริมอัตโนมัติ — บันทึกลง order_items.item_options.optionGroups' },
 ]
 
 const LEGEND = [

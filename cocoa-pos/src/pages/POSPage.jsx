@@ -123,6 +123,7 @@ export default function POSPage({ onDateChange }) {
   const [deletingId,     setDeletingId]     = useState(null)
   const [time,           setTime]           = useState(new Date())
   const [platforms,      setPlatforms]      = useState(PLATFORMS) // sync กับ platform_config ใน Supabase
+  const [optionGroups,   setOptionGroups]   = useState([]) // กลุ่มตัวเลือกเสริม ผูกกับหมวดหมู่เมนู (จากหน้าจัดการเมนู)
 
   // ── Drag hooks ──
   const catDrag  = useDragSort()   // { draggingIdx, startDrag }
@@ -153,14 +154,27 @@ export default function POSPage({ onDateChange }) {
       const REFILL_CATS = ['Refill', 'refill', 'REFILL']
       const HIDDEN_CATS = [...ADDON_CATS, ...REFILL_CATS]
 
-      const [menusRes, settingsRes] = await Promise.all([
+      const [menusRes, settingsRes, optionGroupsRes] = await Promise.all([
         supabase.from('menus')
           .select('id, name, category, sort_order, image_url, menu_prices(platform, price, effective_to)')
           .eq('is_active', true)
           .order('sort_order', { ascending: true })
           .order('name'),
         supabase.from('settings').select('key, value'),
+        supabase.from('menu_option_groups')
+          .select('*, menu_option_choices(*)')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true }),
       ])
+
+      // กลุ่มตัวเลือกเสริม (ผูกกับหมวดหมู่เมนู) — โผล่อัตโนมัติเมื่อเลือกเมนูในหมวดหมู่นั้น
+      const loadedGroups = (optionGroupsRes.data ?? []).map(g => ({
+        ...g,
+        choices: (g.menu_option_choices ?? [])
+          .filter(c => c.is_active)
+          .sort((a, b) => a.sort_order - b.sort_order),
+      }))
+      setOptionGroups(loadedGroups)
 
       const allMenuList = (menusRes.data ?? []).map(m => {
         const prices = {}
@@ -363,6 +377,12 @@ export default function POSPage({ onDateChange }) {
   const addonsForModal  = useMemo(() => addonMenus.map(m => ({ id: m.id, name: m.name, prices: m.prices })), [addonMenus])
   const refillsForModal = useMemo(() => refillMenus.map(m => ({ id: m.id, name: m.name, prices: m.prices })), [refillMenus])
 
+  // กลุ่มตัวเลือกเสริมที่ผูกกับหมวดหมู่ของเมนูที่กำลังเปิด modal อยู่
+  const groupsForOptionMenu = useMemo(() => {
+    if (!optionMenu) return []
+    return optionGroups.filter(g => (g.categories ?? []).includes(optionMenu.category))
+  }, [optionGroups, optionMenu])
+
   // ── Line item helpers ─────────────────────────────────────
   const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
 
@@ -381,8 +401,10 @@ export default function POSPage({ onDateChange }) {
         const refillPrice = Array.isArray(opts.refill)
           ? opts.refill.reduce((sum, r) => sum + (r.price ?? 0) * (r.qty ?? 1), 0)
           : (opts.refill?.price ?? 0)
+        const optionGroupsPrice = (opts.optionGroups ?? []).reduce((sum, g) =>
+          sum + (g.choices ?? []).reduce((s, c) => s + (c.price ?? 0), 0), 0)
         return { lineId: l.lineId, menuId: l.menuId, qty: l.qty, name: menu?.name ?? '',
-          image_url: menu?.image_url ?? null, basePrice, extras: milkPrice + refillPrice,
+          image_url: menu?.image_url ?? null, basePrice, extras: milkPrice + refillPrice + optionGroupsPrice,
           isCampaign: l.isCampaign, options: opts, menu }
       }),
   [lineItems, menus])
@@ -397,9 +419,11 @@ export default function POSPage({ onDateChange }) {
       const refillPrice = Array.isArray(item.options.refill)
         ? item.options.refill.reduce((sum, r) => sum + (r.prices?.[selectedPlat] ?? r.price ?? 0) * (r.qty ?? 1), 0)
         : (item.options.refill?.prices?.[selectedPlat] ?? item.options.refill?.price ?? 0)
-      const unitPrice   = basePrice + milkPrice + refillPrice
+      const optionGroupsPrice = (item.options.optionGroups ?? []).reduce((sum, g) =>
+        sum + (g.choices ?? []).reduce((s, c) => s + (c.price ?? 0), 0), 0)
+      const unitPrice   = basePrice + milkPrice + refillPrice + optionGroupsPrice
       const feePct      = item.isCampaign ? CAMPAIGN_GP_PCT : (platFees[selectedPlat] ?? 0)
-      return { ...item, basePrice, extras: milkPrice + refillPrice,
+      return { ...item, basePrice, extras: milkPrice + refillPrice + optionGroupsPrice,
         unitPrice, subtotal: item.qty * unitPrice, unitGpCost: basePrice * feePct / 100 }
     })
   }, [orderItems, selectedPlat, platFees])
@@ -523,11 +547,12 @@ export default function POSPage({ onDateChange }) {
           unit_gp_cost:  item.unitGpCost   ?? 0,
           is_campaign:   item.isCampaign   ?? false,
           item_options: {
-            milk:      item.options.milk      ?? null,
-            sweetness: item.options.sweetness ?? 100,
-            refill:    item.options.refill    ?? null,
-            note:      item.options.note      ?? '',
-            packaging: item.options.packaging ?? null,
+            milk:         item.options.milk         ?? null,
+            sweetness:    item.options.sweetness    ?? 100,
+            refill:       item.options.refill       ?? null,
+            note:         item.options.note         ?? '',
+            packaging:    item.options.packaging    ?? null,
+            optionGroups: item.options.optionGroups ?? null,
           },
         }))
       )
@@ -1083,6 +1108,9 @@ export default function POSPage({ onDateChange }) {
                         <span className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">{item.options.sweetness}%</span>
                       )}
                       {item.options.note && <span className="text-[9px] bg-gray-200 text-gray-600 px-1 py-0.5 rounded truncate max-w-[80px]">📝{item.options.note}</span>}
+                      {(item.options.optionGroups ?? []).flatMap(g => g.choices ?? []).map(c => (
+                        <span key={c.id} className="text-[9px] bg-pink-100 text-pink-700 px-1 py-0.5 rounded">✦{c.label}</span>
+                      ))}
                     </div>
                   </div>
                   <button onClick={() => removeLine(item.lineId)} className="text-gray-300 hover:text-red-400 p-0.5">
@@ -1160,6 +1188,7 @@ export default function POSPage({ onDateChange }) {
           platform={selectedPlat ?? platforms[0]}
           addons={addonsForModal.map(a => ({ ...a, price: a.prices?.[selectedPlat ?? platforms[0]] ?? 0 }))}
           refills={refillsForModal.map(r => ({ ...r, price: r.prices?.[selectedPlat ?? platforms[0]] ?? 0 }))}
+          optionGroups={groupsForOptionMenu}
           initial={null}
           onConfirm={handleOptionConfirm}
           onClose={() => setOptionMenu(null)}
@@ -1250,6 +1279,9 @@ export default function POSPage({ onDateChange }) {
                               ? item.options.refill.map(r => <span key={r.id} className="text-[10px] text-purple-600">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
                               : item.options.refill && <span className="text-[10px] text-purple-600">🔄{item.options.refill.name}</span>
                             }
+                            {(item.options.optionGroups ?? []).flatMap(g => g.choices ?? []).map(c => (
+                              <span key={c.id} className="text-[10px] text-pink-600">✦{c.label}</span>
+                            ))}
                             {item.isCampaign && <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 rounded">⚡ 60/40</span>}
                           </div>
                         </div>

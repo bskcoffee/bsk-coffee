@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, updateMenuPrice, getSetting } from '../lib/supabase'
 import { formatBaht } from '../utils/calculations'
-import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban, ImagePlus, Loader2, Tags, Trash2, ChevronUp, ChevronDown, Lock } from 'lucide-react'
+import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban, ImagePlus, Loader2, Tags, Trash2, ChevronUp, ChevronDown, Lock, ListChecks } from 'lucide-react'
 import ConfirmModal from '../components/ConfirmModal'
 
 // Fallback เมื่อยังไม่มีการตั้งค่า platform ใน Supabase (ต้องตรงกับ LEGACY_PLATFORMS ใน SettingsPage.jsx)
@@ -696,6 +696,331 @@ function CategoryManagerModal({ categories, menuCountByCategory, onClose, onSave
   )
 }
 
+// ─────────────────────────────────────────────────────────────────
+// กลุ่มตัวเลือกเสริม (menu_option_groups + menu_option_choices)
+// แอดมินสร้างกลุ่มตัวเลือกเอง (เช่น "เพิ่มอีกถุงไว้ดื่มพรุ่งนี้ ลดเพิ่ม 20%")
+// แล้วผูกกับหมวดหมู่เมนู — เมนูในหมวดหมู่นั้นจะเห็นกลุ่มนี้โผล่อัตโนมัติในหน้า POS
+// ไม่กระทบ category หลัก / การคำนวณ GP / logic พิเศษของ Bun-Refill-Addon เดิม
+// ─────────────────────────────────────────────────────────────────
+const RESERVED_FOR_GROUPS = new Set(['Addon', 'Refill']) // หมวดพิเศษที่มี logic ของตัวเองอยู่แล้ว ไม่ให้ผูกกลุ่มเสริมซ้ำ
+
+function OptionGroupEditor({ group, categories, onClose, onSaved }) {
+  const [name,          setName]          = useState(group?.name ?? '')
+  const [selectionType, setSelectionType] = useState(group?.selection_type ?? 'multi')
+  const [maxSelect,     setMaxSelect]     = useState(group?.max_select ?? '')
+  const [required,      setRequired]      = useState(group?.required ?? false)
+  const [selectedCats,  setSelectedCats]  = useState(group?.categories ?? [])
+  const [choices,       setChoices]       = useState(
+    group?.menu_option_choices?.length
+      ? group.menu_option_choices.map(c => ({ id: c.id, label: c.label, price: c.price }))
+      : [{ label: '', price: 0 }]
+  )
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  const selectableCats = categories.filter(c => !RESERVED_FOR_GROUPS.has(c))
+
+  const toggleCat = (cat) => {
+    setSelectedCats(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])
+  }
+
+  const addChoice    = () => setChoices(prev => [...prev, { label: '', price: 0 }])
+  const removeChoice = (idx) => setChoices(prev => prev.filter((_, i) => i !== idx))
+  const updateChoice = (idx, field, value) => setChoices(prev => prev.map((c, i) => i === idx ? { ...c, [field]: value } : c))
+  const moveChoice = (idx, dir) => {
+    const target = idx + dir
+    if (target < 0 || target >= choices.length) return
+    setChoices(prev => {
+      const next = [...prev]
+      ;[next[idx], next[target]] = [next[target], next[idx]]
+      return next
+    })
+  }
+
+  const handleSave = async () => {
+    const trimmedName = name.trim()
+    if (!trimmedName) { setError('กรุณาใส่ชื่อกลุ่มตัวเลือก'); return }
+    const validChoices = choices.map(c => ({ ...c, label: c.label.trim() })).filter(c => c.label)
+    if (validChoices.length === 0) { setError('กรุณาเพิ่มตัวเลือกอย่างน้อย 1 รายการ'); return }
+    if (selectedCats.length === 0) { setError('กรุณาเลือกอย่างน้อย 1 หมวดหมู่'); return }
+
+    setSaving(true)
+    setError('')
+    try {
+      const payload = {
+        name:           trimmedName,
+        selection_type: selectionType,
+        max_select:     selectionType === 'multi' ? (parseInt(maxSelect) || null) : 1,
+        required,
+        categories:     selectedCats,
+      }
+      let groupId = group?.id
+      if (groupId) {
+        const { error: upErr } = await supabase.from('menu_option_groups').update(payload).eq('id', groupId)
+        if (upErr) throw upErr
+      } else {
+        const { data: newGroup, error: insErr } = await supabase.from('menu_option_groups')
+          .insert({ ...payload, sort_order: 0 }).select().single()
+        if (insErr) throw insErr
+        groupId = newGroup.id
+      }
+
+      // sync ตัวเลือก: ลบอันที่ถูกเอาออก, อัพเดท/เพิ่มที่เหลือ
+      const existingIds = (group?.menu_option_choices ?? []).map(c => c.id)
+      const keptIds      = validChoices.filter(c => c.id).map(c => c.id)
+      const toDelete     = existingIds.filter(id => !keptIds.includes(id))
+      if (toDelete.length > 0) {
+        await supabase.from('menu_option_choices').delete().in('id', toDelete)
+      }
+      for (let i = 0; i < validChoices.length; i++) {
+        const c = validChoices[i]
+        if (c.id) {
+          await supabase.from('menu_option_choices').update({
+            label: c.label, price: parseFloat(c.price) || 0, sort_order: i,
+          }).eq('id', c.id)
+        } else {
+          await supabase.from('menu_option_choices').insert({
+            group_id: groupId, label: c.label, price: parseFloat(c.price) || 0, sort_order: i,
+          })
+        }
+      }
+
+      onSaved()
+      onClose()
+    } catch (err) {
+      setError('บันทึกไม่สำเร็จ: ' + err.message)
+    }
+    setSaving(false)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b">
+          <h2 className="font-bold text-lg">{group ? 'แก้ไขกลุ่มตัวเลือก' : 'สร้างกลุ่มตัวเลือกใหม่'}</h2>
+          <button onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="label">ชื่อกลุ่มตัวเลือก</label>
+            <input
+              className="input"
+              placeholder='เช่น "เพิ่มอีกถุงไว้ดื่มพรุ่งนี้ ลดเพิ่ม 20%"'
+              value={name}
+              onChange={e => setName(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="label">รูปแบบการเลือก</label>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setSelectionType('single')}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 ${selectionType === 'single' ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 text-gray-500'}`}>
+                เลือกได้ 1 (radio)
+              </button>
+              <button type="button" onClick={() => setSelectionType('multi')}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 ${selectionType === 'multi' ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 text-gray-500'}`}>
+                เลือกได้หลายอัน (checkbox)
+              </button>
+            </div>
+          </div>
+
+          {selectionType === 'multi' && (
+            <div>
+              <label className="label">เลือกได้สูงสุดกี่อัน</label>
+              <input
+                type="number" min="1" className="input" placeholder="ไม่จำกัด"
+                value={maxSelect}
+                onChange={e => setMaxSelect(e.target.value)}
+              />
+            </div>
+          )}
+
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={required} onChange={e => setRequired(e.target.checked)} className="w-4 h-4" />
+            บังคับให้ลูกค้าต้องเลือก
+          </label>
+
+          <div>
+            <label className="label">ผูกกับหมวดหมู่เมนู</label>
+            <div className="flex flex-wrap gap-2">
+              {selectableCats.map(cat => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => toggleCat(cat)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium border-2 ${selectedCats.includes(cat) ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 text-gray-500'}`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">เมนูในหมวดหมู่ที่เลือกจะเห็นกลุ่มตัวเลือกนี้ในหน้า POS อัตโนมัติ</p>
+          </div>
+
+          <div>
+            <label className="label">ตัวเลือก + ราคา</label>
+            <div className="space-y-2">
+              {choices.map((c, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                  <div className="flex flex-col -my-1 shrink-0">
+                    <button type="button" onClick={() => moveChoice(idx, -1)} disabled={idx === 0}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 disabled:opacity-30 disabled:pointer-events-none"><ChevronUp size={13} /></button>
+                    <button type="button" onClick={() => moveChoice(idx, 1)} disabled={idx === choices.length - 1}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 disabled:opacity-30 disabled:pointer-events-none"><ChevronDown size={13} /></button>
+                  </div>
+                  <input
+                    className="input flex-1 text-sm"
+                    placeholder="ชื่อตัวเลือก เช่น Classic No.1 (แนะนำ)"
+                    value={c.label}
+                    onChange={e => updateChoice(idx, 'label', e.target.value)}
+                  />
+                  <input
+                    type="number" min="0" className="input w-24 text-sm text-right"
+                    placeholder="ราคา"
+                    value={c.price}
+                    onChange={e => updateChoice(idx, 'price', e.target.value)}
+                  />
+                  <button type="button" onClick={() => removeChoice(idx)}
+                    className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 shrink-0"><Trash2 size={15} /></button>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={addChoice} className="btn-secondary mt-2 text-sm flex items-center gap-1">
+              <Plus size={14} /> เพิ่มตัวเลือก
+            </button>
+          </div>
+
+          {error && <p className="text-xs text-red-500">{error}</p>}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">ยกเลิก</button>
+            <button type="button" onClick={handleSave} disabled={saving} className="btn-primary flex-1">
+              {saving ? 'กำลังบันทึก...' : 'บันทึก'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OptionGroupManagerModal({ categories, onClose, onSaved }) {
+  const [groups,      setGroups]      = useState([])
+  const [loading,     setLoading]     = useState(true)
+  const [editGroup,   setEditGroup]   = useState(null)
+  const [showAdd,     setShowAdd]     = useState(false)
+  const [deleteGroup, setDeleteGroup] = useState(null)
+
+  const load = async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('menu_option_groups')
+      .select('*, menu_option_choices(*)')
+      .order('sort_order', { ascending: true })
+    setGroups((data ?? []).map(g => ({
+      ...g,
+      menu_option_choices: (g.menu_option_choices ?? []).sort((a, b) => a.sort_order - b.sort_order),
+    })))
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  const handleSaved = () => { load(); onSaved() }
+
+  const confirmDelete = async () => {
+    if (!deleteGroup) return
+    await supabase.from('menu_option_groups').delete().eq('id', deleteGroup.id)
+    setDeleteGroup(null)
+    handleSaved()
+  }
+
+  const toggleActive = async (group) => {
+    await supabase.from('menu_option_groups').update({ is_active: !group.is_active }).eq('id', group.id)
+    load()
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b">
+          <h2 className="font-bold text-lg flex items-center gap-2"><ListChecks size={18} /> จัดการตัวเลือกเสริม</h2>
+          <button onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <div className="p-5 space-y-3">
+          <p className="text-xs text-gray-500">
+            สร้างกลุ่มตัวเลือกเสริม (เช่น แพ็คคละแบรนด์) แล้วผูกกับหมวดหมู่เมนู — เมนูในหมวดหมู่นั้นจะโผล่กลุ่มนี้ในหน้า POS อัตโนมัติ
+          </p>
+
+          {loading ? (
+            <p className="text-center text-gray-400 py-8">กำลังโหลด...</p>
+          ) : groups.length === 0 ? (
+            <p className="text-center text-gray-400 py-8 text-sm">ยังไม่มีกลุ่มตัวเลือกเสริม</p>
+          ) : (
+            <div className="space-y-2">
+              {groups.map(g => (
+                <div key={g.id} className={`card flex items-start gap-3 ${!g.is_active ? 'opacity-50' : ''}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 text-sm">{g.name}</p>
+                    <div className="flex gap-1.5 flex-wrap mt-1">
+                      <span className="badge bg-gray-100 text-gray-600">
+                        {g.selection_type === 'single' ? 'เลือกได้ 1' : `เลือกได้สูงสุด ${g.max_select ?? 'ไม่จำกัด'}`}
+                      </span>
+                      {g.required && <span className="badge bg-amber-100 text-amber-700">บังคับเลือก</span>}
+                      {(g.categories ?? []).map(c => <span key={c} className="badge bg-cocoa-50 text-cocoa-700">{c}</span>)}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">{(g.menu_option_choices ?? []).length} ตัวเลือก</p>
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => toggleActive(g)}
+                      className={`p-2 rounded-lg ${g.is_active ? 'text-gray-400 hover:bg-gray-100 hover:text-red-500' : 'text-green-500 hover:bg-green-50'}`}
+                      title={g.is_active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}>
+                      {g.is_active ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                    <button onClick={() => setEditGroup(g)} className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-cocoa-700" title="แก้ไข">
+                      <Pencil size={16} />
+                    </button>
+                    <button onClick={() => setDeleteGroup(g)} className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600" title="ลบ">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button onClick={() => setShowAdd(true)} className="btn-primary w-full flex items-center justify-center gap-2">
+            <Plus size={16} /> สร้างกลุ่มตัวเลือกใหม่
+          </button>
+        </div>
+      </div>
+
+      {(showAdd || editGroup) && (
+        <OptionGroupEditor
+          group={editGroup}
+          categories={categories}
+          onClose={() => { setShowAdd(false); setEditGroup(null) }}
+          onSaved={handleSaved}
+        />
+      )}
+
+      <ConfirmModal
+        open={!!deleteGroup}
+        title={`ลบกลุ่มตัวเลือก "${deleteGroup?.name}"?`}
+        message="ตัวเลือกทั้งหมดในกลุ่มนี้จะถูกลบไปด้วย"
+        confirmLabel="ลบ"
+        danger
+        icon={Trash2}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteGroup(null)}
+      />
+    </div>
+  )
+}
+
 export default function MenuManagementPage() {
   const navigate = useNavigate()
   const [menus, setMenus] = useState([])
@@ -709,6 +1034,7 @@ export default function MenuManagementPage() {
   const [platforms, setPlatforms] = useState(DEFAULT_PLATFORMS)
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES)
   const [showCatManager, setShowCatManager] = useState(false)
+  const [showGroupManager, setShowGroupManager] = useState(false)
   const dragId = useRef(null)
   const dragOverId = useRef(null)
 
@@ -860,6 +1186,9 @@ export default function MenuManagementPage() {
           )}
           <button onClick={() => setShowCatManager(true)} className="btn-secondary flex items-center gap-2">
             <Tags size={16} /> จัดการหมวดหมู่
+          </button>
+          <button onClick={() => setShowGroupManager(true)} className="btn-secondary flex items-center gap-2">
+            <ListChecks size={16} /> จัดการตัวเลือกเสริม
           </button>
           <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2">
             <Plus size={16} /> เพิ่มเมนู
@@ -1044,6 +1373,13 @@ export default function MenuManagementPage() {
           menuCountByCategory={menuCountByCategory}
           onClose={() => setShowCatManager(false)}
           onSaved={(list) => { setCategories(list); loadMenus() }}
+        />
+      )}
+      {showGroupManager && (
+        <OptionGroupManagerModal
+          categories={categories}
+          onClose={() => setShowGroupManager(false)}
+          onSaved={() => {}}
         />
       )}
     </div>
