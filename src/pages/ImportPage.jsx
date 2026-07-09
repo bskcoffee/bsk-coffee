@@ -405,8 +405,12 @@ export default function ImportPage() {
 
         {!fileName ? (
           <div
-            className="ml-8 border-2 border-dashed border-gray-300 rounded-xl p-8 flex flex-col items-center gap-3 cursor-pointer hover:border-cocoa-400 hover:bg-cocoa-50 transition-colors"
+            role="button"
+            tabIndex={0}
+            aria-label="คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวาง รองรับไฟล์ .xlsx และ .xls"
+            className="ml-8 border-2 border-dashed border-gray-300 rounded-xl p-8 flex flex-col items-center gap-3 cursor-pointer hover:border-cocoa-400 hover:bg-cocoa-50 focus:outline-none focus:ring-2 focus:ring-cocoa-400 focus:border-cocoa-400 transition-colors"
             onClick={() => fileInputRef.current?.click()}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click() } }}
             onDrop={onDrop}
             onDragOver={e => e.preventDefault()}
           >
@@ -421,6 +425,7 @@ export default function ImportPage() {
               accept=".xlsx,.xls"
               className="hidden"
               onChange={onFileInputChange}
+              tabIndex={-1}
             />
           </div>
         ) : (
