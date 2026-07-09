@@ -81,8 +81,6 @@ export default function POSPage({ onDateChange }) {
 
   // ── Remote data ──
   const [menus,        setMenus]        = useState([])
-  const [addonMenus,   setAddonMenus]   = useState([])
-  const [refillMenus,  setRefillMenus]  = useState([])
   const [platFees,     setPlatFees]     = useState({})
   const [loading,      setLoading]      = useState(true)
 
@@ -150,10 +148,6 @@ export default function POSPage({ onDateChange }) {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const ADDON_CATS  = ['Addon', 'addon', 'ADDON']
-      const REFILL_CATS = ['Refill', 'refill', 'REFILL']
-      const HIDDEN_CATS = [...ADDON_CATS, ...REFILL_CATS]
-
       const [menusRes, settingsRes, optionGroupsRes] = await Promise.all([
         supabase.from('menus')
           .select('id, name, category, sort_order, image_url, menu_prices(platform, price, effective_to)')
@@ -185,7 +179,7 @@ export default function POSPage({ onDateChange }) {
         return { ...m, prices }
       })
 
-      const mainMenus = allMenuList.filter(m => !HIDDEN_CATS.includes(m.category))
+      const mainMenus = allMenuList
 
       // Apply saved menu order from localStorage (fallback เมื่อ Supabase sort_order ไม่ได้รับสิทธิ์ write)
       const localMenuOrderStr = (() => { try { return localStorage.getItem('pos_menu_order_local') } catch { return null } })()
@@ -198,8 +192,6 @@ export default function POSPage({ onDateChange }) {
       }
 
       setMenus(mainMenus)
-      setAddonMenus(allMenuList.filter(m => ADDON_CATS.includes(m.category)))
-      setRefillMenus(allMenuList.filter(m => REFILL_CATS.includes(m.category)))
 
       // Load custom category order
       const settings = settingsRes.data ?? []
@@ -373,10 +365,6 @@ export default function POSPage({ onDateChange }) {
     setSavingLayout(false)
   }
 
-  // ── Computed: addons/refills ──────────────────────────────
-  const addonsForModal  = useMemo(() => addonMenus.map(m => ({ id: m.id, name: m.name, prices: m.prices })), [addonMenus])
-  const refillsForModal = useMemo(() => refillMenus.map(m => ({ id: m.id, name: m.name, prices: m.prices })), [refillMenus])
-
   // กลุ่มตัวเลือกเสริมที่ผูกกับหมวดหมู่ของเมนูที่กำลังเปิด modal อยู่
   const groupsForOptionMenu = useMemo(() => {
     if (!optionMenu) return []
@@ -453,16 +441,7 @@ export default function POSPage({ onDateChange }) {
     if (menuEditMode || catEditMode) return
     const totalQty = totalQtyForMenu(menu.id)
     if (totalQty === 0) {
-      if (menu.category === 'Bun') {
-        // ขนมปัง — เพิ่มตรงได้เลย ไม่ต้องเลือก options
-        setLineItems(prev => [...prev, {
-          lineId: genId(), menuId: menu.id, qty: 1,
-          options: { milk: null, sweetness: 100, refill: null, note: '', packaging: null },
-          isCampaign: false,
-        }])
-      } else {
-        setOptionMenu(menu) // เปิด modal ตัวเลือก
-      }
+      setOptionMenu(menu) // เปิด modal ตัวเลือก — ทุกหมวดหมู่เปิดเหมือนกันหมด (ไม่มี logic พิเศษเฉพาะหมวดอีกต่อไป)
     } else {
       // มีในรายการแล้ว → popup เลือก
       setPendingMenu(menu)
@@ -1166,8 +1145,6 @@ export default function POSPage({ onDateChange }) {
         <MenuOptionModal
           menu={optionMenu}
           platform={selectedPlat ?? platforms[0]}
-          addons={addonsForModal.map(a => ({ ...a, price: a.prices?.[selectedPlat ?? platforms[0]] ?? 0 }))}
-          refills={refillsForModal.map(r => ({ ...r, price: r.prices?.[selectedPlat ?? platforms[0]] ?? 0 }))}
           optionGroups={groupsForOptionMenu}
           initial={null}
           onConfirm={handleOptionConfirm}

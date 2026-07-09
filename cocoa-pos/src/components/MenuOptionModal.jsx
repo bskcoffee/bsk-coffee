@@ -22,85 +22,100 @@ const RequiredBadge = () => (
   <span className="text-[10px] text-red-400 font-semibold bg-red-50 px-1.5 py-0.5 rounded">ต้องระบุ</span>
 )
 
-// Convert initial.refill (old single obj or new array) → { [id]: qty }
-const initRefillQtys = (initial) => {
-  if (!initial?.refill) return {}
-  if (Array.isArray(initial.refill)) return Object.fromEntries(initial.refill.map(r => [r.id, r.qty ?? 1]))
-  return { [initial.refill.id]: 1 }
-}
-
-// Convert initial.optionGroups ([{groupId, choices:[{id,...}]}]) → { [groupId]: [choiceId, ...] }
+// Convert initial.optionGroups ([{groupId, choices:[{id, qty, ...}]}]) → { [groupId]: { [choiceId]: qty } }
 const initGroupSelections = (initial) => {
   if (!initial?.optionGroups) return {}
-  return Object.fromEntries(initial.optionGroups.map(g => [g.groupId, (g.choices ?? []).map(c => c.id)]))
+  return Object.fromEntries(
+    initial.optionGroups.map(g => [
+      g.groupId,
+      Object.fromEntries((g.choices ?? []).map(c => [c.id, c.qty ?? 1])),
+    ])
+  )
 }
 
-export default function MenuOptionModal({ menu, platform, addons, refills, optionGroups = [], initial, onConfirm, onClose, confirmLabel }) {
+// กลุ่มตัวเลือกเสริม (เช่น "ชนิดนม", "Refill") มาจากหน้าจัดการเมนู → จัดการตัวเลือกเสริม
+// ผูกกับหมวดหมู่เมนู ไม่ได้ hardcode ไว้ในโค้ดอีกต่อไป — ผู้ดูแลระบบสร้าง/แก้ไขเองได้ทั้งหมด
+export default function MenuOptionModal({ menu, platform, optionGroups = [], initial, onConfirm, onClose, confirmLabel }) {
   const basePrice = menu?.prices?.[platform] ?? 0
 
-  const [milk,       setMilk]       = useState(initial?.milk      ?? null)
   const [sweetness,  setSweetness]  = useState(initial?.sweetness  ?? 100)
-  const [refillQtys, setRefillQtys] = useState(() => initRefillQtys(initial))
   const [packaging,  setPackaging]  = useState(initial?.packaging  ?? null)
   const [note,       setNote]       = useState(initial?.note       ?? '')
   const [groupSelections, setGroupSelections] = useState(() => initGroupSelections(initial))
 
   useEffect(() => {
     if (!initial) {
-      setMilk(null); setSweetness(100); setRefillQtys({}); setPackaging(null); setNote(''); setGroupSelections({})
+      setSweetness(100); setPackaging(null); setNote(''); setGroupSelections({})
     } else {
-      setMilk(initial.milk ?? null)
       setSweetness(initial.sweetness ?? 100)
-      setRefillQtys(initRefillQtys(initial))
       setPackaging(initial.packaging ?? null)
       setNote(initial.note ?? '')
       setGroupSelections(initGroupSelections(initial))
     }
   }, [menu?.id])
 
-  const refillTotal = refills.reduce((sum, r) => sum + (r.price ?? 0) * (refillQtys[r.id] ?? 0), 0)
-  const groupsTotal = optionGroups.reduce((sum, g) =>
-    sum + (groupSelections[g.id] ?? []).reduce((s, cid) => s + (g.choices.find(c => c.id === cid)?.price ?? 0), 0), 0)
-  const totalExtra  = (milk?.price ?? 0) + refillTotal + groupsTotal
+  const choicePrice = (choice) => choice.prices?.[platform] ?? choice.price ?? 0
+
+  const groupTotal = (group) => {
+    const sel = groupSelections[group.id] ?? {}
+    return Object.entries(sel).reduce((sum, [cid, qty]) => {
+      const choice = group.choices.find(c => c.id === cid)
+      return sum + (choice ? choicePrice(choice) * qty : 0)
+    }, 0)
+  }
+  const groupsTotal = optionGroups.reduce((sum, g) => sum + groupTotal(g), 0)
+  const totalExtra  = groupsTotal
   const totalPrice  = basePrice + totalExtra
 
-  const canConfirm = packaging !== null
-    && optionGroups.every(g => !g.required || (groupSelections[g.id]?.length ?? 0) > 0)
+  const groupQtyTotal = (group) => Object.values(groupSelections[group.id] ?? {}).reduce((s, q) => s + q, 0)
 
-  // เลือก/ยกเลิกตัวเลือกในกลุ่มตัวเลือกเสริม — single = เลือกได้ 1, multi = เลือกได้หลายอันจนถึง max_select
-  const toggleGroupChoice = (group, choiceId) => {
+  const canConfirm = packaging !== null
+    && optionGroups.every(g => !g.required || groupQtyTotal(g) > 0)
+
+  // single = เลือกได้ 1 (แตะซ้ำเพื่อยกเลิก), multi = ปรับจำนวนต่อชิ้นได้ (+/-) จนถึง max_select (รวมทุกตัวเลือก)
+  const selectSingle = (group, choiceId) => {
     setGroupSelections(prev => {
-      const current = prev[group.id] ?? []
-      if (group.selection_type === 'single') {
-        return { ...prev, [group.id]: current[0] === choiceId ? [] : [choiceId] }
+      const current = prev[group.id] ?? {}
+      if (current[choiceId]) {
+        const { [choiceId]: _, ...rest } = current
+        return { ...prev, [group.id]: rest }
       }
-      if (current.includes(choiceId)) {
-        return { ...prev, [group.id]: current.filter(id => id !== choiceId) }
+      return { ...prev, [group.id]: { [choiceId]: 1 } }
+    })
+  }
+
+  const adjustQty = (group, choiceId, delta) => {
+    setGroupSelections(prev => {
+      const current = prev[group.id] ?? {}
+      const currentQty = current[choiceId] ?? 0
+      const totalQty    = groupQtyTotal(group)
+      if (delta > 0 && group.max_select && totalQty >= group.max_select) return prev
+      const nextQty = currentQty + delta
+      if (nextQty <= 0) {
+        const { [choiceId]: _, ...rest } = current
+        return { ...prev, [group.id]: rest }
       }
-      if (group.max_select && current.length >= group.max_select) return prev
-      return { ...prev, [group.id]: [...current, choiceId] }
+      return { ...prev, [group.id]: { ...current, [choiceId]: nextQty } }
     })
   }
 
   const handleConfirm = () => {
     if (!canConfirm) return
-    const selectedRefills = refills
-      .filter(r => (refillQtys[r.id] ?? 0) > 0)
-      .map(r => ({ id: r.id, name: r.name, price: r.price, prices: r.prices, qty: refillQtys[r.id] }))
     const selectedGroups = optionGroups
       .map(g => ({
-        groupId:   g.id,
-        groupName: g.name,
-        choices:   (groupSelections[g.id] ?? [])
-          .map(cid => g.choices.find(c => c.id === cid))
-          .filter(Boolean)
-          .map(c => ({ id: c.id, label: c.label, price: c.price })),
+        groupId:       g.id,
+        groupName:     g.name,
+        selectionType: g.selection_type,
+        choices:   Object.entries(groupSelections[g.id] ?? {})
+          .map(([cid, qty]) => {
+            const c = g.choices.find(c => c.id === cid)
+            return c ? { id: c.id, label: c.label, price: choicePrice(c), qty } : null
+          })
+          .filter(Boolean),
       }))
       .filter(g => g.choices.length > 0)
     onConfirm({
-      milk,
       sweetness,
-      refill: selectedRefills.length > 0 ? selectedRefills : null,
       note,
       packaging,
       optionGroups: selectedGroups.length > 0 ? selectedGroups : null,
@@ -127,36 +142,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, optio
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
 
-          {/* ── 1. ชนิดนม (ต้องระบุ) ──────────────────────── */}
-          <section>
-            <p className="text-sm font-medium text-gray-500 mb-3 flex items-center gap-2">
-              🥛 ชนิดนม
-              <span className="text-[10px] text-gray-400 font-normal bg-gray-100 px-1.5 py-0.5 rounded">ไม่บังคับ</span>
-              {milk && <span className="ml-auto text-xs text-cocoa-600 font-semibold">{milk.name}</span>}
-            </p>
-            {addons.length === 0 ? (
-              <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">ยังไม่มีข้อมูล Addon</p>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 gap-2">
-                  {addons.map(addon => (
-                    <button
-                      key={addon.id}
-                      onClick={() => setMilk(prev => prev?.id === addon.id ? null : { id: addon.id, name: addon.name, price: addon.price, prices: addon.prices })}
-                      className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95
-                        ${milk?.id === addon.id ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 bg-white text-gray-600'}`}
-                    >
-                      <div className="font-bold">{addon.name}</div>
-                      <div className="text-xs opacity-60 mt-0.5">{addon.price > 0 ? `+${fmt(addon.price)}` : 'ฟรี'}</div>
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-gray-400 mt-1.5">แตะอีกครั้งเพื่อยกเลิกการเลือก</p>
-              </>
-            )}
-          </section>
-
-          {/* ── 2. ความหวาน (ต้องระบุ) ────────────────────── */}
+          {/* ── ความหวาน (ต้องระบุ) ────────────────────── */}
           <section>
             <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               🍬 ความหวาน
@@ -181,56 +167,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, optio
             </div>
           </section>
 
-          {/* ── 3. Refill (ไม่บังคับ) — หลายรายการ + จำนวน ─ */}
-          <section>
-            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-              🔄 Refill
-              <span className="text-[10px] text-gray-400 font-normal bg-gray-100 px-1.5 py-0.5 rounded">ไม่บังคับ</span>
-              {refillTotal > 0 && <span className="ml-auto text-xs text-cocoa-600 font-semibold">+{fmt(refillTotal)}</span>}
-            </p>
-            {refills.length === 0 ? (
-              <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">ยังไม่มีข้อมูล Refill</p>
-            ) : (
-              <div className="space-y-2">
-                {refills.map(r => {
-                  const qty = refillQtys[r.id] ?? 0
-                  return (
-                    <div key={r.id} className={`flex items-center justify-between px-4 py-3 rounded-xl border-2 transition-all
-                      ${qty > 0 ? 'border-cocoa-400 bg-cocoa-50' : 'border-gray-200 bg-white'}`}>
-                      <div>
-                        <p className={`text-sm font-bold ${qty > 0 ? 'text-cocoa-700' : 'text-gray-700'}`}>{r.name}</p>
-                        <p className="text-xs text-gray-400">{r.price > 0 ? `+${fmt(r.price)} / ชิ้น` : 'ฟรี'}</p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={() => setRefillQtys(prev => {
-                            const next = (prev[r.id] ?? 0) - 1
-                            if (next <= 0) { const { [r.id]: _, ...rest } = prev; return rest }
-                            return { ...prev, [r.id]: next }
-                          })}
-                          disabled={qty === 0}
-                          className="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center disabled:opacity-20 active:bg-gray-100"
-                        >
-                          <Minus size={13} />
-                        </button>
-                        <span className={`w-6 text-center text-sm font-bold ${qty > 0 ? 'text-cocoa-700' : 'text-gray-300'}`}>
-                          {qty || '·'}
-                        </span>
-                        <button
-                          onClick={() => setRefillQtys(prev => ({ ...prev, [r.id]: (prev[r.id] ?? 0) + 1 }))}
-                          className="w-8 h-8 rounded-lg bg-cocoa-700 flex items-center justify-center active:bg-cocoa-900"
-                        >
-                          <Plus size={13} className="text-white" />
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </section>
-
-          {/* ── 4. บรรจุภัณฑ์ (ต้องระบุ) ──────────────────── */}
+          {/* ── บรรจุภัณฑ์ (ต้องระบุ) ──────────────────── */}
           <section>
             <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               📦 บรรจุภัณฑ์ <RequiredBadge />
@@ -253,8 +190,9 @@ export default function MenuOptionModal({ menu, platform, addons, refills, optio
 
           {/* ── กลุ่มตัวเลือกเสริม (สร้าง/ผูกหมวดหมู่จากหน้าจัดการเมนู) ── */}
           {optionGroups.map(group => {
-            const selected = groupSelections[group.id] ?? []
-            const atMax    = group.selection_type === 'multi' && group.max_select && selected.length >= group.max_select
+            const sel      = groupSelections[group.id] ?? {}
+            const qtyTotal = groupQtyTotal(group)
+            const total    = groupTotal(group)
             return (
               <section key={group.id}>
                 <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2 flex-wrap">
@@ -265,34 +203,62 @@ export default function MenuOptionModal({ menu, platform, addons, refills, optio
                   <span className="text-[10px] text-gray-400 font-normal">
                     {group.selection_type === 'single' ? 'เลือกได้ 1' : `เลือกได้สูงสุด ${group.max_select ?? 'ไม่จำกัด'}`}
                   </span>
+                  {total > 0 && <span className="ml-auto text-xs text-cocoa-600 font-semibold">+{fmt(total)}</span>}
                 </p>
                 {group.choices.length === 0 ? (
                   <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">ยังไม่มีตัวเลือกในกลุ่มนี้</p>
-                ) : (
+                ) : group.selection_type === 'single' ? (
                   <div className="grid grid-cols-2 gap-2">
                     {group.choices.map(choice => {
-                      const isSelected = selected.includes(choice.id)
-                      const disabled   = !isSelected && atMax
+                      const isSelected = !!sel[choice.id]
+                      const price = choicePrice(choice)
                       return (
                         <button
                           key={choice.id}
                           type="button"
-                          disabled={disabled}
-                          onClick={() => toggleGroupChoice(group, choice.id)}
-                          className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95 flex items-center gap-2
-                            ${isSelected ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 bg-white text-gray-600'}
-                            ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                          onClick={() => selectSingle(group, choice.id)}
+                          className={`py-3 px-4 rounded-xl border-2 text-sm font-semibold text-left transition-all active:scale-95
+                            ${isSelected ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 bg-white text-gray-600'}`}
                         >
-                          <span className={`shrink-0 w-4 h-4 border-2 flex items-center justify-center text-[10px] leading-none
-                            ${group.selection_type === 'single' ? 'rounded-full' : 'rounded'}
-                            ${isSelected ? 'border-cocoa-600 bg-cocoa-600 text-white' : 'border-gray-300'}`}>
-                            {isSelected ? '✓' : ''}
-                          </span>
-                          <span className="flex-1">
-                            <div className="font-bold">{choice.label}</div>
-                            <div className="text-xs opacity-60 mt-0.5">{choice.price > 0 ? `+${fmt(choice.price)}` : 'ฟรี'}</div>
-                          </span>
+                          <div className="font-bold">{choice.label}</div>
+                          <div className="text-xs opacity-60 mt-0.5">{price > 0 ? `+${fmt(price)}` : 'ฟรี'}</div>
                         </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {group.choices.map(choice => {
+                      const qty      = sel[choice.id] ?? 0
+                      const price    = choicePrice(choice)
+                      const atMax    = !!(group.max_select && qtyTotal >= group.max_select)
+                      return (
+                        <div key={choice.id} className={`flex items-center justify-between px-4 py-3 rounded-xl border-2 transition-all
+                          ${qty > 0 ? 'border-cocoa-400 bg-cocoa-50' : 'border-gray-200 bg-white'}`}>
+                          <div>
+                            <p className={`text-sm font-bold ${qty > 0 ? 'text-cocoa-700' : 'text-gray-700'}`}>{choice.label}</p>
+                            <p className="text-xs text-gray-400">{price > 0 ? `+${fmt(price)} / ชิ้น` : 'ฟรี'}</p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={() => adjustQty(group, choice.id, -1)}
+                              disabled={qty === 0}
+                              className="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center disabled:opacity-20 active:bg-gray-100"
+                            >
+                              <Minus size={13} />
+                            </button>
+                            <span className={`w-6 text-center text-sm font-bold ${qty > 0 ? 'text-cocoa-700' : 'text-gray-300'}`}>
+                              {qty || '·'}
+                            </span>
+                            <button
+                              onClick={() => adjustQty(group, choice.id, 1)}
+                              disabled={atMax && qty === 0}
+                              className="w-8 h-8 rounded-lg bg-cocoa-700 flex items-center justify-center active:bg-cocoa-900 disabled:opacity-30"
+                            >
+                              <Plus size={13} className="text-white" />
+                            </button>
+                          </div>
+                        </div>
                       )
                     })}
                   </div>
@@ -301,7 +267,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, optio
             )
           })}
 
-          {/* ── 5. หมายเหตุ ────────────────────────────────── */}
+          {/* ── หมายเหตุ ────────────────────────────────── */}
           <section>
             <p className="text-sm font-bold text-gray-700 mb-3">📝 หมายเหตุ</p>
             <textarea
@@ -325,7 +291,7 @@ export default function MenuOptionModal({ menu, platform, addons, refills, optio
           )}
           {totalExtra > 0 && (
             <div className="flex justify-between text-sm mb-2 text-gray-500">
-              <span>ราคาเมนู + Addon/Refill</span>
+              <span>ราคาเมนู + ตัวเลือกเสริม</span>
               <span className="font-semibold text-cocoa-700">{fmt(totalPrice)} / ชิ้น</span>
             </div>
           )}

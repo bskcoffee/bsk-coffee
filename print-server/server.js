@@ -256,6 +256,14 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
             opts.push(s || 'Refill')
           }
         }
+        // กลุ่มตัวเลือกเสริม (menu_option_groups) — ที่แอดมินสร้างเองจากหน้าจัดการเมนู
+        if (Array.isArray(o.optionGroups)) {
+          for (const g of o.optionGroups) {
+            for (const c of (g.choices ?? [])) {
+              if (c.label) opts.push(c.qty > 1 ? `${c.label} x${c.qty}` : c.label)
+            }
+          }
+        }
         if (o.note)             { const s = toStr(o.note);  if (s) opts.push(s) }
         return opts.join(' / ')
       }
@@ -380,6 +388,13 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
     if (s.showOptionSweet  && o.sweetness != null) opts.push(`${o.sweetness}%`)
     if (o.packaging)                               opts.push(o.packaging)
     if (s.showOptionRefill && o.refill)            opts.push('Refill')
+    if (Array.isArray(o.optionGroups)) {
+      for (const g of o.optionGroups) {
+        for (const c of (g.choices ?? [])) {
+          if (c.label) opts.push(c.qty > 1 ? `${c.label} x${c.qty}` : c.label)
+        }
+      }
+    }
     if (s.showOptionNote   && o.note)              opts.push(o.note)
   }
   if (opts.length > 0) {
@@ -459,7 +474,7 @@ app.post('/print', async (req, res) => {
     return String(v)
   }
 
-  // ดึง refill list จาก item (เสมอ array)
+  // ดึง refill list จาก item (เสมอ array) — legacy field เก็บไว้เพื่อรองรับออเดอร์เก่า
   const getRefillList = (item) => {
     const refills = item.item_options?.refill
     if (!refills) return []
@@ -467,10 +482,26 @@ app.post('/print', async (req, res) => {
     return arr.map(toRefillName).filter(Boolean)
   }
 
-  // totalLabels = แต่ละ unit × (1 label ปกติ + N label refill)
+  // ดึงรายชื่อ "ตัวเลือกเสริมแบบเลือกจำนวน" (multi) ที่ต้องพิมพ์แยกฉลาก 1 ใบต่อ 1 หน่วย
+  // (เช่น เพิ่มถุงพรุ่งนี้ x2 → แยก 2 ใบ ไว้ติดคนละถุง/แก้ว) — กลุ่มแบบ single ไม่แยกใบ โชว์เป็นข้อความในฉลากหลักพอ
+  const getMultiLabelList = (item) => {
+    const groups = item.item_options?.optionGroups
+    if (!Array.isArray(groups)) return []
+    const list = []
+    for (const g of groups) {
+      if (g.selectionType !== 'multi') continue
+      for (const c of (g.choices ?? [])) {
+        const qty = c.qty ?? 1
+        for (let i = 0; i < qty; i++) list.push(c.label)
+      }
+    }
+    return list
+  }
+
+  // totalLabels = แต่ละ unit × (1 label ปกติ + N label refill/ตัวเลือกเสริม)
   const totalLabels = items.reduce((s, item) => {
     const qty = item.qty ?? 1
-    return s + qty * (1 + getRefillList(item).length)
+    return s + qty * (1 + getRefillList(item).length + getMultiLabelList(item).length)
   }, 0)
 
   const buffers = []
@@ -479,6 +510,7 @@ app.post('/print', async (req, res) => {
   for (const item of items) {
     const qty        = item.qty ?? 1
     const refillList = getRefillList(item)
+    const multiList  = getMultiLabelList(item)
 
     for (let q = 0; q < qty; q++) {
       // ── Label ปกติ ──
@@ -490,7 +522,7 @@ app.post('/print', async (req, res) => {
       }
       labelIdx++
 
-      // ── Label Refill (1 ใบต่อ 1 refill ที่เลือก) ──
+      // ── Label Refill (legacy — 1 ใบต่อ 1 refill ที่เลือก, รองรับออเดอร์เก่า) ──
       for (const refillName of refillList) {
         const refillItem = {
           ...item,
@@ -501,6 +533,26 @@ app.post('/print', async (req, res) => {
           const buf = labelSettings.layout
             ? buildLabelFromLayout(refillItem, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
             : buildLabel(refillItem, orderId, platform, labelIdx, totalLabels, labelSettings, storeName)
+          buffers.push(buf)
+        }
+        labelIdx++
+      }
+
+      // ── Label ตัวเลือกเสริมแบบ multi (1 ใบต่อ 1 หน่วย) ──
+      for (const choiceLabel of multiList) {
+        const extraItem = {
+          ...item,
+          name: choiceLabel,
+          item_options: {
+            ...item.item_options,
+            // เอาเฉพาะกลุ่มแบบ single ไว้โชว์เป็นบริบทบนฉลากใบนี้ด้วย ส่วนกลุ่ม multi ตัดออก (มีฉลากของตัวเองแล้ว)
+            optionGroups: (item.item_options?.optionGroups ?? []).filter(g => g.selectionType !== 'multi'),
+          },
+        }
+        for (let c = 0; c < copies; c++) {
+          const buf = labelSettings.layout
+            ? buildLabelFromLayout(extraItem, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
+            : buildLabel(extraItem, orderId, platform, labelIdx, totalLabels, labelSettings, storeName)
           buffers.push(buf)
         }
         labelIdx++
