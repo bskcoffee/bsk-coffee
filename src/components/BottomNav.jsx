@@ -9,7 +9,7 @@ import {
 const PASSKEY = '18879'
 const POS_URL = 'https://cocoa-pos.vercel.app'
 import { useAuth } from '../contexts/AuthContext'
-import { usePermissions } from '../contexts/PermissionsContext'
+import { usePermissions, canAccessAdminPage } from '../contexts/PermissionsContext'
 import { supabase } from '../lib/supabase'
 import ConfirmModal from './ConfirmModal'
 
@@ -18,11 +18,11 @@ const ALL_ITEMS = [
   { to: '/sales',    icon: ShoppingCart,    label: 'กรอกยอด',               adminOnly: false },
   { to: '/history',  icon: ClipboardList,   label: 'ประวัติ',               adminOnly: false },
   { to: '/reports',  icon: BarChart3,       label: 'รายงาน',                adminOnly: false },
-  { to: '/settings', icon: Settings,        label: 'ตั้งค่า',               adminOnly: true  },
+  { to: '/settings', icon: Settings,        label: 'ตั้งค่า',               special: true },
   { to: '/menu',     icon: UtensilsCrossed, label: 'จัดการเมนู',            adminOnly: false },
   { to: '/cost',     icon: Calculator,      label: 'ต้นทุนเมนู',            adminOnly: false },
-  { to: '/users',    icon: Users,           label: 'จัดการผู้ใช้',          adminOnly: true  },
-  { to: '/import',    icon: FileUp,          label: 'นำเข้าข้อมูล',          superAdminOnly: true },
+  { to: '/users',    icon: Users,           label: 'จัดการผู้ใช้',          special: true },
+  { to: '/import',    icon: FileUp,          label: 'นำเข้าข้อมูล',          special: true },
   { to: '/cashflow',  icon: Wallet,          label: 'รายรับรายจ่าย',         adminOnly: false },
 ]
 
@@ -43,7 +43,7 @@ function applyOrder(order) {
 
 export default function BottomNav() {
   const { role, signOut } = useAuth()
-  const { staffPageAccess } = usePermissions()
+  const { staffPageAccess, adminPageAccess } = usePermissions()
   const navigate = useNavigate()
   const [items, setItems]           = useState(ALL_ITEMS)
   const [sheetOpen, setSheetOpen]       = useState(false)
@@ -77,11 +77,8 @@ export default function BottomNav() {
     return () => window.removeEventListener('keydown', onKey)
   }, [sheetOpen, showPasskey])
 
-  const isAdmin      = role === 'admin' || role === 'super_admin'
-  const isSuperAdmin = role === 'super_admin'
   const canSee = (item) => {
-    if (item.superAdminOnly) return isSuperAdmin
-    if (item.adminOnly) return isAdmin
+    if (item.special) return canAccessAdminPage(role, adminPageAccess, item.to)
     if (STAFF_GATED.has(item.to)) return role !== 'staff' || staffPageAccess.includes(item.to)
     return true
   }

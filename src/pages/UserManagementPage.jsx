@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
-import { usePermissions, STAFF_PAGES } from '../contexts/PermissionsContext'
+import { usePermissions, STAFF_PAGES, ADMIN_PAGES } from '../contexts/PermissionsContext'
 import { Save, Eye, EyeOff, UserPlus, Users, LogOut, AlertTriangle, ShieldCheck, Shield, Crown, KeyRound } from 'lucide-react'
 import ConfirmModal from '../components/ConfirmModal'
 
@@ -13,7 +13,7 @@ const ROLE_LABEL = { super_admin: 'ผู้ดูแลระบบสูงส
 export default function UserManagementPage() {
   const { signOut, updatePassword, updateEmail, session, role: myRole } = useAuth()
   const { addToast } = useToast()
-  const { staffPageAccess, saveStaffPageAccess } = usePermissions()
+  const { staffPageAccess, saveStaffPageAccess, adminPageAccess, saveAdminPageAccess } = usePermissions()
 
   // --- สิทธิ์การเข้าถึงเมนู (พนักงาน) ---
   const [pendingAccess, setPendingAccess] = useState(staffPageAccess)
@@ -37,6 +37,30 @@ export default function UserManagementPage() {
       addToast('บันทึกสิทธิ์ไม่สำเร็จ: ' + err.message, 'error')
     }
     setSavingAccess(false)
+  }
+
+  // --- สิทธิ์การเข้าถึงเมนู (ผู้ดูแลระบบ) — Super Admin เท่านั้นที่แก้ได้ ---
+  const [pendingAdminAccess, setPendingAdminAccess] = useState(adminPageAccess)
+  const [savingAdminAccess, setSavingAdminAccess]   = useState(false)
+
+  useEffect(() => { setPendingAdminAccess(adminPageAccess) }, [adminPageAccess])
+
+  const toggleAdminAccess = (path) => {
+    setPendingAdminAccess(prev =>
+      prev.includes(path) ? prev.filter(p => p !== path) : [...prev, path]
+    )
+  }
+
+  const saveAdminAccess = async () => {
+    setSavingAdminAccess(true)
+    try {
+      const { error } = await saveAdminPageAccess(pendingAdminAccess)
+      if (error) throw error
+      addToast('บันทึกสิทธิ์การเข้าถึงเมนูแล้ว', 'success')
+    } catch (err) {
+      addToast('บันทึกสิทธิ์ไม่สำเร็จ: ' + err.message, 'error')
+    }
+    setSavingAdminAccess(false)
   }
 
   // --- บัญชีของฉัน ---
@@ -324,6 +348,37 @@ export default function UserManagementPage() {
           {savingAccess ? 'กำลังบันทึก...' : 'บันทึกสิทธิ์'}
         </button>
       </div>
+
+      {/* ── สิทธิ์การเข้าถึงเมนู (ผู้ดูแลระบบ) — Super Admin เท่านั้น ──── */}
+      {myRole === 'super_admin' && (
+        <div className="card space-y-4">
+          <div className="flex items-center gap-2">
+            <Crown size={18} className="text-purple-600" />
+            <h2 className="font-semibold text-gray-800">สิทธิ์การเข้าถึงเมนู (ผู้ดูแลระบบ)</h2>
+          </div>
+          <p className="text-xs text-gray-500">
+            เลือกหน้าที่ role &ldquo;ผู้ดูแลระบบ&rdquo; เข้าถึงได้ — ผู้ดูแลระบบสูงสุดเห็นทุกหน้าเสมอ
+            และเป็นคนเดียวที่แก้ไขสิทธิ์ชุดนี้ได้
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {ADMIN_PAGES.map(p => (
+              <label key={p.to} className="flex items-center gap-2 text-sm text-gray-700 bg-gray-50 rounded-lg px-3 py-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300 text-purple-600 focus:ring-purple-400"
+                  checked={pendingAdminAccess.includes(p.to)}
+                  onChange={() => toggleAdminAccess(p.to)}
+                />
+                {p.label}
+              </label>
+            ))}
+          </div>
+          <button onClick={saveAdminAccess} disabled={savingAdminAccess} className="btn-primary flex items-center gap-2">
+            <Save size={16} />
+            {savingAdminAccess ? 'กำลังบันทึก...' : 'บันทึกสิทธิ์'}
+          </button>
+        </div>
+      )}
 
       {/* ── เพิ่มผู้ใช้ใหม่ ──────────────────────────────────────────── */}
       <div className="card space-y-4">

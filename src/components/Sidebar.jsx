@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network, Brain, ChevronUp, ChevronDown } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { usePermissions } from '../contexts/PermissionsContext'
+import { usePermissions, canAccessAdminPage } from '../contexts/PermissionsContext'
 import { supabase } from '../lib/supabase'
 import ConfirmModal from './ConfirmModal'
 
@@ -64,13 +64,13 @@ const ALL_NAV = [
   { to: '/menu',     iconName: 'UtensilsCrossed', label: 'จัดการเมนู',         adminOnly: false },
   { to: '/cost',     iconName: 'Calculator',      label: 'ต้นทุนเมนู',         adminOnly: false },
   { to: '/reports',  iconName: 'BarChart3',       label: 'รายงาน & Export',     adminOnly: false },
-  { to: '/settings',       iconName: 'Settings',  label: 'ตั้งค่า',             adminOnly: true  },
-  { to: '/label-settings', iconName: 'Printer',   label: 'ตั้งค่าฉลาก',         adminOnly: true  },
-  { to: '/users',    iconName: 'Users',           label: 'การจัดการผู้ใช้งาน', adminOnly: true  },
-  { to: '/import',    iconName: 'FileUp',          label: 'นำเข้าข้อมูล',        superAdminOnly: true },
+  { to: '/settings',       iconName: 'Settings',  label: 'ตั้งค่า',             special: true },
+  { to: '/label-settings', iconName: 'Printer',   label: 'ตั้งค่าฉลาก',         special: true },
+  { to: '/users',    iconName: 'Users',           label: 'การจัดการผู้ใช้งาน', special: true },
+  { to: '/import',    iconName: 'FileUp',          label: 'นำเข้าข้อมูล',        special: true },
   { to: '/cashflow',  iconName: 'Wallet',          label: 'รายรับรายจ่าย',       adminOnly: false },
-  { to: '/ai',        iconName: 'Brain',           label: 'AI Memory',           superAdminOnly: true },
-  { to: '/system',    iconName: 'Network',         label: 'System Architecture', superAdminOnly: true },
+  { to: '/ai',        iconName: 'Brain',           label: 'AI Memory',           special: true },
+  { to: '/system',    iconName: 'Network',         label: 'System Architecture', special: true },
 ]
 
 // Operational pages whose visibility to 'staff' is controlled by the
@@ -101,7 +101,7 @@ function loadLocalOrder() {
 
 export default function Sidebar() {
   const { signOut, role } = useAuth()
-  const { staffPageAccess } = usePermissions()
+  const { staffPageAccess, adminPageAccess } = usePermissions()
   const [items, setItems] = useState(() => applyOrder(loadLocalOrder()))
   const dragIdx   = useRef(null)
   const overIdx   = useRef(null)
@@ -130,12 +130,11 @@ export default function Sidebar() {
       })
   }, [])
 
-  // 3-tier visibility: super_admin sees everything; admin sees admin+ops
-  // pages but not superAdminOnly ones; staff sees only ops pages it's been
-  // granted via staff_page_access.
+  // 3-tier visibility: special pages follow admin_page_access (super_admin
+  // always in, admin only if granted); ops pages follow staff_page_access
+  // for staff (admin/super_admin always see them).
   const visibleItems = items.filter(item => {
-    if (item.superAdminOnly) return role === 'super_admin'
-    if (item.adminOnly) return role === 'admin' || role === 'super_admin'
+    if (item.special) return canAccessAdminPage(role, adminPageAccess, item.to)
     if (STAFF_GATED.has(item.to)) return role !== 'staff' || staffPageAccess.includes(item.to)
     return true
   })

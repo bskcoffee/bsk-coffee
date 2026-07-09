@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { ShieldOff } from 'lucide-react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ToastProvider } from './contexts/ToastContext'
-import { PermissionsProvider, usePermissions } from './contexts/PermissionsContext'
+import { PermissionsProvider, usePermissions, canAccessAdminPage } from './contexts/PermissionsContext'
 import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
@@ -46,28 +46,19 @@ function PublicRoute({ children }) {
   return children
 }
 
-// Admin-level pages: reachable by 'admin' AND 'super_admin'.
-function AdminRoute({ children }) {
+// The 6 special pages (Settings, Label Settings, User Management, Import, AI
+// Memory, System): Super Admin always in; Admin only if granted via the
+// admin_page_access setting (configurable from UserManagementPage — Super
+// Admin only can edit it); Staff never.
+function AdminPageRoute({ path, children }) {
   const { role, loading } = useAuth()
-  if (loading || role === null) return (
+  const { adminPageAccess, loaded } = usePermissions()
+  if (loading || role === null || !loaded) return (
     <div className="flex items-center justify-center py-16 text-gray-400">
       <div className="w-6 h-6 border-2 border-cocoa-300 border-t-cocoa-600 rounded-full animate-spin" />
     </div>
   )
-  if (role !== 'admin' && role !== 'super_admin') return <Navigate to="/" replace />
-  return children
-}
-
-// Super-Admin-only pages (Import, AI Memory): role check only, no passkey —
-// these are gated purely by the 'super_admin' role in the profiles table.
-function SuperAdminOnlyRoute({ children }) {
-  const { role, loading } = useAuth()
-  if (loading || role === null) return (
-    <div className="flex items-center justify-center py-16 text-gray-400">
-      <div className="w-6 h-6 border-2 border-cocoa-300 border-t-cocoa-600 rounded-full animate-spin" />
-    </div>
-  )
-  if (role !== 'super_admin') return <Navigate to="/" replace />
+  if (!canAccessAdminPage(role, adminPageAccess, path)) return <Navigate to="/" replace />
   return children
 }
 
@@ -93,24 +84,25 @@ function StaffPageRoute({ path, children }) {
   return children
 }
 
-// ── System Architecture Route — เฉพาะ super_admin + Passkey ทุกครั้ง ──────
+// ── System Architecture Route — ต้องมีสิทธิ์ + Passkey ทุกครั้ง ──────
 
 const SUPER_ADMIN_PASSKEY = '18879'
 
 function SystemRoute({ children }) {
   const { role, loading } = useAuth()
+  const { adminPageAccess, loaded } = usePermissions()
   const [unlocked, setUnlocked]   = useState(false)
   const [val, setVal]             = useState('')
   const [error, setError]         = useState(false)
 
-  if (loading || role === null) return (
+  if (loading || role === null || !loaded) return (
     <div className="flex items-center justify-center py-16 text-gray-400">
       <div className="w-6 h-6 border-2 border-cocoa-300 border-t-cocoa-600 rounded-full animate-spin" />
     </div>
   )
 
-  // 1. ต้องเป็น super_admin เท่านั้น
-  if (role !== 'super_admin') return <Navigate to="/" replace />
+  // 1. ต้องมีสิทธิ์เข้าหน้านี้ (super_admin เสมอ, admin ถ้าได้รับสิทธิ์)
+  if (!canAccessAdminPage(role, adminPageAccess, '/system')) return <Navigate to="/" replace />
 
   // 2. ต้องป้อน Passkey ทุกครั้ง (unlocked reset ทุกครั้งที่ mount)
   if (!unlocked) {
@@ -184,13 +176,13 @@ const router = createBrowserRouter([
       { path: 'cost',     element: <StaffPageRoute path="/cost"><MenuCostPage /></StaffPageRoute> },
       { path: 'history',  element: <StaffPageRoute path="/history"><SalesHistoryPage /></StaffPageRoute> },
       { path: 'reports',  element: <StaffPageRoute path="/reports"><ReportsPage /></StaffPageRoute> },
-      { path: 'settings', element: <AdminRoute><SettingsPage /></AdminRoute> },
-      { path: 'users',    element: <AdminRoute><UserManagementPage /></AdminRoute> },
-      { path: 'import',    element: <SuperAdminOnlyRoute><ImportPage /></SuperAdminOnlyRoute> },
+      { path: 'settings', element: <AdminPageRoute path="/settings"><SettingsPage /></AdminPageRoute> },
+      { path: 'users',    element: <AdminPageRoute path="/users"><UserManagementPage /></AdminPageRoute> },
+      { path: 'import',    element: <AdminPageRoute path="/import"><ImportPage /></AdminPageRoute> },
       { path: 'cashflow',  element: <StaffPageRoute path="/cashflow"><CashFlowPage /></StaffPageRoute> },
-      { path: 'label-settings', element: <AdminRoute><LabelSettingsPage /></AdminRoute> },
+      { path: 'label-settings', element: <AdminPageRoute path="/label-settings"><LabelSettingsPage /></AdminPageRoute> },
       { path: 'system',  element: <SystemRoute><SystemPage /></SystemRoute> },
-      { path: 'ai',      element: <SuperAdminOnlyRoute><AIPage /></SuperAdminOnlyRoute> },
+      { path: 'ai',      element: <AdminPageRoute path="/ai"><AIPage /></AdminPageRoute> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },

@@ -85,7 +85,7 @@ const APPS = [
         path: '/settings',
         label: 'SettingsPage',
         labelTh: 'ตั้งค่า',
-        desc: 'ตั้งค่า Platform Fee % และค่าแรง (admin)',
+        desc: 'ตั้งค่า Platform Fee % และค่าแรง (admin — ปรับสิทธิ์ได้ที่ admin_page_access)',
         mode: 'readwrite',
         tables: ['settings'],
         adminOnly: true,
@@ -94,7 +94,7 @@ const APPS = [
         path: '/label-settings',
         label: 'LabelSettingsPage',
         labelTh: 'ตั้งค่าฉลาก',
-        desc: 'ออกแบบฉลาก WYSIWYG + เชื่อมต่อ print-server (admin)',
+        desc: 'ออกแบบฉลาก WYSIWYG + เชื่อมต่อ print-server (admin — ปรับสิทธิ์ได้ที่ admin_page_access)',
         mode: 'readwrite',
         tables: ['settings'],
         adminOnly: true,
@@ -104,7 +104,7 @@ const APPS = [
         path: '/users',
         label: 'UserManagementPage',
         labelTh: 'การจัดการผู้ใช้งาน',
-        desc: 'เพิ่ม/แก้ไขผู้ใช้ กำหนด role และสิทธิ์เข้าถึงเมนูของ Staff (admin)',
+        desc: 'เพิ่ม/แก้ไขผู้ใช้ กำหนด role และสิทธิ์เข้าถึงเมนูของ Staff/Admin (admin — ปรับสิทธิ์ได้ที่ admin_page_access)',
         mode: 'readwrite',
         tables: ['auth.users', 'profiles', 'settings'],
         adminOnly: true,
@@ -113,7 +113,7 @@ const APPS = [
         path: '/import',
         label: 'ImportPage',
         labelTh: 'นำเข้าข้อมูล',
-        desc: 'Import ออเดอร์จากไฟล์ CSV/Excel (super admin เท่านั้น)',
+        desc: 'Import ออเดอร์จากไฟล์ CSV/Excel (super admin เสมอ, admin ถ้าได้รับสิทธิ์จาก admin_page_access)',
         mode: 'write',
         tables: ['orders', 'order_items', 'platform_costs', 'menus', 'menu_costs', 'cost_settings'],
         superAdminOnly: true,
@@ -122,7 +122,7 @@ const APPS = [
         path: '/ai',
         label: 'AIPage',
         labelTh: 'AI Memory',
-        desc: 'ดูคำแนะนำ AI ย้อนหลัง ผล outcome และ action ทำแล้ว/ข้ามไป (super admin เท่านั้น)',
+        desc: 'ดูคำแนะนำ AI ย้อนหลัง ผล outcome และ action ทำแล้ว/ข้ามไป (super admin เสมอ, admin ถ้าได้รับสิทธิ์จาก admin_page_access)',
         mode: 'readwrite',
         tables: ['ai_memory'],
         superAdminOnly: true,
@@ -164,7 +164,7 @@ const TABLES = [
   { name: 'menu_prices',       desc: 'ราคาเมนูแต่ละ Platform',   cols: 'menu_id, platform, price' },
   { name: 'menu_costs',        desc: 'ต้นทุนวัตถุดิบต่อเมนู',    cols: 'menu_id, main_ingredient, milk_*, packaging_type, custom_costs, effective_from/to' },
   { name: 'cost_settings',     desc: 'ค่า shared cost (packaging, labor%)', cols: 'key, value, effective_from' },
-  { name: 'settings',          desc: 'ตั้งค่า global (platform fee%, store name, staff_page_access)', cols: 'key, value' },
+  { name: 'settings',          desc: 'ตั้งค่า global (platform fee%, store name, staff_page_access, admin_page_access)', cols: 'key, value' },
   { name: 'cashbook_entries',  desc: 'รายการเงินสด รายรับ/รายจ่าย', cols: 'id, date, type, amount, note, category' },
   { name: 'transfer_status',   desc: 'สถานะโอนเงิน',              cols: 'date, platform, status' },
   { name: 'auth.users',        desc: 'ผู้ใช้งานระบบ (Supabase Auth)', cols: 'id, email' },
@@ -194,7 +194,8 @@ const DATA_FLOW = [
   { from: 'Dashboard / History', arrow: '←', to: 'orders + order_items + platform_costs', note: 'อ่านข้อมูลเพื่อคำนวณ 5-Layer Profit' },
   { from: 'LabelSettingsPage', arrow: '→', to: 'print-server (localhost TCP)', note: 'ส่ง ESC/POS command พิมพ์ฉลาก' },
   { from: 'UserManagementPage', arrow: '→', to: 'settings.staff_page_access', note: 'Admin/Super Admin กำหนดหน้าที่ Staff เข้าถึงได้' },
-  { from: 'Sidebar / BottomNav', arrow: '←', to: 'settings.staff_page_access', note: 'ซ่อน/แสดงเมนูตามสิทธิ์ของ role' },
+  { from: 'UserManagementPage', arrow: '→', to: 'settings.admin_page_access', note: 'Super Admin เท่านั้น กำหนดหน้าพิเศษที่ Admin เข้าถึงได้' },
+  { from: 'Sidebar / BottomNav / App.jsx', arrow: '←', to: 'settings.staff_page_access + admin_page_access', note: 'ซ่อน/แสดงเมนู และกันเส้นทางตามสิทธิ์ของ role' },
 ]
 
 const LEGEND = [
@@ -214,7 +215,7 @@ const ROLE_TIERS = [
   },
   {
     role: 'admin', label: 'Admin', className: 'bg-cocoa-100 text-cocoa-700 border-cocoa-200',
-    desc: 'จัดการร้านประจำวันได้ครบ (ตั้งค่า, ตั้งค่าฉลาก, จัดการผู้ใช้, กำหนดสิทธิ์เมนูของ Staff) ยกเว้นหน้า super admin only และเลื่อน role ใครเป็น Super Admin ไม่ได้',
+    desc: 'จัดการร้านประจำวันได้ครบ (ตั้งค่า, ตั้งค่าฉลาก, จัดการผู้ใช้, กำหนดสิทธิ์เมนูของ Staff) — เข้าหน้าพิเศษอื่น (Import/AI/System) ได้เฉพาะที่ Super Admin เปิดให้ทาง admin_page_access และเลื่อน role ใครเป็น Super Admin ไม่ได้',
   },
   {
     role: 'staff', label: 'Staff', className: 'bg-gray-100 text-gray-600 border-gray-200',
@@ -315,8 +316,9 @@ export default function SystemPage() {
           ))}
         </div>
         <p className="text-[11px] text-gray-400 mt-2.5">
-          บังคับใช้ผ่าน route guard ใน <code className="bg-slate-100 px-1 py-0.5 rounded">App.jsx</code> (AdminRoute / SuperAdminOnlyRoute / SystemRoute / StaffPageRoute)
-          {' '}และ RPC <code className="bg-slate-100 px-1 py-0.5 rounded">change_user_role</code> ฝั่ง Supabase (ดู super_admin_migration.sql)
+          บังคับใช้ผ่าน route guard ใน <code className="bg-slate-100 px-1 py-0.5 rounded">App.jsx</code> (AdminPageRoute / SystemRoute / StaffPageRoute)
+          {' '}และ RPC <code className="bg-slate-100 px-1 py-0.5 rounded">change_user_role</code> ฝั่ง Supabase
+          {' '}(ดู super_admin_migration.sql, admin_page_access_migration.sql)
         </p>
       </section>
 
