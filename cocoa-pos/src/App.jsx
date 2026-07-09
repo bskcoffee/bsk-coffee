@@ -490,9 +490,10 @@ function AppInner() {
           onClick={signOut}
           aria-label="ออกจากระบบ"
           title="ออกจากระบบ"
-          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600/20 text-red-300 hover:bg-red-600/30 hover:text-red-200 transition-all text-sm font-semibold border border-red-500/30"
+          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600 text-white hover:bg-red-500 transition-all text-sm font-semibold border border-red-400"
         >
           <LogOut size={16} />
+          <span>ออกจากระบบ</span>
         </button>
       </div>
 
