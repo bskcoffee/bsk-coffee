@@ -1,6 +1,6 @@
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
 import { useState } from 'react'
-import { ShieldOff } from 'lucide-react'
+import { ShieldOff, Lock } from 'lucide-react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ToastProvider } from './contexts/ToastContext'
 import { PermissionsProvider, usePermissions, canAccessAdminPage } from './contexts/PermissionsContext'
@@ -23,8 +23,31 @@ import AIPage from './pages/AIPage'
 
 // ── Route Guards ─────────────────────────────────────────────────────────────
 
+// เมื่อ admin/staff หมดอายุการใช้งาน — บล็อกเข้าทั้งระบบ ไม่ว่าจะเข้า route ไหน
+// (super_admin ไม่ถูกเช็คเงื่อนไขนี้เลย)
+function AccessExpiredScreen({ accessExpiresAt, onSignOut }) {
+  const dateStr = accessExpiresAt
+    ? new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-cocoa-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-sm w-full text-center space-y-4">
+        <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto">
+          <Lock size={26} className="text-red-600" />
+        </div>
+        <div>
+          <h1 className="text-lg font-bold text-gray-900">หมดอายุการใช้งาน</h1>
+          {dateStr && <p className="text-sm text-gray-500 mt-1">บัญชีนี้ใช้งานได้ถึงวันที่ {dateStr}</p>}
+        </div>
+        <p className="text-sm text-gray-600">กรุณาติดต่อผู้ดูแลระบบสูงสุดเพื่อต่ออายุการใช้งาน</p>
+        <button onClick={onSignOut} className="btn-secondary w-full">ออกจากระบบ</button>
+      </div>
+    </div>
+  )
+}
+
 function PrivateRoute({ children }) {
-  const { session, loading } = useAuth()
+  const { session, loading, isAccessExpired, accessExpiresAt, signOut } = useAuth()
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-cocoa-50">
@@ -36,6 +59,7 @@ function PrivateRoute({ children }) {
     )
   }
   if (!session) return <Navigate to="/login" replace />
+  if (isAccessExpired) return <AccessExpiredScreen accessExpiresAt={accessExpiresAt} onSignOut={signOut} />
   return children
 }
 

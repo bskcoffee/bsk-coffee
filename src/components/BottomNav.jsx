@@ -46,7 +46,7 @@ function applyOrder(order) {
 }
 
 export default function BottomNav() {
-  const { role, signOut } = useAuth()
+  const { role, signOut, accessExpiresAt } = useAuth()
   const { staffPageAccess, adminPageAccess } = usePermissions()
   const navigate = useNavigate()
   const [items, setItems]           = useState(ALL_ITEMS)
@@ -86,6 +86,17 @@ export default function BottomNav() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [sheetOpen, showPasskey])
+
+  // แสดงวันใช้งานคงเหลือของตัวเอง (เฉพาะ admin/staff ที่ super_admin ตั้งวันหมดอายุไว้)
+  const expiryInfo = (() => {
+    if (role === 'super_admin' || !accessExpiresAt) return null
+    const daysLeft = Math.ceil((new Date(accessExpiresAt) - new Date()) / 86400000)
+    const dateStr = new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+    return {
+      text: daysLeft < 0 ? `หมดอายุแล้ว (${dateStr})` : `ใช้งานได้ถึง ${dateStr} (เหลือ ${daysLeft} วัน)`,
+      warn: daysLeft <= 7,
+    }
+  })()
 
   // Items without access are still shown (not filtered out) — just greyed
   // out and non-navigable — so users can see what exists without entering it.
@@ -214,6 +225,12 @@ export default function BottomNav() {
                 )
               })}
             </div>
+
+            {expiryInfo && (
+              <p className={`text-xs text-center pb-2 ${expiryInfo.warn ? 'text-amber-600 font-medium' : 'text-gray-400'}`}>
+                {expiryInfo.text}
+              </p>
+            )}
 
             <div className="border-t border-gray-100 pt-3 space-y-1">
               {/* Go to BSK POS */}

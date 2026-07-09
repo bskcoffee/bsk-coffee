@@ -7,7 +7,29 @@ import POSPage         from './pages/POSPage'
 import OrderManagePage from './pages/OrderManagePage'
 import MenuOptionModal from './components/MenuOptionModal'
 import { supabase, getSetting } from './lib/supabase'
-import { ShoppingCart, ClipboardList, LayoutDashboard, X, Printer, Search, Loader2, ChevronRight, ScrollText } from 'lucide-react'
+import { ShoppingCart, ClipboardList, LayoutDashboard, X, Printer, Search, Loader2, ChevronRight, ScrollText, Lock } from 'lucide-react'
+
+// เมื่อ admin/staff หมดอายุการใช้งาน — บล็อกเข้าทั้งระบบ (super_admin ไม่ถูกเช็ค)
+function AccessExpiredScreen({ accessExpiresAt, onSignOut }) {
+  const dateStr = accessExpiresAt
+    ? new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-cocoa-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-sm w-full text-center space-y-4">
+        <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto">
+          <Lock size={26} className="text-red-600" />
+        </div>
+        <div>
+          <h1 className="text-lg font-bold text-gray-900">หมดอายุการใช้งาน</h1>
+          {dateStr && <p className="text-sm text-gray-500 mt-1">บัญชีนี้ใช้งานได้ถึงวันที่ {dateStr}</p>}
+        </div>
+        <p className="text-sm text-gray-600">กรุณาติดต่อผู้ดูแลระบบสูงสุดเพื่อต่ออายุการใช้งาน</p>
+        <button onClick={onSignOut} className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">ออกจากระบบ</button>
+      </div>
+    </div>
+  )
+}
 
 async function sendLabelPrint(menu, options) {
   const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
@@ -364,7 +386,7 @@ function PasskeyModal({ title, expectedPasskey, onConfirm, onClose }) {
 }
 
 function AppInner() {
-  const { session, loading } = useAuth()
+  const { session, loading, isAccessExpired, accessExpiresAt, signOut } = useAuth()
   const [showPasskey,    setShowPasskey]    = useState(false)
   const [showPrintModal, setShowPrintModal] = useState(false)
   const [showLogModal,   setShowLogModal]   = useState(false)
@@ -400,6 +422,7 @@ function AppInner() {
   }
 
   if (!session) return <LoginPage />
+  if (isAccessExpired) return <AccessExpiredScreen accessExpiresAt={accessExpiresAt} onSignOut={signOut} />
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">

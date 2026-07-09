@@ -99,7 +99,7 @@ function loadLocalOrder() {
 }
 
 export default function Sidebar() {
-  const { signOut, role } = useAuth()
+  const { signOut, role, accessExpiresAt } = useAuth()
   const { staffPageAccess, adminPageAccess } = usePermissions()
   const [items, setItems] = useState(() => applyOrder(loadLocalOrder()))
   const dragIdx   = useRef(null)
@@ -133,6 +133,17 @@ export default function Sidebar() {
   useEffect(() => {
     getSetting('nav_passkey').then(v => { if (v) setNavPasskey(v) })
   }, [])
+
+  // แสดงวันใช้งานคงเหลือของตัวเอง (เฉพาะ admin/staff ที่ super_admin ตั้งวันหมดอายุไว้)
+  const expiryInfo = (() => {
+    if (role === 'super_admin' || !accessExpiresAt) return null
+    const daysLeft = Math.ceil((new Date(accessExpiresAt) - new Date()) / 86400000)
+    const dateStr = new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+    return {
+      text: daysLeft < 0 ? `หมดอายุแล้ว (${dateStr})` : `ใช้งานได้ถึง ${dateStr} (เหลือ ${daysLeft} วัน)`,
+      warn: daysLeft <= 7,
+    }
+  })()
 
   // 3-tier access: special pages follow admin_page_access (super_admin
   // always in, admin only if granted); ops pages follow staff_page_access
@@ -328,6 +339,11 @@ export default function Sidebar() {
         >
           <LogOut size={15} /> ออกจากระบบ
         </button>
+        {expiryInfo && (
+          <p className={`text-xs text-center ${expiryInfo.warn ? 'text-amber-400 font-medium' : 'text-cocoa-400'}`}>
+            {expiryInfo.text}
+          </p>
+        )}
         <p className="text-cocoa-400 text-xs text-center">v1.2.0</p>
       </div>
 

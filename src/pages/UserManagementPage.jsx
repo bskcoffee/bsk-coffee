@@ -134,7 +134,7 @@ export default function UserManagementPage() {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, email, role, created_at')
+        .select('id, email, role, created_at, access_expires_at')
         .order('created_at', { ascending: true })
       if (error) throw error
       setUserList(data ?? [])
@@ -167,6 +167,46 @@ export default function UserManagementPage() {
       addToast(`เปลี่ยน role เป็น ${label} แล้ว`, 'success')
       loadUsers()
     }
+  }
+
+  // ── จำนวนวันใช้งาน (access expiry) — super_admin เท่านั้น ─────────────────
+  // เก็บค่าตัวเลขวันที่กำลังพิมพ์ของแต่ละแถว แยกตาม user id
+  const [extendDaysById, setExtendDaysById] = useState({})
+  const [extendingId, setExtendingId] = useState(null)
+
+  const extendAccess = async (userId) => {
+    const days = parseInt(extendDaysById[userId], 10)
+    if (!days || days <= 0) {
+      addToast('กรุณากรอกจำนวนวันที่ถูกต้อง', 'error')
+      return
+    }
+    setExtendingId(userId)
+    try {
+      const { error } = await supabase.rpc('extend_user_access', {
+        target_id: userId,
+        days_to_add: days,
+      })
+      if (error) throw error
+      addToast(`ต่ออายุ ${days} วันแล้ว`, 'success')
+      setExtendDaysById(prev => ({ ...prev, [userId]: '' }))
+      loadUsers()
+    } catch (err) {
+      addToast('ต่ออายุไม่สำเร็จ: ' + err.message, 'error')
+    }
+    setExtendingId(null)
+  }
+
+  const clearAccessExpiry = async (userId) => {
+    setExtendingId(userId)
+    try {
+      const { error } = await supabase.rpc('clear_user_access_expiry', { target_id: userId })
+      if (error) throw error
+      addToast('ตั้งเป็นไม่จำกัดวันใช้งานแล้ว', 'success')
+      loadUsers()
+    } catch (err) {
+      addToast('ยกเลิกวันหมดอายุไม่สำเร็จ: ' + err.message, 'error')
+    }
+    setExtendingId(null)
   }
 
   // ── Update own email/password ─────────────────────────────────────────────
@@ -296,52 +336,97 @@ export default function UserManagementPage() {
               const canManageThisRow =
                 !isMe && (myRole === 'super_admin' || (myRole === 'admin' && u.role !== 'super_admin'))
 
+              // สถานะวันใช้งาน — คำนวณเฉพาะตอน super_admin ดู และ target ไม่ใช่ super_admin
+              // (super_admin ไม่ถูกจำกัดวันใช้งานเลย ไม่ต้องแสดงสถานะนี้)
+              const showExpiry = myRole === 'super_admin' && u.role !== 'super_admin'
+              let expiryText = 'ไม่จำกัดเวลา'
+              let expiryClass = 'text-gray-400'
+              if (showExpiry && u.access_expires_at) {
+                const daysLeft = Math.ceil((new Date(u.access_expires_at) - new Date()) / 86400000)
+                const dateStr = new Date(u.access_expires_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+                if (daysLeft < 0) { expiryText = `หมดอายุแล้ว (${dateStr})`; expiryClass = 'text-red-600 font-medium' }
+                else if (daysLeft <= 7) { expiryText = `เหลือ ${daysLeft} วัน (ถึง ${dateStr})`; expiryClass = 'text-amber-600 font-medium' }
+                else { expiryText = `ใช้งานได้ถึง ${dateStr} (เหลือ ${daysLeft} วัน)`; expiryClass = 'text-gray-500' }
+              }
+
               return (
-                <div key={u.id}
-                  className="flex items-center gap-3 bg-gray-50 rounded-xl px-3 py-2.5 text-sm">
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-                    u.role === 'super_admin' ? 'bg-purple-100'
-                    : u.role === 'admin' ? 'bg-cocoa-100' : 'bg-gray-200'
-                  }`}>
-                    {u.role === 'super_admin'
-                      ? <Crown size={14} className="text-purple-700" />
-                      : u.role === 'admin'
-                        ? <ShieldCheck size={14} className="text-cocoa-700" />
-                        : <Shield size={14} className="text-gray-400" />}
+                <div key={u.id} className="bg-gray-50 rounded-xl px-3 py-2.5 space-y-2">
+                  <div className="flex items-center gap-3 text-sm">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+                      u.role === 'super_admin' ? 'bg-purple-100'
+                      : u.role === 'admin' ? 'bg-cocoa-100' : 'bg-gray-200'
+                    }`}>
+                      {u.role === 'super_admin'
+                        ? <Crown size={14} className="text-purple-700" />
+                        : u.role === 'admin'
+                          ? <ShieldCheck size={14} className="text-cocoa-700" />
+                          : <Shield size={14} className="text-gray-400" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-gray-800 truncate">{u.email || '(ไม่ระบุ)'}</p>
+                      <p className="text-xs text-gray-400">
+                        {ROLE_LABEL[u.role] ?? u.role}
+                        {isMe && ' · คุณ'}
+                      </p>
+                    </div>
+                    {canManageThisRow && (
+                      <div className="flex gap-1.5 shrink-0">
+                        {u.role === 'staff' && (
+                          <button
+                            onClick={() => requestChangeRole(u.id, 'admin')}
+                            className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-cocoa-50 text-cocoa-700 hover:bg-cocoa-100"
+                          >→ Admin</button>
+                        )}
+                        {u.role === 'admin' && (
+                          <button
+                            onClick={() => requestChangeRole(u.id, 'staff')}
+                            className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-amber-50 text-amber-700 hover:bg-amber-100"
+                          >→ Staff</button>
+                        )}
+                        {u.role === 'admin' && myRole === 'super_admin' && (
+                          <button
+                            onClick={() => requestChangeRole(u.id, 'super_admin')}
+                            className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-purple-50 text-purple-700 hover:bg-purple-100"
+                          >→ Super Admin</button>
+                        )}
+                        {u.role === 'super_admin' && myRole === 'super_admin' && (
+                          <button
+                            onClick={() => requestChangeRole(u.id, 'admin')}
+                            className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-amber-50 text-amber-700 hover:bg-amber-100"
+                          >→ Admin</button>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-gray-800 truncate">{u.email || '(ไม่ระบุ)'}</p>
-                    <p className="text-xs text-gray-400">
-                      {ROLE_LABEL[u.role] ?? u.role}
-                      {isMe && ' · คุณ'}
-                    </p>
-                  </div>
-                  {canManageThisRow && (
-                    <div className="flex gap-1.5 shrink-0">
-                      {u.role === 'staff' && (
+
+                  {/* ── วันใช้งาน — เห็น/แก้ได้เฉพาะ super_admin ─────────────── */}
+                  {showExpiry && (
+                    <div className="flex items-center gap-2 pl-10 flex-wrap">
+                      <span className={`text-xs ${expiryClass}`}>{expiryText}</span>
+                      <div className="flex items-center gap-1.5 ml-auto">
+                        <input
+                          type="number"
+                          min="1"
+                          inputMode="numeric"
+                          placeholder="วัน"
+                          aria-label={`จำนวนวันที่จะต่ออายุให้ ${u.email}`}
+                          value={extendDaysById[u.id] ?? ''}
+                          onChange={e => setExtendDaysById(prev => ({ ...prev, [u.id]: e.target.value }))}
+                          className="w-16 px-2 py-1 border border-gray-200 rounded-lg text-xs text-center outline-none focus:border-cocoa-400"
+                        />
                         <button
-                          onClick={() => requestChangeRole(u.id, 'admin')}
-                          className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-cocoa-50 text-cocoa-700 hover:bg-cocoa-100"
-                        >→ Admin</button>
-                      )}
-                      {u.role === 'admin' && (
-                        <button
-                          onClick={() => requestChangeRole(u.id, 'staff')}
-                          className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-amber-50 text-amber-700 hover:bg-amber-100"
-                        >→ Staff</button>
-                      )}
-                      {u.role === 'admin' && myRole === 'super_admin' && (
-                        <button
-                          onClick={() => requestChangeRole(u.id, 'super_admin')}
-                          className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-purple-50 text-purple-700 hover:bg-purple-100"
-                        >→ Super Admin</button>
-                      )}
-                      {u.role === 'super_admin' && myRole === 'super_admin' && (
-                        <button
-                          onClick={() => requestChangeRole(u.id, 'admin')}
-                          className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-amber-50 text-amber-700 hover:bg-amber-100"
-                        >→ Admin</button>
-                      )}
+                          onClick={() => extendAccess(u.id)}
+                          disabled={extendingId === u.id}
+                          className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-50"
+                        >ต่ออายุ</button>
+                        {u.access_expires_at && (
+                          <button
+                            onClick={() => clearAccessExpiry(u.id)}
+                            disabled={extendingId === u.id}
+                            className="text-xs px-2.5 py-1 rounded-lg font-medium transition-colors text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+                          >ไม่จำกัด</button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

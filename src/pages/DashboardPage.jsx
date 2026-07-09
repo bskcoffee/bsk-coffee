@@ -8,6 +8,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend
 } from 'recharts'
 import { TrendingUp, TrendingDown, AlertTriangle, Calendar, ChevronDown, ChevronUp, Star, Pencil, Target, GripVertical } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 import { format, subDays, startOfMonth, endOfMonth, subMonths, startOfYear, endOfYear, subYears, parseISO, startOfISOWeek, endOfISOWeek, subWeeks, getISOWeek, getISOWeekYear } from 'date-fns'
 import { th } from 'date-fns/locale'
 
@@ -236,6 +237,7 @@ function KpiCard({ title, value, sub, change, positive, dragProps }) {
 }
 
 export default function DashboardPage() {
+  const { role, accessExpiresAt } = useAuth()
   const [range, setRange] = useState('month')
   const [customStart, setCustomStart] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [customEnd, setCustomEnd] = useState(format(new Date(), 'yyyy-MM-dd'))
@@ -896,8 +898,27 @@ export default function DashboardPage() {
     return r
   })()
 
+  // เตือนใกล้หมดอายุการใช้งาน (≤7 วัน) — เฉพาะ admin/staff ที่ super_admin ตั้งวันหมดอายุไว้
+  // super_admin ไม่ถูกจำกัดวันใช้งานเลย จึงไม่เห็นแบนเนอร์นี้
+  const expiryWarning = (() => {
+    if (role === 'super_admin' || !accessExpiresAt) return null
+    const daysLeft = Math.ceil((new Date(accessExpiresAt) - new Date()) / 86400000)
+    if (daysLeft > 7) return null
+    const dateStr = new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })
+    return daysLeft < 0
+      ? `บัญชีนี้หมดอายุการใช้งานแล้วเมื่อวันที่ ${dateStr} — กรุณาติดต่อผู้ดูแลระบบสูงสุดเพื่อต่ออายุ`
+      : `เหลือเวลาใช้งานอีก ${daysLeft} วัน (ถึงวันที่ ${dateStr}) — กรุณาติดต่อผู้ดูแลระบบสูงสุดเพื่อต่ออายุ`
+  })()
+
   return (
     <div className="space-y-4">
+      {expiryWarning && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5">
+          <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+          <p className="text-sm text-amber-700 font-medium">{expiryWarning}</p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
