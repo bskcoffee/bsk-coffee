@@ -3,18 +3,27 @@
  * แสดง structure ของระบบทั้งหมด: pages, data flow, supabase tables
  */
 
-const COCOA_BROWN = '#1e40af'
-
 // ─── Data ────────────────────────────────────────────────────────────────────
+
+// Per-app color theme — Tailwind class groups instead of inline hex,
+// so this page shares the same design system as the rest of the app.
+const APP_THEME = {
+  blue: {
+    text: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200',
+    borderL: 'border-l-blue-700', badgeBg: 'bg-blue-50', badgeText: 'text-blue-700', badgeBorder: 'border-blue-200',
+  },
+  green: {
+    text: 'text-green-700', bg: 'bg-green-50', border: 'border-green-200',
+    borderL: 'border-l-green-700', badgeBg: 'bg-green-50', badgeText: 'text-green-700', badgeBorder: 'border-green-200',
+  },
+}
 
 const APPS = [
   {
     id: 'cocoa-house',
     label: 'BSK coffee&bakery',
     sublabel: 'bsk-coffee.vercel.app',
-    color: '#1e40af',
-    bg: '#eff6ff',
-    border: '#bfdbfe',
+    theme: APP_THEME.blue,
     pages: [
       {
         path: '/',
@@ -124,9 +133,7 @@ const APPS = [
     id: 'cocoa-pos',
     label: 'Cocoa POS',
     sublabel: 'cocoa-pos.vercel.app',
-    color: '#1a6b3c',
-    bg: '#f0fdf4',
-    border: '#a7d9be',
+    theme: APP_THEME.green,
     pages: [
       {
         path: '?tab=pos',
@@ -165,81 +172,82 @@ const TABLES = [
 ]
 
 const CALC_RULES = [
-  { step: 'Layer 1', label: 'Sales (ยอดขายรวม)', formula: 'Σ (quantity × unit_price)', color: '#dbeafe' },
-  { step: 'Layer 2', label: 'Gross Sales (ยอดสุทธิ)', formula: 'Sales − Menu Discount', color: '#dcfce7' },
-  { step: 'Layer 3', label: 'Gross Profit (กำไรขั้นต้น)', formula: 'Gross Sales − GP Cost*', color: '#fef9c3', note: '*GP Cost คำนวณบน Gross Sales (หลัง discount)' },
-  { step: 'Layer 4', label: 'Net Profit (กำไรสุทธิ)', formula: 'Gross Profit − (Campaign + Marketing + Delivery + Advert)', color: '#fce7f3' },
-  { step: 'Layer 5', label: 'Net Profit %', formula: 'Net Profit ÷ Gross Sales × 100', color: '#ede9fe' },
+  { step: 'Layer 1', label: 'Sales (ยอดขายรวม)', formula: 'Σ (quantity × unit_price)', bg: 'bg-blue-100' },
+  { step: 'Layer 2', label: 'Gross Sales (ยอดสุทธิ)', formula: 'Sales − Menu Discount', bg: 'bg-green-100' },
+  { step: 'Layer 3', label: 'Gross Profit (กำไรขั้นต้น)', formula: 'Gross Sales − GP Cost*', bg: 'bg-yellow-100', note: '*GP Cost คำนวณบน Gross Sales (หลัง discount)' },
+  { step: 'Layer 4', label: 'Net Profit (กำไรสุทธิ)', formula: 'Gross Profit − (Campaign + Marketing + Delivery + Advert)', bg: 'bg-pink-100' },
+  { step: 'Layer 5', label: 'Net Profit %', formula: 'Net Profit ÷ Gross Sales × 100', bg: 'bg-purple-100' },
+]
+
+const MODE_STYLE = {
+  read:      'bg-blue-100 text-blue-700',
+  write:     'bg-green-100 text-green-700',
+  readwrite: 'bg-yellow-100 text-amber-800',
+}
+const MODE_LABEL = { read: 'อ่าน', write: 'เขียน', readwrite: 'อ่าน/เขียน' }
+
+const DATA_FLOW = [
+  { from: 'Cocoa POS (POSPage)', arrow: '→', to: 'orders + order_items', note: 'บันทึกออเดอร์ใหม่' },
+  { from: 'Cocoa POS (POSPage)', arrow: '→', to: 'platform_costs.menu_discount', note: 'sync discount รวมต่อ platform ต่อวัน (auto)' },
+  { from: 'SalesEntryPage', arrow: '→', to: 'platform_costs', note: 'กรอก net_sales, platform_fee, campaign, advert ฯลฯ' },
+  { from: 'SettingsPage', arrow: '→', to: 'settings', note: 'ตั้ง platform_fee_pct, labor_pct ที่ใช้คำนวณ GP' },
+  { from: 'Dashboard / History', arrow: '←', to: 'orders + order_items + platform_costs', note: 'อ่านข้อมูลเพื่อคำนวณ 5-Layer Profit' },
+  { from: 'LabelSettingsPage', arrow: '→', to: 'print-server (localhost TCP)', note: 'ส่ง ESC/POS command พิมพ์ฉลาก' },
+]
+
+const LEGEND = [
+  { label: 'อ่านอย่างเดียว', className: 'bg-blue-100 text-blue-700' },
+  { label: 'เขียนอย่างเดียว', className: 'bg-green-100 text-green-700' },
+  { label: 'อ่าน/เขียน', className: 'bg-yellow-100 text-amber-800' },
+  { label: 'admin only', className: 'bg-red-100 text-red-700' },
 ]
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
 function ModeTag({ mode }) {
-  const map = {
-    read:      { label: 'อ่าน',       bg: '#dbeafe', color: '#1d4ed8' },
-    write:     { label: 'เขียน',      bg: '#dcfce7', color: '#15803d' },
-    readwrite: { label: 'อ่าน/เขียน', bg: '#fef9c3', color: '#92400e' },
-  }
-  const s = map[mode] ?? map.read
   return (
-    <span style={{ background: s.bg, color: s.color, fontSize: 10, padding: '2px 7px', borderRadius: 99, fontWeight: 600, whiteSpace: 'nowrap' }}>
-      {s.label}
+    <span className={`badge ${MODE_STYLE[mode] ?? MODE_STYLE.read}`}>
+      {MODE_LABEL[mode] ?? MODE_LABEL.read}
     </span>
   )
 }
 
 function AdminTag() {
-  return (
-    <span style={{ background: '#fee2e2', color: '#b91c1c', fontSize: 10, padding: '2px 7px', borderRadius: 99, fontWeight: 600 }}>
-      admin
-    </span>
-  )
+  return <span className="badge bg-red-100 text-red-700">admin</span>
 }
 
 function TableTag({ name }) {
   return (
-    <span style={{
-      display: 'inline-block', background: '#f1f5f9', color: '#475569',
-      fontSize: 10, padding: '2px 7px', borderRadius: 6, border: '1px solid #e2e8f0',
-      fontFamily: 'monospace', marginBottom: 3, marginRight: 3,
-    }}>
+    <span className="inline-block bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded border border-slate-200 font-mono mb-1 mr-1">
       {name}
     </span>
   )
 }
 
-function PageCard({ page, appColor }) {
+function PageCard({ page, theme }) {
   return (
-    <div style={{
-      background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10,
-      padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 6,
-      borderLeft: `3px solid ${appColor}`,
-    }}>
+    <div className={`card flex flex-col gap-1.5 border-l-[3px] ${theme.borderL}`}>
       {/* header row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: 700, fontSize: 13, color: '#1e293b' }}>{page.labelTh}</span>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="font-bold text-[13px] text-gray-800">{page.labelTh}</span>
         <ModeTag mode={page.mode} />
         {page.adminOnly && <AdminTag />}
       </div>
 
       {/* path + component */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <code style={{ fontSize: 11, color: '#7c3aed', background: '#f5f3ff', padding: '2px 6px', borderRadius: 4 }}>{page.path}</code>
-        <span style={{ fontSize: 11, color: '#6b7280' }}>→ {page.label}</span>
+      <div className="flex gap-2 flex-wrap items-center">
+        <code className="text-[11px] text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">{page.path}</code>
+        <span className="text-[11px] text-gray-500">→ {page.label}</span>
       </div>
 
       {/* desc */}
-      <p style={{ fontSize: 12, color: '#4b5563', margin: 0, lineHeight: 1.5 }}>{page.desc}</p>
+      <p className="text-xs text-gray-600 leading-relaxed">{page.desc}</p>
 
       {/* tables */}
-      <div style={{ marginTop: 2 }}>
+      <div className="mt-0.5">
         {page.tables.map(t => <TableTag key={t} name={t} />)}
         {page.external && (
-          <span style={{
-            display: 'inline-block', background: '#fff7ed', color: '#c2410c',
-            fontSize: 10, padding: '2px 7px', borderRadius: 6, border: '1px solid #fed7aa',
-            fontFamily: 'monospace', marginBottom: 3, marginRight: 3,
-          }}>
+          <span className="inline-block bg-orange-50 text-orange-700 text-[10px] px-1.5 py-0.5 rounded border border-orange-200 font-mono mb-1 mr-1">
             🔌 {page.external}
           </span>
         )}
@@ -252,142 +260,120 @@ function PageCard({ page, appColor }) {
 
 export default function SystemPage() {
   return (
-    <div style={{ padding: '24px 28px', maxWidth: 1100, margin: '0 auto', fontFamily: 'inherit' }}>
+    <div className="max-w-[1100px] mx-auto px-7 py-6">
 
       {/* Title */}
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, color: COCOA_BROWN, margin: 0 }}>
-          System Architecture
-        </h1>
-        <p style={{ color: '#6b7280', marginTop: 4, fontSize: 13 }}>
+      <div className="mb-7">
+        <h1 className="text-xl font-extrabold text-cocoa-800">System Architecture</h1>
+        <p className="text-gray-500 mt-1 text-sm">
           โครงสร้างระบบ BSK coffee&bakery — แอพ, หน้า, ตาราง Supabase และกฎการคำนวณ
         </p>
       </div>
 
       {/* Legend */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
-        {[
-          { label: 'อ่านอย่างเดียว', bg: '#dbeafe', color: '#1d4ed8' },
-          { label: 'เขียนอย่างเดียว', bg: '#dcfce7', color: '#15803d' },
-          { label: 'อ่าน/เขียน', bg: '#fef9c3', color: '#92400e' },
-          { label: 'admin only', bg: '#fee2e2', color: '#b91c1c' },
-        ].map(s => (
-          <span key={s.label} style={{ background: s.bg, color: s.color, fontSize: 11, padding: '3px 10px', borderRadius: 99, fontWeight: 600, border: `1px solid ${s.color}30` }}>
-            {s.label}
-          </span>
+      <div className="flex gap-2.5 flex-wrap mb-6">
+        {LEGEND.map(s => (
+          <span key={s.label} className={`badge ${s.className}`}>{s.label}</span>
         ))}
       </div>
 
       {/* Apps */}
       {APPS.map(app => (
-        <section key={app.id} style={{ marginBottom: 32 }}>
+        <section key={app.id} className="mb-8">
           {/* App header */}
-          <div style={{
-            background: app.bg, border: `1px solid ${app.border}`, borderRadius: 12,
-            padding: '12px 18px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12,
-          }}>
+          <div className={`rounded-xl px-4.5 py-3 mb-3.5 flex items-center gap-3 border ${app.theme.bg} ${app.theme.border}`}>
             <div>
-              <span style={{ fontWeight: 800, fontSize: 16, color: app.color }}>{app.label}</span>
-              <span style={{ marginLeft: 8, fontSize: 12, color: '#6b7280' }}>—</span>
+              <span className={`font-extrabold text-base ${app.theme.text}`}>{app.label}</span>
+              <span className="ml-2 text-xs text-gray-500">—</span>
               <a href={`https://${app.sublabel}`} target="_blank" rel="noreferrer"
-                style={{ marginLeft: 6, fontSize: 12, color: app.color, textDecoration: 'none', opacity: 0.8 }}>
+                className={`ml-1.5 text-xs no-underline opacity-80 ${app.theme.text}`}>
                 {app.sublabel}
               </a>
             </div>
-            <span style={{
-              marginLeft: 'auto', fontSize: 11, color: app.color, background: app.bg,
-              border: `1px solid ${app.border}`, borderRadius: 99, padding: '2px 10px', fontWeight: 600,
-            }}>
+            <span className={`ml-auto badge border ${app.theme.badgeBg} ${app.theme.badgeText} ${app.theme.badgeBorder}`}>
               {app.pages.length} หน้า
             </span>
           </div>
 
           {/* Page grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
             {app.pages.map(page => (
-              <PageCard key={page.path} page={page} appColor={app.color} />
+              <PageCard key={page.path} page={page} theme={app.theme} />
             ))}
           </div>
         </section>
       ))}
 
       {/* GP Calculation Rules */}
-      <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 700, color: '#374151', marginBottom: 14, borderBottom: '2px solid #e5e7eb', paddingBottom: 8 }}>
+      <section className="mb-8">
+        <h2 className="text-[15px] font-bold text-gray-700 mb-3.5 border-b-2 border-gray-200 pb-2">
           🧮 กฎการคำนวณ GP (5-Layer Profit)
         </h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+        <div className="flex flex-col">
           {CALC_RULES.map((r, i) => (
-            <div key={r.step} style={{ display: 'flex', alignItems: 'flex-start', gap: 0 }}>
+            <div key={r.step} className="flex items-start">
               {/* connector */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 32, flexShrink: 0 }}>
-                <div style={{ width: 28, height: 28, borderRadius: '50%', background: r.color, border: '2px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#374151' }}>
+              <div className="flex flex-col items-center w-8 shrink-0">
+                <div className={`w-7 h-7 rounded-full border-2 border-gray-200 flex items-center justify-center text-[11px] font-bold text-gray-700 ${r.bg}`}>
                   {i + 1}
                 </div>
                 {i < CALC_RULES.length - 1 && (
-                  <div style={{ width: 2, height: 20, background: '#e5e7eb', margin: '2px 0' }} />
+                  <div className="w-0.5 h-5 bg-gray-200 my-0.5" />
                 )}
               </div>
               {/* content */}
-              <div style={{ background: r.color, border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', marginLeft: 10, marginBottom: i < CALC_RULES.length - 1 ? 4 : 0, flex: 1 }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: '#1e293b' }}>{r.label}</span>
-                  <code style={{ fontSize: 12, color: '#374151', background: 'rgba(255,255,255,0.6)', padding: '1px 6px', borderRadius: 4 }}>{r.formula}</code>
+              <div className={`border border-gray-200 rounded-lg px-3.5 py-2 ml-2.5 flex-1 ${r.bg} ${i < CALC_RULES.length - 1 ? 'mb-1' : ''}`}>
+                <div className="flex gap-2 items-baseline flex-wrap">
+                  <span className="font-bold text-[13px] text-gray-800">{r.label}</span>
+                  <code className="text-xs text-gray-700 bg-white/60 px-1.5 py-0.5 rounded">{r.formula}</code>
                 </div>
                 {r.note && (
-                  <p style={{ fontSize: 11, color: '#92400e', margin: '4px 0 0', fontStyle: 'italic' }}>⚠️ {r.note}</p>
+                  <p className="text-[11px] text-amber-800 mt-1 italic">⚠️ {r.note}</p>
                 )}
               </div>
             </div>
           ))}
         </div>
-        <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 10 }}>
-          ใช้ใน: <code style={{ background: '#f1f5f9', padding: '1px 5px', borderRadius: 3 }}>src/utils/calculations.js → calcPlatformProfit()</code>
+        <p className="text-[11px] text-gray-400 mt-2.5">
+          ใช้ใน: <code className="bg-slate-100 px-1 py-0.5 rounded">src/utils/calculations.js → calcPlatformProfit()</code>
           {' · '}เรียกจาก DashboardPage, SalesHistoryPage, SalesEntryPage
         </p>
       </section>
 
       {/* Supabase Tables */}
-      <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 700, color: '#374151', marginBottom: 14, borderBottom: '2px solid #e5e7eb', paddingBottom: 8 }}>
+      <section className="mb-8">
+        <h2 className="text-[15px] font-bold text-gray-700 mb-3.5 border-b-2 border-gray-200 pb-2">
           🗄️ Supabase Tables
         </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
           {TABLES.map(t => (
-            <div key={t.name} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <code style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed' }}>{t.name}</code>
+            <div key={t.name} className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5">
+              <div className="flex items-center gap-2 mb-1">
+                <code className="text-xs font-bold text-purple-600">{t.name}</code>
               </div>
-              <p style={{ fontSize: 12, color: '#4b5563', margin: '0 0 6px' }}>{t.desc}</p>
-              <p style={{ fontSize: 10, color: '#94a3b8', margin: 0, fontFamily: 'monospace', lineHeight: 1.6 }}>{t.cols}</p>
+              <p className="text-xs text-gray-600 mb-1.5">{t.desc}</p>
+              <p className="text-[10px] text-gray-400 font-mono leading-relaxed">{t.cols}</p>
             </div>
           ))}
         </div>
       </section>
 
       {/* Data Flow Note */}
-      <section style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '16px 20px', marginBottom: 16 }}>
-        <h2 style={{ fontSize: 14, fontWeight: 700, color: '#374151', marginBottom: 10 }}>🔄 Data Flow หลัก</h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {[
-            { from: 'Cocoa POS (POSPage)', arrow: '→', to: 'orders + order_items', note: 'บันทึกออเดอร์ใหม่' },
-            { from: 'Cocoa POS (POSPage)', arrow: '→', to: 'platform_costs.menu_discount', note: 'sync discount รวมต่อ platform ต่อวัน (auto)' },
-            { from: 'SalesEntryPage', arrow: '→', to: 'platform_costs', note: 'กรอก net_sales, platform_fee, campaign, advert ฯลฯ' },
-            { from: 'SettingsPage', arrow: '→', to: 'settings', note: 'ตั้ง platform_fee_pct, labor_pct ที่ใช้คำนวณ GP' },
-            { from: 'Dashboard / History', arrow: '←', to: 'orders + order_items + platform_costs', note: 'อ่านข้อมูลเพื่อคำนวณ 5-Layer Profit' },
-            { from: 'LabelSettingsPage', arrow: '→', to: 'print-server (localhost TCP)', note: 'ส่ง ESC/POS command พิมพ์ฉลาก' },
-          ].map((f, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ background: '#e0f2fe', color: '#0369a1', fontSize: 11, padding: '3px 9px', borderRadius: 6, fontWeight: 600 }}>{f.from}</span>
-              <span style={{ color: '#6b7280', fontSize: 14, fontWeight: 700 }}>{f.arrow}</span>
-              <code style={{ background: '#f1f5f9', color: '#374151', fontSize: 11, padding: '3px 8px', borderRadius: 6 }}>{f.to}</code>
-              <span style={{ fontSize: 11, color: '#6b7280' }}>— {f.note}</span>
+      <section className="bg-slate-50 border border-slate-200 rounded-xl px-5 py-4 mb-4">
+        <h2 className="text-sm font-bold text-gray-700 mb-2.5">🔄 Data Flow หลัก</h2>
+        <div className="flex flex-col gap-2">
+          {DATA_FLOW.map((f, i) => (
+            <div key={i} className="flex items-center gap-2 flex-wrap">
+              <span className="bg-sky-100 text-sky-800 text-[11px] px-2.5 py-0.5 rounded font-semibold">{f.from}</span>
+              <span className="text-gray-500 text-sm font-bold">{f.arrow}</span>
+              <code className="bg-slate-100 text-gray-700 text-[11px] px-2 py-0.5 rounded">{f.to}</code>
+              <span className="text-[11px] text-gray-500">— {f.note}</span>
             </div>
           ))}
         </div>
       </section>
 
-      <p style={{ fontSize: 11, color: '#d1d5db', textAlign: 'right' }}>
+      <p className="text-[11px] text-gray-300 text-right">
         BSK coffee&bakery · System Architecture · อัปเดต {new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}
       </p>
     </div>
