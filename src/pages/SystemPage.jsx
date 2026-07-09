@@ -131,7 +131,7 @@ const APPS = [
   },
   {
     id: 'cocoa-pos',
-    label: 'Cocoa POS',
+    label: 'BSK POS',
     sublabel: 'cocoa-pos.vercel.app',
     theme: APP_THEME.green,
     pages: [
@@ -187,8 +187,8 @@ const MODE_STYLE = {
 const MODE_LABEL = { read: 'อ่าน', write: 'เขียน', readwrite: 'อ่าน/เขียน' }
 
 const DATA_FLOW = [
-  { from: 'Cocoa POS (POSPage)', arrow: '→', to: 'orders + order_items', note: 'บันทึกออเดอร์ใหม่' },
-  { from: 'Cocoa POS (POSPage)', arrow: '→', to: 'platform_costs.menu_discount', note: 'sync discount รวมต่อ platform ต่อวัน (auto)' },
+  { from: 'BSK POS (POSPage)', arrow: '→', to: 'orders + order_items', note: 'บันทึกออเดอร์ใหม่' },
+  { from: 'BSK POS (POSPage)', arrow: '→', to: 'platform_costs.menu_discount', note: 'sync discount รวมต่อ platform ต่อวัน (auto)' },
   { from: 'SalesEntryPage', arrow: '→', to: 'platform_costs', note: 'กรอก net_sales, platform_fee, campaign, advert ฯลฯ' },
   { from: 'SettingsPage', arrow: '→', to: 'settings', note: 'ตั้ง platform_fee_pct, labor_pct ที่ใช้คำนวณ GP' },
   { from: 'Dashboard / History', arrow: '←', to: 'orders + order_items + platform_costs', note: 'อ่านข้อมูลเพื่อคำนวณ 5-Layer Profit' },

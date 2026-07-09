@@ -445,14 +445,14 @@ function AppInner() {
           <LayoutDashboard size={16} />
           <span>BSK coffee&bakery</span>
         </button>
-        {/* Go to Cocoa LIFF */}
+        {/* Go to BSK LIFF */}
         <button
           onClick={() => setShowLiff(true)}
           className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-700 text-white hover:bg-green-600 transition-all text-sm font-semibold border border-green-500/40"
-          title="ไปที่ Cocoa LIFF"
+          title="ไปที่ BSK"
         >
           <Package size={16} />
-          <span>Cocoa LIFF</span>
+          <span>BSK</span>
         </button>
       </div>
 
@@ -472,7 +472,7 @@ function AppInner() {
       )}
       {showLiff && (
         <PasskeyModal
-          title="ไปที่ Cocoa LIFF"
+          title="ไปที่ BSK"
           onConfirm={() => { setShowLiff(false); window.open(LIFF_URL, '_blank') }}
           onClose={() => setShowLiff(false)}
         />

@@ -530,7 +530,7 @@ export default function SalesHistoryPage() {
                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${PLAT_BADGE[p] ?? 'bg-gray-100 text-gray-700'}`}>{p}</span>
                         <span className="text-xs text-gray-400">ยอดขาย {formatBaht(detail.sales ?? 0)}</span>
                       </div>
-                      {/* Order numbers from POS — กดเพื่อแก้ไขใน Cocoa POS */}
+                      {/* Order numbers from POS — กดเพื่อแก้ไขใน BSK POS */}
                       {(day.platformOrders?.[p] ?? []).length > 0 && (
                         <div className="space-y-1">
                           <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">หมายเลขออเดอร์ · กดเพื่อแก้ไข</p>

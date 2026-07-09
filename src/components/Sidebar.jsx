@@ -9,7 +9,7 @@ const PASSKEY   = '18879'
 const POS_URL  = 'https://cocoa-pos.vercel.app'
 const LIFF_URL = 'https://cocoa-liff.vercel.app'
 
-function PasskeyModal({ title = 'ไปที่ Cocoa POS', onConfirm, onClose }) {
+function PasskeyModal({ title = 'ไปที่ BSK POS', onConfirm, onClose }) {
   const [val, setVal]     = useState('')
   const [error, setError] = useState(false)
 
@@ -275,19 +275,19 @@ export default function Sidebar() {
       </nav>
 
       <div className="p-3 border-t border-cocoa-700 space-y-2">
-        {/* Go to Cocoa POS */}
+        {/* Go to BSK POS */}
         <button
           onClick={() => setShowPasskey(true)}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-cocoa-600 hover:bg-cocoa-500 text-white text-sm font-medium transition-colors"
         >
-          <Tablet size={15} /> Cocoa POS
+          <Tablet size={15} /> BSK POS
         </button>
-        {/* Go to Cocoa LIFF */}
+        {/* Go to BSK LIFF */}
         <button
           onClick={() => setShowLiff(true)}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-green-700 hover:bg-green-600 text-white text-sm font-medium transition-colors"
         >
-          <Package size={15} /> Cocoa LIFF
+          <Package size={15} /> BSK
         </button>
         <button
           onClick={() => setShowSignOutModal(true)}
@@ -303,14 +303,14 @@ export default function Sidebar() {
     {/* Passkey modal — outside aside to avoid event capture */}
     {showPasskey && (
       <PasskeyModal
-        title="ไปที่ Cocoa POS"
+        title="ไปที่ BSK POS"
         onConfirm={() => { setShowPasskey(false); window.open(POS_URL, '_blank') }}
         onClose={() => setShowPasskey(false)}
       />
     )}
     {showLiff && (
       <PasskeyModal
-        title="ไปที่ Cocoa LIFF"
+        title="ไปที่ BSK"
         onConfirm={() => { setShowLiff(false); window.open(LIFF_URL, '_blank') }}
         onClose={() => setShowLiff(false)}
       />
