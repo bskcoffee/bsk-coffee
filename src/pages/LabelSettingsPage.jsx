@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Save, Printer, RefreshCw, CheckCircle, Wifi,
   AlignLeft, AlignCenter, AlignRight,
   Coffee, Hash, Clock, Tag, Package, SlidersHorizontal,
-  FileText, Plus, X, Trash2, Calendar, Type, MessageSquare,
+  FileText, Plus, X, Trash2, Calendar, Type, MessageSquare, AlertTriangle,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../contexts/ToastContext'
@@ -24,6 +24,15 @@ const MOCK = {
       { groupId: 'mock-2', groupName: 'เพิ่มถุงพรุ่งนี้', choices: [{ id: 'c2', label: 'เพิ่มถุงพรุ่งนี้ ตราดัชมิลค์', qty: 2 }] },
     ],
   },
+  orderId: 'GF-012',
+  platform: 'GRAB',
+}
+
+// ตัวอย่างแบบเรียบง่าย (ไม่มีตัวเลือกเสริม) — ไว้เทียบกับกรณีเต็มด้านบน
+const MOCK_SIMPLE = {
+  name: 'Cocoa Latte',
+  qty: 1,
+  options: { milk: null, sweetness: 100, refill: false, note: '', packaging: 'แยกน้ำแข็ง', optionGroups: null },
   orderId: 'GF-012',
   platform: 'GRAB',
 }
@@ -112,10 +121,10 @@ const FIELD_ICON = {
 }
 
 // ─── Get preview content for each field type ─────────────────────────────────
-function getContent(field, storeName) {
-  const o = MOCK.options
+function getContent(field, storeName, mock = MOCK) {
+  const o = mock.options
   switch (field.type) {
-    case 'menu_name': return MOCK.name
+    case 'menu_name': return mock.name
     case 'options': {
       const opts = []
       if (o.milk)           opts.push(o.milk)
@@ -132,17 +141,55 @@ function getContent(field, storeName) {
       if (o.note) opts.push(o.note)
       return opts.join(' / ') || '–'
     }
-    case 'order_id':   return `#${MOCK.orderId}`
-    case 'qty':        return `×${MOCK.qty}`
+    case 'order_id':   return `#${mock.orderId}`
+    case 'qty':        return `×${mock.qty}`
     case 'time':       return new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
     case 'index':      return '1/3'
     case 'store_name': return storeName || 'BSK coffee&bakery'
-    case 'platform':   return MOCK.platform
+    case 'platform':   return mock.platform
     case 'date':       return new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
-    case 'note':       return MOCK.options.note ? `Note : ${MOCK.options.note}` : ''
+    case 'note':       return mock.options.note ? `Note : ${mock.options.note}` : ''
     case 'custom':     return field.text || '(ข้อความ)'
     default:           return ''
   }
+}
+
+// ─── ตรวจจับ field ที่ขึ้นบรรทัดใหม่แล้วอาจทับ field อื่นที่อยู่ด้านล่าง ──────────
+// (ใช้สูตรความกว้าง/บรรทัดเดียวกับ LabelCanvas ทุกอย่าง เพื่อให้คำเตือนตรงกับสิ่งที่เห็นจริง)
+function computeWrapOverlaps(layout, labelW, labelH, storeName, mock) {
+  const MM2DOT = 203 / 25.4
+  const wDot = labelW * MM2DOT
+  const hDot = labelH * MM2DOT
+  const visible = layout.filter(f => f.visible && f.type !== 'divider')
+
+  const infos = visible.map(field => {
+    const content = getContent(field, storeName, mock)
+    const { dh, dw } = tsplMeta(field.fontSize || 9)
+    const xBaseDot = (field.x / 100) * wDot
+    const margin = 4
+    const maxWidthDot = field.align === 'center'
+      ? Math.max(30, 2 * Math.min(xBaseDot, wDot - xBaseDot) - margin)
+      : field.align === 'right'
+        ? Math.max(30, xBaseDot - margin)
+        : Math.max(30, wDot - xBaseDot - margin)
+    const lines         = wrapPreviewLines(content, maxWidthDot, dw)
+    const lineHeightDot = dh + 3
+    const yStartDot = (field.y / 100) * hDot
+    const yEndDot   = yStartDot + (lines.length - 1) * lineHeightDot + dh
+    return { field, lines, yStartDot, yEndDot }
+  })
+
+  const warnings = {}
+  for (const info of infos) {
+    if (info.lines.length <= 1) continue // field เดิมบรรทัดเดียวไม่ทำให้เกิดปัญหาใหม่
+    const hits = infos.filter(other =>
+      other.field.id !== info.field.id &&
+      other.yStartDot > info.yStartDot &&
+      other.yStartDot < info.yEndDot
+    )
+    if (hits.length > 0) warnings[info.field.id] = hits.map(h => h.field.label)
+  }
+  return warnings
 }
 
 // ─── Ripple ───────────────────────────────────────────────────────────────────
@@ -203,7 +250,7 @@ function wrapPreviewLines(content, maxWidthDot, dw) {
 }
 
 // ─── Label Canvas (TSPL-accurate preview) ─────────────────────────────────────
-function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph, labelW, labelH }) {
+function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph, labelW, labelH, mock = MOCK }) {
   const canvasRef  = useRef(null)
   const draggingId = useRef(null)
   const offset     = useRef({ x: 0, y: 0 })
@@ -226,14 +273,18 @@ function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph, 
     return xDot * scaleX
   }, [wDot, scaleX])
 
-  const startDrag = useCallback((e, field) => {
+  // extraYPx = ระยะที่บรรทัดที่ถูกลาก (เมื่อ field ขึ้นหลายบรรทัด) เยื้องลงมาจาก field.y เดิม
+  // ป้องกัน field "กระโดด" เวลาลากจากบรรทัดที่ 2/3 แทนที่จะเป็นบรรทัดแรก
+  const startDrag = useCallback((e, field, extraYPx = 0) => {
     e.stopPropagation(); e.preventDefault()
     onSelect(field.id)
     const rect = canvasRef.current.getBoundingClientRect()
+    const clientX = e.touches?.[0]?.clientX ?? e.clientX
+    const clientY = e.touches?.[0]?.clientY ?? e.clientY
     // Anchor the drag on the field's x% point (same as onMove uses)
     offset.current = {
-      x: e.clientX - rect.left - (field.x / 100) * pw,
-      y: e.clientY - rect.top  - (field.y / 100) * ph,
+      x: clientX - rect.left - (field.x / 100) * pw,
+      y: clientY - rect.top  - (field.y / 100) * ph - extraYPx,
     }
     draggingId.current = field.id
   }, [onSelect, pw, ph])
@@ -242,21 +293,24 @@ function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph, 
     const move = (e) => {
       if (!draggingId.current || !canvasRef.current) return
       const rect = canvasRef.current.getBoundingClientRect()
-      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left - offset.current.x) / pw) * 100))
-      const y = Math.max(0, Math.min(95,  ((e.clientY - rect.top  - offset.current.y) / ph) * 100))
+      const clientX = e.touches?.[0]?.clientX ?? e.clientX
+      const clientY = e.touches?.[0]?.clientY ?? e.clientY
+      const x = Math.max(0, Math.min(100, ((clientX - rect.left - offset.current.x) / pw) * 100))
+      const y = Math.max(0, Math.min(95,  ((clientY - rect.top  - offset.current.y) / ph) * 100))
       onMove(draggingId.current, Math.round(x), Math.round(y))
     }
     const up = () => { draggingId.current = null }
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
-    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
+    // pointer events ครอบคลุมทั้งเมาส์และทัช (แท็บเล็ต/iPad) ในตัวเดียว
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
   }, [onMove, pw, ph])
 
   return (
     <div
       ref={canvasRef}
       className="relative bg-white rounded-lg shadow-md select-none mx-auto overflow-hidden"
-      style={{ width: pw, height: ph, fontFamily: 'monospace', border: '2px dashed #d1d5db' }}
+      style={{ width: pw, height: ph, fontFamily: 'monospace', border: '2px dashed #d1d5db', touchAction: 'none' }}
       onClick={() => onSelect(null)}
     >
       {layout.map(field => {
@@ -272,12 +326,12 @@ function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph, 
                 position: 'absolute', top: yPx, left: 4, right: 4,
                 borderTop: '1.5px solid #aaa', cursor: 'ns-resize', ...selStyle, outlineOffset: 3,
               }}
-              onMouseDown={e => startDrag(e, field)}
+              onPointerDown={e => startDrag(e, field)}
             />
           )
         }
 
-        const content = getContent(field, storeName)
+        const content = getContent(field, storeName, mock)
         const { dh, dw } = tsplMeta(field.fontSize || 9)
         const fontSizePx = Math.max(5, dh * scaleY)
         const yPx = (field.y / 100) * ph
@@ -296,18 +350,20 @@ function LabelCanvas({ layout, selectedId, onSelect, onMove, storeName, pw, ph, 
         const lineHeightDot = dh + 3
 
         return (
-          <div key={field.id} onMouseDown={e => startDrag(e, field)} title={field.label}>
+          <div key={field.id} title={field.label}>
             {lines.map((line, i) => {
               const xPx = fieldLeftPx(field, line)
+              const lineTopPx = i * lineHeightDot * scaleY
               return (
                 <div key={i}
+                  onPointerDown={e => startDrag(e, field, lineTopPx)}
                   style={{
                     position: 'absolute',
-                    left: xPx, top: yPx + i * lineHeightDot * scaleY,
+                    left: xPx, top: yPx + lineTopPx,
                     fontSize: fontSizePx,
                     fontWeight: field.bold ? 'bold' : 'normal',
                     lineHeight: 1, whiteSpace: 'nowrap',
-                    cursor: 'grab', padding: '0 1px',
+                    cursor: 'grab', padding: '0 1px', touchAction: 'none',
                     ...selStyle,
                   }}
                 >
@@ -361,11 +417,14 @@ function FieldProperties({ field, onUpdate, onDelete }) {
       {field.type !== 'divider' && (
         <div>
           <label className="label text-xs">ขนาด font</label>
-          <div className="flex gap-1 flex-wrap">
+          <div className="flex gap-1 flex-wrap items-end">
             {[7, 8, 9, 10, 11, 12, 14, 16, 18, 20].map(sz => (
               <button key={sz} onClick={() => onUpdate('fontSize', sz)}
-                className={`w-8 py-1 rounded text-xs font-medium border transition-colors
-                  ${field.fontSize === sz ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}>
+                aria-label={`ขนาด font ${sz}`}
+                aria-pressed={field.fontSize === sz}
+                className={`w-8 py-1 rounded font-medium border transition-colors
+                  ${field.fontSize === sz ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}
+                style={{ fontSize: Math.min(15, 9 + sz / 4) }}>
                 {sz}
               </button>
             ))}
@@ -379,6 +438,7 @@ function FieldProperties({ field, onUpdate, onDelete }) {
           <div>
             <label className="label text-xs">สไตล์</label>
             <button onClick={() => onUpdate('bold', !field.bold)}
+              aria-label="ตัวหนา" aria-pressed={!!field.bold}
               className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-colors
                 ${field.bold ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}>
               B
@@ -387,8 +447,9 @@ function FieldProperties({ field, onUpdate, onDelete }) {
           <div>
             <label className="label text-xs">จัดตำแหน่ง</label>
             <div className="flex gap-1">
-              {[['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight]].map(([val, Icon]) => (
+              {[['left', AlignLeft, 'ชิดซ้าย'], ['center', AlignCenter, 'กึ่งกลาง'], ['right', AlignRight, 'ชิดขวา']].map(([val, Icon, labelTh]) => (
                 <button key={val} onClick={() => onUpdate('align', val)}
+                  aria-label={`จัดตำแหน่ง ${labelTh}`} aria-pressed={field.align === val}
                   className={`p-1.5 rounded-lg border transition-colors
                     ${field.align === val ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200 hover:border-cocoa-300'}`}>
                   <Icon size={13} />
@@ -441,8 +502,17 @@ export default function LabelSettingsPage() {
   const [testStatus, setTestStatus] = useState('idle')
   const [loading,    setLoading]    = useState(true)
   const [activePreset,setActivePreset] = useState(null)
+  const [previewVariant, setPreviewVariant] = useState('full') // 'full' | 'simple'
   const saveRipple = useRipple()
   const testRipple = useRipple()
+
+  const activeMock = previewVariant === 'simple' ? MOCK_SIMPLE : MOCK
+
+  // field ไหนขึ้นหลายบรรทัดแล้วอาจไปทับ field อื่นด้านล่าง — เตือนไว้ในลิสต์ด้านซ้าย
+  const wrapWarnings = useMemo(
+    () => computeWrapOverlaps(layout, labelW, labelH, storeName, activeMock),
+    [layout, labelW, labelH, storeName, activeMock]
+  )
 
   // ── Load ────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -647,11 +717,16 @@ export default function LabelSettingsPage() {
                       ${isSel ? 'bg-blue-50 border border-blue-200' : 'hover:bg-gray-50 border border-transparent'}`}
                     aria-pressed={isSel}
                     onClick={() => { toggleField(field.id); setSelectedId(field.id) }}>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       {Icon && <Icon size={12} className={field.visible ? 'text-cocoa-600' : 'text-gray-300'} />}
                       <span className={`text-xs font-medium ${field.visible ? 'text-gray-800' : 'text-gray-400'}`}>
                         {field.label}
                       </span>
+                      {wrapWarnings[field.id] && (
+                        <span title={`ข้อความยาวจนขึ้นหลายบรรทัด อาจทับ ${wrapWarnings[field.id].join(', ')}`}>
+                          <AlertTriangle size={11} className="text-amber-500 shrink-0" />
+                        </span>
+                      )}
                     </div>
                     <Toggle on={field.visible} />
                   </button>
@@ -763,8 +838,18 @@ export default function LabelSettingsPage() {
         {/* Right: Canvas + Properties */}
         <div className="lg:col-span-3 space-y-4">
           <div className="card space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="font-semibold text-gray-800">👁️ Preview — {labelW}×{labelH} mm</h2>
+              <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                {[['full', 'ตัวอย่างเต็ม'], ['simple', 'ตัวอย่างเรียบง่าย']].map(([val, label]) => (
+                  <button key={val} onClick={() => setPreviewVariant(val)}
+                    aria-pressed={previewVariant === val}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+                      ${previewVariant === val ? 'bg-white text-cocoa-700 shadow-sm' : 'text-gray-500'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <LabelCanvas
@@ -777,6 +862,7 @@ export default function LabelSettingsPage() {
               ph={previewH}
               labelW={labelW}
               labelH={labelH}
+              mock={activeMock}
             />
 
             <p className="text-center text-xs text-gray-400">ลากเพื่อย้ายตำแหน่ง · คลิก field เพื่อแก้ไข</p>
