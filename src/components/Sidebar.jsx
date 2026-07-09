@@ -25,8 +25,9 @@ function PasskeyModal({ title = 'ไปที่ Cocoa POS', onConfirm, onClose 
           <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X size={18} /></button>
         </div>
         <div>
-          <label className="text-sm text-gray-600 mb-1.5 block">กรอก Passkey</label>
+          <label htmlFor="sidebar-passkey" className="text-sm text-gray-600 mb-1.5 block">กรอก Passkey</label>
           <input
+            id="sidebar-passkey"
             type="password"
             inputMode="numeric"
             value={val}

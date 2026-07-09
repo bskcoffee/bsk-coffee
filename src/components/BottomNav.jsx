@@ -178,8 +178,9 @@ export default function BottomNav() {
               </button>
             </div>
             <div>
-              <label className="text-sm text-gray-600 mb-1.5 block">กรอก Passkey</label>
+              <label htmlFor="bottomnav-passkey" className="text-sm text-gray-600 mb-1.5 block">กรอก Passkey</label>
               <input
+                id="bottomnav-passkey"
                 type="password"
                 inputMode="numeric"
                 value={passkeyVal}
