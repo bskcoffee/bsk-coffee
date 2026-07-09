@@ -581,9 +581,11 @@ export default function LabelSettingsPage() {
                 const Icon = FIELD_ICON[field.type]
                 const isSel = selectedId === field.id
                 return (
-                  <div key={field.id}
-                    className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors
+                  <button key={field.id}
+                    type="button"
+                    className={`w-full flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-left
                       ${isSel ? 'bg-blue-50 border border-blue-200' : 'hover:bg-gray-50 border border-transparent'}`}
+                    aria-pressed={isSel}
                     onClick={() => { toggleField(field.id); setSelectedId(field.id) }}>
                     <div className="flex items-center gap-2">
                       {Icon && <Icon size={12} className={field.visible ? 'text-cocoa-600' : 'text-gray-300'} />}
@@ -592,7 +594,7 @@ export default function LabelSettingsPage() {
                       </span>
                     </div>
                     <Toggle on={field.visible} />
-                  </div>
+                  </button>
                 )
               })}
             </div>
@@ -602,17 +604,21 @@ export default function LabelSettingsPage() {
               <div className="border-t border-gray-100 pt-2 space-y-0.5">
                 {customFields.map(field => (
                   <div key={field.id}
-                    className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors
-                      ${selectedId === field.id ? 'bg-blue-50 border border-blue-200' : 'hover:bg-gray-50 border border-transparent'}`}
-                    onClick={() => setSelectedId(field.id)}>
-                    <div className="flex items-center gap-2">
+                    className={`flex items-center justify-between p-2 rounded-lg transition-colors
+                      ${selectedId === field.id ? 'bg-blue-50 border border-blue-200' : 'hover:bg-gray-50 border border-transparent'}`}>
+                    <button
+                      type="button"
+                      className="flex-1 flex items-center gap-2 text-left cursor-pointer"
+                      aria-pressed={selectedId === field.id}
+                      onClick={() => setSelectedId(field.id)}>
                       <FileText size={12} className="text-gray-400" />
                       <span className="text-xs font-medium text-gray-700 truncate max-w-[120px]">
                         {field.text || '(ว่าง)'}
                       </span>
-                    </div>
+                    </button>
                     <button onClick={e => { e.stopPropagation(); setLayout(prev => prev.filter(f => f.id !== field.id)); if (selectedId === field.id) setSelectedId(null) }}
-                      className="text-gray-300 hover:text-red-400 transition-colors">
+                      aria-label={`ลบ ${field.text || 'ข้อความกำหนดเอง'}`}
+                      className="text-gray-300 hover:text-red-400 transition-colors shrink-0 pl-2">
                       <X size={12} />
                     </button>
                   </div>
