@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network, Brain, ChevronUp, ChevronDown, Lock } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Network, Brain, ChevronUp, ChevronDown, Lock } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions, canAccessAdminPage } from '../contexts/PermissionsContext'
 import { supabase } from '../lib/supabase'
@@ -8,7 +8,6 @@ import ConfirmModal from './ConfirmModal'
 
 const PASSKEY   = '18879'
 const POS_URL  = 'https://bsk-pos.vercel.app'
-const LIFF_URL = 'https://cocoa-liff.vercel.app'
 
 function PasskeyModal({ title = 'ไปที่ BSK POS', onConfirm, onClose }) {
   const [val, setVal]     = useState('')
@@ -109,7 +108,6 @@ export default function Sidebar() {
   const [dragOver, setDragOver] = useState(null)
   const [showSignOutModal, setShowSignOutModal] = useState(false)
   const [showPasskey, setShowPasskey]           = useState(false)
-  const [showLiff, setShowLiff]                 = useState(false)
 
   // Fetch nav order from Supabase on mount — syncs across all devices
   useEffect(() => {
@@ -318,13 +316,6 @@ export default function Sidebar() {
         >
           <Tablet size={15} /> BSK POS
         </button>
-        {/* Go to BSK LIFF */}
-        <button
-          onClick={() => setShowLiff(true)}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-green-700 hover:bg-green-600 text-white text-sm font-medium transition-colors"
-        >
-          <Package size={15} /> BSK
-        </button>
         <button
           onClick={() => setShowSignOutModal(true)}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
@@ -342,13 +333,6 @@ export default function Sidebar() {
         title="ไปที่ BSK POS"
         onConfirm={() => { setShowPasskey(false); window.open(POS_URL, '_blank') }}
         onClose={() => setShowPasskey(false)}
-      />
-    )}
-    {showLiff && (
-      <PasskeyModal
-        title="ไปที่ BSK"
-        onConfirm={() => { setShowLiff(false); window.open(LIFF_URL, '_blank') }}
-        onClose={() => setShowLiff(false)}
       />
     )}
 
