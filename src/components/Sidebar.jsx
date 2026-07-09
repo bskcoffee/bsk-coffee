@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network, Brain } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network, Brain, ChevronUp, ChevronDown } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
@@ -165,6 +165,28 @@ export default function Sidebar() {
     overIdx.current = null
   }
 
+  // Keyboard-accessible alternative to drag-and-drop: move item up/down
+  // among the currently visible items, persisting the same way as drop.
+  const moveItem = async (to, direction) => {
+    const visibleTos = visibleItems.map(i => i.to)
+    const pos       = visibleTos.indexOf(to)
+    const targetPos = pos + direction
+    if (pos === -1 || targetPos < 0 || targetPos >= visibleTos.length) return
+    const neighborTo = visibleTos[targetPos]
+
+    const reordered  = [...items]
+    const fromIdx     = reordered.findIndex(i => i.to === to)
+    const neighborIdx = reordered.findIndex(i => i.to === neighborTo)
+    ;[reordered[fromIdx], reordered[neighborIdx]] = [reordered[neighborIdx], reordered[fromIdx]]
+    setItems(reordered)
+
+    const orderJson = JSON.stringify(reordered.map(n => n.to))
+    try { localStorage.setItem(STORAGE_KEY, orderJson) } catch {}
+    await supabase
+      .from('settings')
+      .upsert({ key: 'nav_order', value: orderJson }, { onConflict: 'key' })
+  }
+
   return (
     <>
     <aside className="hidden md:flex flex-col w-56 bg-cocoa-800 text-white shrink-0">
@@ -215,7 +237,30 @@ export default function Sidebar() {
               >
                 <GripVertical size={14} className="shrink-0 text-cocoa-500 group-hover:text-cocoa-300 transition-colors" aria-hidden="true" />
                 <Icon size={16} className="shrink-0" />
-                <span className="truncate">{label}</span>
+                <span className="truncate flex-1">{label}</span>
+                {/* Keyboard-accessible reorder alternative to drag-and-drop */}
+                <span className="hidden group-hover:flex group-focus-within:flex shrink-0 flex-col -my-1">
+                  <button
+                    type="button"
+                    draggable={false}
+                    onClick={e => { e.preventDefault(); e.stopPropagation(); moveItem(to, -1) }}
+                    disabled={idx === 0}
+                    aria-label={`ย้าย ${label} ขึ้น`}
+                    className="p-0.5 rounded text-cocoa-300 hover:text-white hover:bg-cocoa-600 disabled:opacity-30 disabled:pointer-events-none"
+                  >
+                    <ChevronUp size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    draggable={false}
+                    onClick={e => { e.preventDefault(); e.stopPropagation(); moveItem(to, 1) }}
+                    disabled={idx === visibleItems.length - 1}
+                    aria-label={`ย้าย ${label} ลง`}
+                    className="p-0.5 rounded text-cocoa-300 hover:text-white hover:bg-cocoa-600 disabled:opacity-30 disabled:pointer-events-none"
+                  >
+                    <ChevronDown size={12} />
+                  </button>
+                </span>
               </NavLink>
             </div>
           )

@@ -7,7 +7,7 @@ import {
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend
 } from 'recharts'
-import { TrendingUp, TrendingDown, AlertTriangle, Calendar, ChevronDown, Star, Pencil, Target, GripVertical } from 'lucide-react'
+import { TrendingUp, TrendingDown, AlertTriangle, Calendar, ChevronDown, ChevronUp, Star, Pencil, Target, GripVertical } from 'lucide-react'
 import { format, subDays, startOfMonth, endOfMonth, subMonths, startOfYear, endOfYear, subYears, parseISO, startOfISOWeek, endOfISOWeek, subWeeks, getISOWeek, getISOWeekYear } from 'date-fns'
 import { th } from 'date-fns/locale'
 
@@ -122,6 +122,18 @@ const DEFAULT_SECTION_ORDER = [
 
 const DEFAULT_KPI_ORDER = ['total-sales', 'mat-cost', 'platform-cost', 'profit-before-mat', 'net-profit', 'days']
 
+const SECTION_LABELS = {
+  'category-summary': 'สรุปยอดตามประเภท',
+  'cost-breakdown':   'Cost Breakdown',
+  'sales-target':     'เป้าหมายยอดขาย',
+  'alerts':           'แจ้งเตือน',
+  'chart':            'กราฟ',
+  'platform':         'แพลตฟอร์ม',
+  'advertisement':    'โฆษณา',
+  'top-menus':        'เมนูขายดี',
+  'best-worst':       'วันดีที่สุด/แย่ที่สุด',
+}
+
 const DEFAULT_COST_CONFIG = {
   categories: [
     { id: 'cat-1', label: 'Cost Breakdown' },
@@ -138,7 +150,34 @@ const DEFAULT_COST_CONFIG = {
   ],
 }
 
-function DraggableSection({ id, dragOverId, onDragStart, onDragOver, onDrop, onDragEnd, children }) {
+function ReorderButtons({ onMoveUp, onMoveDown, canMoveUp, canMoveDown, label, className = '' }) {
+  return (
+    <div className={`flex flex-col opacity-0 group-hover/drag:opacity-100 group-hover/kpi:opacity-100 group-focus-within:opacity-100 transition-opacity ${className}`}>
+      <button
+        type="button"
+        draggable={false}
+        onClick={e => { e.preventDefault(); e.stopPropagation(); onMoveUp() }}
+        disabled={!canMoveUp}
+        aria-label={`ย้าย ${label} ขึ้น`}
+        className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
+      >
+        <ChevronUp size={13} />
+      </button>
+      <button
+        type="button"
+        draggable={false}
+        onClick={e => { e.preventDefault(); e.stopPropagation(); onMoveDown() }}
+        disabled={!canMoveDown}
+        aria-label={`ย้าย ${label} ลง`}
+        className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
+      >
+        <ChevronDown size={13} />
+      </button>
+    </div>
+  )
+}
+
+function DraggableSection({ id, label, dragOverId, onDragStart, onDragOver, onDrop, onDragEnd, onMoveUp, onMoveDown, canMoveUp, canMoveDown, children }) {
   const isDragTarget = dragOverId === id
   return (
     <div
@@ -149,8 +188,13 @@ function DraggableSection({ id, dragOverId, onDragStart, onDragOver, onDrop, onD
       onDragEnd={onDragEnd}
       className={`relative group/drag transition-opacity ${isDragTarget ? 'opacity-40' : ''}`}
     >
-      <div className="absolute top-3 right-3 z-10 cursor-grab active:cursor-grabbing p-1 rounded-lg opacity-0 group-hover/drag:opacity-100 transition-opacity bg-white/80 text-gray-400 hover:text-gray-600">
-        <GripVertical size={15} />
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-1 bg-white/80 rounded-lg">
+        {onMoveUp && onMoveDown && (
+          <ReorderButtons onMoveUp={onMoveUp} onMoveDown={onMoveDown} canMoveUp={canMoveUp} canMoveDown={canMoveDown} label={label ?? 'ส่วนนี้'} />
+        )}
+        <div className="cursor-grab active:cursor-grabbing p-1 rounded-lg opacity-0 group-hover/drag:opacity-100 transition-opacity text-gray-400 hover:text-gray-600">
+          <GripVertical size={15} />
+        </div>
       </div>
       {children}
     </div>
@@ -170,8 +214,13 @@ function KpiCard({ title, value, sub, change, positive, dragProps }) {
       onDragEnd={dragProps?.onDragEnd}
       className={`card relative group/kpi cursor-grab active:cursor-grabbing transition-opacity select-none ${isDragTarget ? 'opacity-40 ring-2 ring-cocoa-400' : ''}`}
     >
-      <div className="absolute top-2 right-2 opacity-0 group-hover/kpi:opacity-100 transition-opacity text-gray-300">
-        <GripVertical size={14} />
+      <div className="absolute top-2 right-2 flex items-center gap-0.5 text-gray-300">
+        {dragProps?.onMoveUp && dragProps?.onMoveDown && (
+          <ReorderButtons onMoveUp={dragProps.onMoveUp} onMoveDown={dragProps.onMoveDown} canMoveUp={dragProps.canMoveUp} canMoveDown={dragProps.canMoveDown} label={title} />
+        )}
+        <div className="opacity-0 group-hover/kpi:opacity-100 transition-opacity">
+          <GripVertical size={14} />
+        </div>
       </div>
       <p className="text-xs text-gray-500 mb-1 pr-4">{title}</p>
       <p className={`text-2xl font-bold ${positive === false ? 'text-red-600' : 'text-gray-900'}`}>{value}</p>
@@ -290,6 +339,21 @@ export default function DashboardPage() {
   }
   const handleKpiDragEnd = () => { setKpiDragOver(null); kpiDragItem.current = null }
 
+  // Keyboard-accessible alternative to drag-and-drop for KPI cards
+  const moveKpi = (id, direction) => {
+    setKpiOrder(prev => {
+      const idx = prev.indexOf(id)
+      const newIdx = idx + direction
+      if (idx === -1 || newIdx < 0 || newIdx >= prev.length) return prev
+      const next = [...prev]
+      ;[next[idx], next[newIdx]] = [next[newIdx], next[idx]]
+      const json = JSON.stringify(next)
+      localStorage.setItem('dashboard-kpi-order', json)
+      setSetting('dash_kpi_order', json)
+      return next
+    })
+  }
+
   // Drag-and-drop section ordering (persisted in localStorage)
   const [sectionOrder, setSectionOrder] = useState(() => {
     try {
@@ -326,6 +390,21 @@ export default function DashboardPage() {
     dragItemId.current = null
   }
   const handleDragEnd = () => { setDragOverId(null); dragItemId.current = null }
+
+  // Keyboard-accessible alternative to drag-and-drop for sections
+  const moveSection = (id, direction) => {
+    setSectionOrder(prev => {
+      const idx = prev.indexOf(id)
+      const newIdx = idx + direction
+      if (idx === -1 || newIdx < 0 || newIdx >= prev.length) return prev
+      const next = [...prev]
+      ;[next[idx], next[newIdx]] = [next[newIdx], next[idx]]
+      const json = JSON.stringify(next)
+      localStorage.setItem('dashboard-section-order', json)
+      setSetting('dash_section_order', json)
+      return next
+    })
+  }
 
   // Drag-and-drop category boxes within category-summary section
   const DEFAULT_CAT_BOX_ORDER = ['bev', 'bread', 'refill', 'addon']
@@ -928,10 +1007,13 @@ export default function DashboardPage() {
           {/* KPI Cards — draggable */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             {kpiOrder.map(kpiId => {
+              const kpiIdx = kpiOrder.indexOf(kpiId)
               const dp = {
                 id: kpiId, dragOverId: kpiDragOver,
                 onDragStart: handleKpiDragStart, onDragOver: handleKpiDragOver,
                 onDrop: handleKpiDrop, onDragEnd: handleKpiDragEnd,
+                onMoveUp: () => moveKpi(kpiId, -1), onMoveDown: () => moveKpi(kpiId, 1),
+                canMoveUp: kpiIdx > 0, canMoveDown: kpiIdx < kpiOrder.length - 1,
               }
               if (kpiId === 'total-sales') return (
                 <KpiCard key={kpiId} title="ยอดขายรวม" value={formatBaht(aggregated.totalSales)}
@@ -977,9 +1059,11 @@ export default function DashboardPage() {
           <div className="space-y-4">
             {sectionOrder.map(sectionId => {
               const dragProps = {
-                id: sectionId, dragOverId,
+                id: sectionId, label: SECTION_LABELS[sectionId] ?? sectionId, dragOverId,
                 onDragStart: handleDragStart, onDragOver: handleDragOver,
                 onDrop: handleDrop, onDragEnd: handleDragEnd,
+                onMoveUp: () => moveSection(sectionId, -1), onMoveDown: () => moveSection(sectionId, 1),
+                canMoveUp: sectionOrder.indexOf(sectionId) > 0, canMoveDown: sectionOrder.indexOf(sectionId) < sectionOrder.length - 1,
               }
 
               if (sectionId === 'category-summary') {
