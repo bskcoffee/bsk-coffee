@@ -9,6 +9,7 @@ import {
   LayoutGrid, Save,
 } from 'lucide-react'
 import MenuOptionModal from '../components/MenuOptionModal'
+import { useToast } from '../contexts/ToastContext'
 
 // ── Constants ─────────────────────────────────────────────────
 const PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
@@ -76,6 +77,7 @@ function useDragSort() {
 // ══════════════════════════════════════════════════════════════
 export default function POSPage({ onDateChange }) {
   const { signOut } = useAuth()
+  const { addToast } = useToast()
 
   // ── Remote data ──
   const [menus,        setMenus]        = useState([])
@@ -221,9 +223,12 @@ export default function POSPage({ onDateChange }) {
           if (names.length > 0) setPlatforms(names)
         } catch {}
       }
-    } catch (err) { console.error(err) }
+    } catch (err) {
+      console.error(err)
+      addToast('โหลดข้อมูลเมนูไม่สำเร็จ: ' + err.message, 'error')
+    }
     setLoading(false)
-  }, [])
+  }, [addToast])
 
   const _buildDefaultCatOrder = (mainMenus) => {
     const cats = [...new Set(mainMenus.map(m => m.category).filter(Boolean))]
@@ -290,6 +295,7 @@ export default function POSPage({ onDateChange }) {
     } catch (err) {
       console.error(err)
       setLayoutSaveErr(err.message)
+      addToast('บันทึกลำดับไม่สำเร็จ: ' + err.message, 'error')
     }
     setSavingLayout(false)
   }
@@ -328,6 +334,7 @@ export default function POSPage({ onDateChange }) {
     } catch (err) {
       console.error(err)
       setLayoutSaveErr(err.message)
+      addToast('บันทึกลำดับไม่สำเร็จ: ' + err.message, 'error')
     }
     setSavingLayout(false)
   }
@@ -595,9 +602,12 @@ export default function POSPage({ onDateChange }) {
       for (const item of items ?? []) { if (!byOrder[item.order_id]) byOrder[item.order_id] = []; byOrder[item.order_id].push(item) }
       setTodayOrders(orders.map(o => ({ ...o, items: byOrder[o.id] ?? [],
         total: (byOrder[o.id] ?? []).reduce((s, i) => s + i.quantity * i.unit_price, 0) })))
-    } catch (err) { console.error(err) }
+    } catch (err) {
+      console.error(err)
+      addToast('โหลดออเดอร์วันนี้ไม่สำเร็จ: ' + err.message, 'error')
+    }
     setLoadingOrders(false)
-  }, [])
+  }, [addToast])
 
   useEffect(() => { if (showOrders) loadTodayOrders() }, [showOrders, loadTodayOrders])
 
@@ -608,7 +618,10 @@ export default function POSPage({ onDateChange }) {
       await supabase.from('order_items').delete().eq('order_id', orderId)
       await supabase.from('orders').delete().eq('id', orderId)
       await loadTodayOrders()
-    } catch (err) { console.error(err) }
+    } catch (err) {
+      console.error(err)
+      addToast('ลบออเดอร์ไม่สำเร็จ: ' + err.message, 'error')
+    }
     setDeletingId(null)
   }
 

@@ -4,6 +4,7 @@ import { exportMonthlyExcel } from '../utils/exportExcel'
 import { calcPlatformProfit, formatBaht } from '../utils/calculations'
 import { Download, Loader2, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
+import { useToast } from '../contexts/ToastContext'
 
 const THAI_MONTHS = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม']
 const PLATFORMS   = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
@@ -22,6 +23,7 @@ function thaiMonthLabel(monthStr) {
 }
 
 export default function ReportsPage() {
+  const { addToast } = useToast()
   const [month, setMonth]       = useState(format(new Date(), 'yyyy-MM'))
   const [loading, setLoading]   = useState(false)
   const [previewing, setPreviewing] = useState(false)
@@ -115,6 +117,7 @@ export default function ReportsPage() {
     } catch (err) {
       console.error(err)
       setPreview(null)
+      addToast('โหลดข้อมูลสรุปไม่สำเร็จ: ' + err.message, 'error')
     }
     setPreviewing(false)
   }

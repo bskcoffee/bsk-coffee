@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { format } from 'date-fns'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { ToastProvider } from './contexts/ToastContext'
 import LoginPage       from './pages/LoginPage'
 import POSPage         from './pages/POSPage'
 import OrderManagePage from './pages/OrderManagePage'
@@ -497,7 +498,9 @@ function AppInner() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppInner />
+      <ToastProvider>
+        <AppInner />
+      </ToastProvider>
     </AuthProvider>
   )
 }

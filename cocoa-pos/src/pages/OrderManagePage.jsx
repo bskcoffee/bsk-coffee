@@ -8,6 +8,7 @@ import {
   Search, CalendarDays, Trash2, SlidersHorizontal, Printer,
 } from 'lucide-react'
 import MenuOptionModal from '../components/MenuOptionModal'
+import { useToast } from '../contexts/ToastContext'
 
 // ── Status config ──────────────────────────────────────────────
 const STATUSES = [
@@ -55,6 +56,7 @@ const fmt   = n => new Intl.NumberFormat('th-TH', { style: 'currency', currency:
 
 // ══════════════════════════════════════════════════════════════
 export default function OrderManagePage({ initialDate = null, highlightRef = null, onAddLog }) {
+  const { addToast } = useToast()
   const [date,         setDate]         = useState(initialDate ?? today())
   const [orders,       setOrders]       = useState([])
   const [menus,        setMenus]        = useState([])
@@ -187,12 +189,15 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
         total: (byOrder[o.id] ?? []).reduce((s, i) => s + i.quantity * i.unit_price, 0) - (o.discount ?? 0),
         itemCount: (byOrder[o.id] ?? []).reduce((s, i) => s + i.quantity, 0),
       })))
-    } catch (err) { console.error(err) }
+    } catch (err) {
+      console.error(err)
+      addToast('โหลดออเดอร์ไม่สำเร็จ: ' + err.message, 'error')
+    }
     finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [date])
+  }, [date, addToast])
 
   useEffect(() => { loadOrders() }, [loadOrders])
 
@@ -204,7 +209,10 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
       setOrders(prev => prev.map(o =>
         o.id === order.id ? { ...o, status: newStatus } : o
       ))
-    } catch (err) { console.error(err) }
+    } catch (err) {
+      console.error(err)
+      addToast('อัปเดตสถานะไม่สำเร็จ: ' + err.message, 'error')
+    }
     setUpdatingId(null)
   }
 
@@ -264,7 +272,10 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
 
       cancelEdit()
       await loadOrders(true)
-    } catch (err) { console.error(err) }
+    } catch (err) {
+      console.error(err)
+      addToast('บันทึกการแก้ไขไม่สำเร็จ: ' + err.message, 'error')
+    }
     setSavingId(null)
   }
 
@@ -277,7 +288,10 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
       await supabase.from('orders').delete().eq('id', deleteTarget.id)
       setOrders(prev => prev.filter(o => o.id !== deleteTarget.id))
       if (expandedId === deleteTarget.id) setExpandedId(null)
-    } catch (err) { console.error(err) }
+    } catch (err) {
+      console.error(err)
+      addToast('ลบออเดอร์ไม่สำเร็จ: ' + err.message, 'error')
+    }
     setDeleting(false)
     setDeleteTarget(null)
   }
