@@ -4,6 +4,7 @@ import { supabase, updateMenuCost, getMenuCostHistory, getCostSchema } from '../
 import { calcMenuCostBreakdown, buildDynamicLookups, formatBaht, formatPct } from '../utils/calculations'
 import { Calculator, X, Save, History, ChevronRight, AlertTriangle, Settings2, Info } from 'lucide-react'
 import ConfirmModal from '../components/ConfirmModal'
+import { useToast } from '../contexts/ToastContext'
 
 const PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
 const DELIVERY_PLATS = ['GRAB', 'LINE', 'SHOPEE']
@@ -65,6 +66,7 @@ function ProfitBadge({ pct }) {
 // ─── Cost Editor Modal ───────────────────────────────────────
 
 function CostEditorModal({ menu, costSettings, costSchema, platformFees, onClose, onSave }) {
+  const { addToast } = useToast()
   const [form, setForm] = useState({
     main_ingredient: 0,
     milk_condensed:  0,
@@ -149,24 +151,30 @@ function CostEditorModal({ menu, costSettings, costSchema, platformFees, onClose
 
   const handleSave = async () => {
     setSaving(true)
-    await updateMenuCost(menu.id, form)
+    try {
+      const { error: costErr } = await updateMenuCost(menu.id, form)
+      if (costErr) throw costErr
 
-    // Sync gp_cost field on menu for backward compat (use GRAB price)
-    const grabPrice = (() => {
-      const prices = {}
-      for (const p of menu.menu_prices ?? []) {
-        if (!p.effective_to) prices[p.platform] = p.price
+      // Sync gp_cost field on menu for backward compat (use GRAB price)
+      const grabPrice = (() => {
+        const prices = {}
+        for (const p of menu.menu_prices ?? []) {
+          if (!p.effective_to) prices[p.platform] = p.price
+        }
+        return Number(prices['GRAB'] ?? 0)
+      })()
+      const grabBd = calcMenuCostBreakdown(form, costSettings, grabPrice, 0, costSchema)
+      if (grabBd) {
+        const { error } = await supabase.from('menus').update({ gp_cost: grabBd.gpCost }).eq('id', menu.id)
+        if (error) throw error
       }
-      return Number(prices['GRAB'] ?? 0)
-    })()
-    const grabBd = calcMenuCostBreakdown(form, costSettings, grabPrice, 0, costSchema)
-    if (grabBd) {
-      await supabase.from('menus').update({ gp_cost: grabBd.gpCost }).eq('id', menu.id)
-    }
 
+      onSave()
+      onClose()
+    } catch (err) {
+      addToast('บันทึกต้นทุนไม่สำเร็จ: ' + err.message, 'error')
+    }
     setSaving(false)
-    onSave()
-    onClose()
   }
 
   if (loadingCost) {
@@ -893,7 +901,7 @@ export default function MenuCostPage() {
                       )}
                     </div>
 
-                    <ChevronRight size={18} className="text-gray-300 group-hover:text-gray-400 shrink-0 transition-colors mt-1" />
+                    <ChevronRight size={18} className="text-gray-300 group-hover:text-gray-400 shrink-0 transition-colors mt-1" />
                   </button>
                 )
               })}

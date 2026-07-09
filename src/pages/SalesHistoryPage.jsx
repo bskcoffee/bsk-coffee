@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { getCostSchema } from '../lib/supabase'
+import { useToast } from '../contexts/ToastContext'
 import { calcPlatformProfit, calcMenuCostBreakdown, formatBaht, CAMPAIGN_GP_PCT } from '../utils/calculations'
 import { format, startOfMonth, endOfMonth, parseISO, addMonths, subMonths } from 'date-fns'
 import { th } from 'date-fns/locale'
@@ -48,6 +49,7 @@ const tsKey = (date, platform) => `${date}|${platform}`
 
 export default function SalesHistoryPage() {
   const navigate = useNavigate()
+  const { addToast } = useToast()
   const [month, setMonth]             = useState(format(new Date(), 'yyyy-MM'))
   const [loading, setLoading]         = useState(true)
   const [dayData, setDayData]         = useState([])
@@ -257,10 +259,10 @@ export default function SalesHistoryPage() {
 
       setDayData(result)
     } catch (err) {
-      console.error(err)
+      addToast('โหลดข้อมูลประวัติยอดขายไม่สำเร็จ: ' + err.message, 'error')
     }
     setLoading(false)
-  }, [month])
+  }, [month, addToast])
 
   useEffect(() => { loadData() }, [loadData])
 
