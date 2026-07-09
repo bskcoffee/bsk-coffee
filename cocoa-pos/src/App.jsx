@@ -7,7 +7,7 @@ import POSPage         from './pages/POSPage'
 import OrderManagePage from './pages/OrderManagePage'
 import MenuOptionModal from './components/MenuOptionModal'
 import { supabase, getSetting } from './lib/supabase'
-import { ShoppingCart, ClipboardList, LayoutDashboard, X, Printer, Search, Loader2, ChevronRight, ScrollText, Lock } from 'lucide-react'
+import { ShoppingCart, ClipboardList, LayoutDashboard, X, Printer, Search, Loader2, ChevronRight, ScrollText, Lock, LogOut } from 'lucide-react'
 
 // เมื่อ admin/staff หมดอายุการใช้งาน — บล็อกเข้าทั้งระบบ (super_admin ไม่ถูกเช็ค)
 function AccessExpiredScreen({ accessExpiresAt, onSignOut }) {
@@ -483,6 +483,16 @@ function AppInner() {
         >
           <LayoutDashboard size={16} />
           <span>BSK coffee&bakery</span>
+        </button>
+
+        {/* ออกจากระบบ — อยู่แถบบนสุดให้กดได้ทุกแท็บ (เดิมมีแค่ในหน้า POS ไม่มีในหน้าออเดอร์) */}
+        <button
+          onClick={signOut}
+          aria-label="ออกจากระบบ"
+          title="ออกจากระบบ"
+          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600/20 text-red-300 hover:bg-red-600/30 hover:text-red-200 transition-all text-sm font-semibold border border-red-500/30"
+        >
+          <LogOut size={16} />
         </button>
       </div>
 

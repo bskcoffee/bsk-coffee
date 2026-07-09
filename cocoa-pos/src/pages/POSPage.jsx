@@ -76,8 +76,10 @@ function useDragSort() {
 
 // ══════════════════════════════════════════════════════════════
 export default function POSPage({ onDateChange }) {
-  const { signOut, role, accessExpiresAt } = useAuth()
+  const { signOut, role, accessExpiresAt, session } = useAuth()
   const { addToast } = useToast()
+
+  const ROLE_LABEL = { super_admin: 'ผู้ดูแลระบบสูงสุด', admin: 'ผู้ดูแลระบบ', staff: 'พนักงาน' }
 
   // แสดงวันใช้งานคงเหลือของตัวเอง (เฉพาะ admin/staff ที่ super_admin ตั้งวันหมดอายุไว้)
   const expiryInfo = (() => {
@@ -674,6 +676,11 @@ export default function POSPage({ onDateChange }) {
           <div>
             <p className="font-bold text-sm leading-tight">BSK coffee&bakery POS</p>
             <p className="text-cocoa-300 text-[11px]">{format(time, 'EEEE d MMM yyyy', { locale: th })}</p>
+            {session?.user?.email && (
+              <p className="text-cocoa-300 text-[11px]">
+                {session.user.email}{role && ` · ${ROLE_LABEL[role] ?? role}`}
+              </p>
+            )}
             {expiryInfo && (
               <p className={`text-[11px] ${expiryInfo.warn ? 'text-amber-300 font-semibold' : 'text-cocoa-300'}`}>
                 {expiryInfo.text}
