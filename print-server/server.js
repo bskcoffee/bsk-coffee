@@ -225,6 +225,66 @@ function renderThaiToBitmap(text, xAbs, yAbs, fontSizeHint, align) {
   return { cmd: `BITMAP ${x},${yAbs},${bpr},${th},0,`, data: buf, tw, th }
 }
 
+// ─── Text wrapping helpers ────────────────────────────────────────────────────
+// ป้องกันข้อความยาว (เช่น รวมตัวเลือกเสริมหลายรายการ) ล้นขอบฉลาก — ขึ้นบรรทัดใหม่แทน
+function wrapAsciiLines(content, maxWidthDots, cw) {
+  const maxChars = Math.max(4, Math.floor(maxWidthDots / cw))
+  if (content.length <= maxChars) return [content]
+  const words = content.split(' ')
+  const lines = []
+  let cur = ''
+  for (const w of words) {
+    const candidate = cur ? `${cur} ${w}` : w
+    if (candidate.length > maxChars) {
+      if (cur) lines.push(cur)
+      let rest = w
+      while (rest.length > maxChars) {
+        lines.push(rest.slice(0, maxChars))
+        rest = rest.slice(maxChars)
+      }
+      cur = rest
+    } else {
+      cur = candidate
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines
+}
+
+let _measureCanvas = null
+function measureThaiWidth(text, font) {
+  if (!nCanvas) return text.length * 10
+  if (!_measureCanvas) _measureCanvas = nCanvas.createCanvas(10, 10)
+  const ctx = _measureCanvas.getContext('2d')
+  ctx.font = font
+  return ctx.measureText(text).width
+}
+
+function wrapThaiLines(content, maxWidthDots, font) {
+  if (measureThaiWidth(content, font) <= maxWidthDots) return [content]
+  const words = content.split(' ')
+  const lines = []
+  let cur = ''
+  for (const w of words) {
+    const candidate = cur ? `${cur} ${w}` : w
+    if (measureThaiWidth(candidate, font) > maxWidthDots) {
+      if (cur) lines.push(cur)
+      let rest = w
+      while (rest && measureThaiWidth(rest, font) > maxWidthDots) {
+        let cut = rest.length
+        while (cut > 1 && measureThaiWidth(rest.slice(0, cut), font) > maxWidthDots) cut--
+        lines.push(rest.slice(0, cut))
+        rest = rest.slice(cut)
+      }
+      cur = rest
+    } else {
+      cur = candidate
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines
+}
+
 // ─── Build TSPL label from new layout (drag-editor) ──────────────────────────
 function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, layout, storeName, labelWmm, labelHmm) {
   const wMM = labelWmm || LABEL_W_MM
@@ -313,30 +373,44 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
     const content = getContent(field)
     if (!content) continue
 
-    if (hasThai(content)) {
-      const bmp = renderThaiToBitmap(
-        content,
-        Math.round(field.x / 100 * wDot),
-        Math.round(field.y / 100 * hDot),
-        field.fontSize, field.align
-      )
-      if (bmp) {
+    const xBase  = Math.round(field.x / 100 * wDot)
+    const yBase  = Math.round(field.y / 100 * hDot)
+    const margin = 4
+    // ความกว้างที่พิมพ์ได้จริงตามตำแหน่ง/การจัดวาง — ป้องกันข้อความยาวล้นขอบฉลาก (ขึ้นบรรทัดใหม่แทน)
+    const maxWidth = field.align === 'center'
+      ? Math.max(30, 2 * Math.min(xBase, wDot - xBase) - margin)
+      : field.align === 'right'
+        ? Math.max(30, xBase - margin)
+        : Math.max(30, wDot - xBase - margin)
+
+    if (hasThai(content) && nCanvas && thaiFont) {
+      const px    = fontSizeToPx(field.fontSize)
+      const font  = `${px}px Thai`
+      const lines = wrapThaiLines(content, maxWidth, font)
+      let y = yBase
+      for (const line of lines) {
+        const bmp = renderThaiToBitmap(line, xBase, y, field.fontSize, field.align)
+        if (!bmp) break
         chunks.push(enc(bmp.cmd))
         chunks.push(bmp.data)
         chunks.push(Buffer.from('\r\n'))
-        continue
+        y += bmp.th + 3
       }
+      continue
     }
 
     const { font, xm, ym, cw } = getFontParams(field.fontSize)
-    const xBase = Math.round(field.x / 100 * wDot)
-    const y     = Math.round(field.y / 100 * hDot)
-    const textW = content.length * cw
-    let x = xBase
-    if (field.align === 'center') x = Math.max(0, xBase - Math.round(textW / 2))
-    if (field.align === 'right')  x = Math.max(0, xBase - textW)
-
-    addLine(`TEXT ${x},${y},"${font}",0,${xm},${ym},"${safe(content)}"`)
+    const lineH = fontSizeToPx(field.fontSize) + 8
+    const lines = wrapAsciiLines(content, maxWidth, cw)
+    let y = yBase
+    for (const line of lines) {
+      const textW = line.length * cw
+      let x = xBase
+      if (field.align === 'center') x = Math.max(0, xBase - Math.round(textW / 2))
+      if (field.align === 'right')  x = Math.max(0, xBase - textW)
+      addLine(`TEXT ${x},${y},"${font}",0,${xm},${ym},"${safe(line)}"`)
+      y += lineH
+    }
   }
 
   addLine(`PRINT 1,1`)
@@ -398,14 +472,24 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
     if (s.showOptionNote   && o.note)              opts.push(o.note)
   }
   if (opts.length > 0) {
-    const content = opts.join(' / ')
-    if (hasThai(content)) {
-      const bmp = renderThaiToBitmap(content, Math.round(LABEL_W / 2), y, 10, 'center')
-      if (bmp) { addBmp(bmp); y += bmp.th + 4 }
+    const content  = opts.join(' / ')
+    const maxWidth = Math.max(30, LABEL_W - 16) // เว้นขอบซ้ายขวาเล็กน้อย ป้องกันล้นขอบฉลาก
+    if (hasThai(content) && nCanvas && thaiFont) {
+      const px    = fontSizeToPx(10)
+      const font  = `${px}px Thai`
+      const lines = wrapThaiLines(content, maxWidth, font)
+      for (const line of lines) {
+        const bmp = renderThaiToBitmap(line, Math.round(LABEL_W / 2), y, 10, 'center')
+        if (!bmp) break
+        addBmp(bmp); y += bmp.th + 4
+      }
     } else {
-      const x = Math.max(0, Math.round(LABEL_W / 2 - content.length * 8 / 2))
-      addLine(`TEXT ${x},${y},"2",0,1,1,"${safe(content)}"`)
-      y += 25
+      const lines = wrapAsciiLines(content, maxWidth, 8)
+      for (const line of lines) {
+        const x = Math.max(0, Math.round(LABEL_W / 2 - line.length * 8 / 2))
+        addLine(`TEXT ${x},${y},"2",0,1,1,"${safe(line)}"`)
+        y += 25
+      }
     }
   }
 
