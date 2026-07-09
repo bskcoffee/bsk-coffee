@@ -76,8 +76,19 @@ function useDragSort() {
 
 // ══════════════════════════════════════════════════════════════
 export default function POSPage({ onDateChange }) {
-  const { signOut } = useAuth()
+  const { signOut, role, accessExpiresAt } = useAuth()
   const { addToast } = useToast()
+
+  // แสดงวันใช้งานคงเหลือของตัวเอง (เฉพาะ admin/staff ที่ super_admin ตั้งวันหมดอายุไว้)
+  const expiryInfo = (() => {
+    if (role === 'super_admin' || !accessExpiresAt) return null
+    const daysLeft = Math.ceil((new Date(accessExpiresAt) - new Date()) / 86400000)
+    const dateStr = new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+    return {
+      text: daysLeft < 0 ? `หมดอายุแล้ว (${dateStr})` : `ใช้งานได้ถึง ${dateStr} (เหลือ ${daysLeft} วัน)`,
+      warn: daysLeft <= 7,
+    }
+  })()
 
   // ── Remote data ──
   const [menus,        setMenus]        = useState([])
@@ -663,6 +674,11 @@ export default function POSPage({ onDateChange }) {
           <div>
             <p className="font-bold text-sm leading-tight">BSK coffee&bakery POS</p>
             <p className="text-cocoa-300 text-[11px]">{format(time, 'EEEE d MMM yyyy', { locale: th })}</p>
+            {expiryInfo && (
+              <p className={`text-[11px] ${expiryInfo.warn ? 'text-amber-300 font-semibold' : 'text-cocoa-300'}`}>
+                {expiryInfo.text}
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
