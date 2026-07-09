@@ -8,6 +8,7 @@ import {
 } from '../lib/supabase'
 import { COST_KEY_LABELS, formatBaht } from '../utils/calculations'
 import { Save, AlertTriangle, History, Pencil, GripVertical, X, Plus, Eye, EyeOff, RefreshCw, Loader2, ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
+import ConfirmModal from '../components/ConfirmModal'
 
 // ─── LIFF Config Section ───────────────────────────────────────────────────
 
@@ -291,12 +292,20 @@ export default function SettingsPage() {
 
   // ─── Month change guard ───────────────────────────────────────
   const [monthLoading, setMonthLoading] = useState(false)
+  const [pendingMonth, setPendingMonth] = useState(null) // เดือนที่รอ confirm เมื่อมีข้อมูลยังไม่ได้บันทึก
 
   const handleMonthChange = (newMonth) => {
     if (feeEditing || overheadEditing || costEditing) {
-      if (!window.confirm('มีการแก้ไขที่ยังไม่ได้บันทึก\nต้องการเปลี่ยนเดือนหรือไม่?')) return
+      setPendingMonth(newMonth)
+      return
     }
     setSelectedMonth(newMonth)
+  }
+
+  const confirmMonthChange = () => {
+    if (pendingMonth == null) return
+    setSelectedMonth(pendingMonth)
+    setPendingMonth(null)
   }
 
   // ─── Platform Fee (dynamic) ───────────────────────────────────
@@ -926,7 +935,7 @@ export default function SettingsPage() {
                         </span>
                         {!h.effective_to && (
                           <span className="text-xs bg-green-50 text-green-600 border border-green-200 px-1.5 py-0.5 rounded-full">ปัจจุบัน</span>
-                        )}
+ )}
                       </div>
                     </div>
                   )
@@ -936,6 +945,16 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        open={pendingMonth != null}
+        title="มีการแก้ไขที่ยังไม่ได้บันทึก"
+        message="ต้องการเปลี่ยนเดือนหรือไม่? การแก้ไขที่ยังไม่บันทึกจะหายไป"
+        confirmLabel="เปลี่ยนเดือน"
+        danger
+        onConfirm={confirmMonthChange}
+        onCancel={() => setPendingMonth(null)}
+      />
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase, updateMenuCost, getMenuCostHistory, getCostSchema } from '../lib/supabase'
 import { calcMenuCostBreakdown, buildDynamicLookups, formatBaht, formatPct } from '../utils/calculations'
 import { Calculator, X, Save, History, ChevronRight, AlertTriangle, Settings2, Info } from 'lucide-react'
+import ConfirmModal from '../components/ConfirmModal'
 
 const PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
 const DELIVERY_PLATS = ['GRAB', 'LINE', 'SHOPEE']
@@ -75,6 +76,7 @@ function CostEditorModal({ menu, costSettings, costSchema, platformFees, onClose
   const [platform, setPlatform] = useState('GRAB')
   const [history, setHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loadingCost, setLoadingCost] = useState(true)
   const savedFormRef = useRef(null)  // tracks form state at load time for dirty check
@@ -141,7 +143,7 @@ function CostEditorModal({ menu, costSettings, costSchema, platformFees, onClose
     : false
 
   const handleClose = () => {
-    if (isFormDirty && !window.confirm('มีข้อมูลที่ยังไม่ได้บันทึก ต้องการปิดหรือไม่?')) return
+    if (isFormDirty) { setShowCloseConfirm(true); return }
     onClose()
   }
 
@@ -533,6 +535,16 @@ function CostEditorModal({ menu, costSettings, costSchema, platformFees, onClose
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        open={showCloseConfirm}
+        title="มีข้อมูลที่ยังไม่ได้บันทึก"
+        message="ต้องการปิดหน้านี้โดยไม่บันทึกหรือไม่?"
+        confirmLabel="ปิดโดยไม่บันทึก"
+        danger
+        onConfirm={() => { setShowCloseConfirm(false); onClose() }}
+        onCancel={() => setShowCloseConfirm(false)}
+      />
     </div>
   )
 }
@@ -881,7 +893,7 @@ export default function MenuCostPage() {
                       )}
                     </div>
 
-                    <ChevronRight size={18} className="text-gray-300 group-hover:text-gray-400 shrink-0 transition-colors mt-1" />
+                    <ChevronRight size={18} className="text-gray-300 group-hover:text-gray-400 shrink-0 transition-colors mt-1" />
                   </button>
                 )
               })}
