@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom'
 import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network, Brain, ChevronUp, ChevronDown } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import ConfirmModal from './ConfirmModal'
 
 const PASSKEY   = '18879'
 const POS_URL  = 'https://cocoa-pos.vercel.app'
@@ -11,6 +12,12 @@ const LIFF_URL = 'https://cocoa-liff.vercel.app'
 function PasskeyModal({ title = 'ไปที่ Cocoa POS', onConfirm, onClose }) {
   const [val, setVal]     = useState('')
   const [error, setError] = useState(false)
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose?.() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   const handleSubmit = () => {
     if (val === PASSKEY) { onConfirm() }
@@ -310,23 +317,16 @@ export default function Sidebar() {
     )}
 
     {/* Sign-out confirm modal */}
-    {showSignOutModal && (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-2xl p-6 max-w-xs w-full shadow-xl space-y-4">
-          <div className="text-center">
-            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
-              <LogOut size={22} className="text-red-600" />
-            </div>
-            <p className="font-semibold text-gray-900">ออกจากระบบ?</p>
-            <p className="text-sm text-gray-500 mt-1">คุณจะต้องเข้าสู่ระบบใหม่อีกครั้ง</p>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => setShowSignOutModal(false)} className="btn-secondary flex-1">ยกเลิก</button>
-            <button onClick={signOut} className="btn-danger flex-1">ออกจากระบบ</button>
-          </div>
-        </div>
-      </div>
-    )}
+    <ConfirmModal
+      open={showSignOutModal}
+      title="ออกจากระบบ?"
+      message="คุณจะต้องเข้าสู่ระบบใหม่อีกครั้ง"
+      confirmLabel="ออกจากระบบ"
+      danger
+      icon={LogOut}
+      onConfirm={signOut}
+      onCancel={() => setShowSignOutModal(false)}
+    />
     </>
   )
 }
