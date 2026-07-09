@@ -7,7 +7,7 @@ import {
   DEFAULT_COST_SCHEMA,
 } from '../lib/supabase'
 import { COST_KEY_LABELS, formatBaht } from '../utils/calculations'
-import { Save, AlertTriangle, History, Pencil, GripVertical, X, Plus, Eye, EyeOff, RefreshCw, Loader2, ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
+import { Save, AlertTriangle, History, Pencil, GripVertical, X, Plus, Eye, EyeOff, RefreshCw, Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Calendar } from 'lucide-react'
 import ConfirmModal from '../components/ConfirmModal'
 
 // ─── LIFF Config Section ───────────────────────────────────────────────────
@@ -113,6 +113,15 @@ function MenuCategoriesSection() {
     setDragOver(null)
   }
 
+  // Keyboard-accessible alternative to drag-and-drop
+  const moveCat = (i, direction) => {
+    const target = i + direction
+    if (target < 0 || target >= cats.length) return
+    const next = [...cats]
+    ;[next[i], next[target]] = [next[target], next[i]]
+    setCats(next)
+  }
+
   const handleSave = async () => {
     setSaving(true)
     const upserts = cats.map((c, i) => ({ id: c.id, name: c.name, sort_order: i + 1, is_visible: c.is_visible }))
@@ -143,6 +152,29 @@ function MenuCategoriesSection() {
           <GripVertical size={16} className="text-gray-300 shrink-0" />
           <span className="flex-1 text-sm font-semibold text-gray-800">{cat.name}</span>
           <span className="text-xs text-gray-400 w-5 text-center">{i + 1}</span>
+          {/* Keyboard-accessible reorder alternative to drag-and-drop */}
+          <div className="flex flex-col shrink-0">
+            <button
+              type="button"
+              draggable={false}
+              onClick={() => moveCat(i, -1)}
+              disabled={i === 0}
+              aria-label={`ย้าย ${cat.name} ขึ้น`}
+              className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
+            >
+              <ChevronUp size={14} />
+            </button>
+            <button
+              type="button"
+              draggable={false}
+              onClick={() => moveCat(i, 1)}
+              disabled={i === cats.length - 1}
+              aria-label={`ย้าย ${cat.name} ลง`}
+              className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:pointer-events-none"
+            >
+              <ChevronDown size={14} />
+            </button>
+          </div>
           <button
             onClick={() => setCats(prev => prev.map(c => c.id === cat.id ? { ...c, is_visible: !c.is_visible } : c))}
             aria-label={cat.is_visible ? `ซ่อน ${cat.name}` : `แสดง ${cat.name}`}
@@ -427,6 +459,15 @@ export default function SettingsPage() {
     setPlatDragOver(null)
   }
 
+  // Keyboard-accessible alternative to drag-and-drop
+  const movePlatform = (i, direction) => {
+    const target = i + direction
+    if (target < 0 || target >= platforms.length) return
+    const next = [...platforms]
+    ;[next[i], next[target]] = [next[target], next[i]]
+    setPlatforms(next)
+  }
+
   const updatePlatform = (i, key, val) =>
     setPlatforms(prev => prev.map((p, idx) => idx === i ? { ...p, [key]: val } : p))
 
@@ -664,6 +705,29 @@ export default function SettingsPage() {
                   }`}
                 >
                   <GripVertical size={16} className="text-gray-400 shrink-0 cursor-grab active:cursor-grabbing" aria-hidden="true" />
+                  {/* Keyboard-accessible reorder alternative to drag-and-drop */}
+                  <div className="flex flex-col shrink-0">
+                    <button
+                      type="button"
+                      draggable={false}
+                      onClick={() => movePlatform(i, -1)}
+                      disabled={i === 0}
+                      aria-label={`ย้าย ${p.name || `Platform ${i + 1}`} ขึ้น`}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-200 disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      <ChevronUp size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      draggable={false}
+                      onClick={() => movePlatform(i, 1)}
+                      disabled={i === platforms.length - 1}
+                      aria-label={`ย้าย ${p.name || `Platform ${i + 1}`} ลง`}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-200 disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      <ChevronDown size={13} />
+                    </button>
+                  </div>
                   <label htmlFor={`plat-name-${i}`} className="sr-only">ชื่อ Platform {i + 1}</label>
                   <input
                     id={`plat-name-${i}`}
