@@ -1,19 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X, ChevronRight, Minus, Plus } from 'lucide-react'
 
-const SWEETNESS_LEVELS = [
-  { label: '0%',   value: 0   },
-  { label: '10%',  value: 10  },
-  { label: '25%',  value: 25  },
-  { label: '50%',  value: 50  },
-  { label: '100%', sublabel: 'ปกติ', value: 100 },
-]
-
-const PACKAGING_OPTIONS = [
-  { value: 'แยกน้ำแข็ง', icon: '🧊', desc: 'น้ำแข็งแยกถุง' },
-  { value: 'พร้อมดื่ม',  icon: '🧋', desc: 'ใส่แก้วพร้อมดื่ม' },
-]
-
 const fmt = (n) =>
   n === 0 ? 'ฟรี'
     : new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', minimumFractionDigits: 0 }).format(n)
@@ -38,17 +25,13 @@ const initGroupSelections = (initial) => {
 export default function MenuOptionModal({ menu, platform, optionGroups = [], initial, onConfirm, onClose, confirmLabel }) {
   const basePrice = menu?.prices?.[platform] ?? 0
 
-  const [sweetness,  setSweetness]  = useState(initial?.sweetness  ?? 100)
-  const [packaging,  setPackaging]  = useState(initial?.packaging  ?? null)
   const [note,       setNote]       = useState(initial?.note       ?? '')
   const [groupSelections, setGroupSelections] = useState(() => initGroupSelections(initial))
 
   useEffect(() => {
     if (!initial) {
-      setSweetness(100); setPackaging(null); setNote(''); setGroupSelections({})
+      setNote(''); setGroupSelections({})
     } else {
-      setSweetness(initial.sweetness ?? 100)
-      setPackaging(initial.packaging ?? null)
       setNote(initial.note ?? '')
       setGroupSelections(initGroupSelections(initial))
     }
@@ -69,8 +52,7 @@ export default function MenuOptionModal({ menu, platform, optionGroups = [], ini
 
   const groupQtyTotal = (group) => Object.values(groupSelections[group.id] ?? {}).reduce((s, q) => s + q, 0)
 
-  const canConfirm = packaging !== null
-    && optionGroups.every(g => !g.required || groupQtyTotal(g) > 0)
+  const canConfirm = optionGroups.every(g => !g.required || groupQtyTotal(g) > 0)
 
   // single = เลือกได้ 1 (แตะซ้ำเพื่อยกเลิก), multi = ปรับจำนวนต่อชิ้นได้ (+/-) จนถึง max_select (รวมทุกตัวเลือก)
   const selectSingle = (group, choiceId) => {
@@ -115,9 +97,7 @@ export default function MenuOptionModal({ menu, platform, optionGroups = [], ini
       }))
       .filter(g => g.choices.length > 0)
     onConfirm({
-      sweetness,
       note,
-      packaging,
       optionGroups: selectedGroups.length > 0 ? selectedGroups : null,
     })
   }
@@ -142,53 +122,9 @@ export default function MenuOptionModal({ menu, platform, optionGroups = [], ini
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
 
-          {/* ── ความหวาน (ต้องระบุ) ────────────────────── */}
-          <section>
-            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-              🍬 ความหวาน
-              <span className="ml-auto text-cocoa-600 font-bold">{sweetness}%</span>
-            </p>
-            <div className="flex gap-2">
-              {SWEETNESS_LEVELS.map(lvl => (
-                <button
-                  key={lvl.value}
-                  onClick={() => setSweetness(lvl.value)}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95 border-2 flex flex-col items-center
-                    ${sweetness === lvl.value ? 'bg-cocoa-700 text-white border-cocoa-700' : 'bg-white text-gray-600 border-gray-200'}`}
-                >
-                  <span>{lvl.label}</span>
-                  {lvl.sublabel && (
-                    <span className={`text-[10px] font-medium mt-0.5 ${sweetness === lvl.value ? 'text-cocoa-200' : 'text-gray-400'}`}>
-                      {lvl.sublabel}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          {/* ── บรรจุภัณฑ์ (ต้องระบุ) ──────────────────── */}
-          <section>
-            <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-              📦 บรรจุภัณฑ์ <RequiredBadge />
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              {PACKAGING_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setPackaging(prev => prev === opt.value ? null : opt.value)}
-                  className={`py-4 px-4 rounded-xl border-2 text-left transition-all active:scale-95
-                    ${packaging === opt.value ? 'border-cocoa-500 bg-cocoa-50' : 'border-gray-200 bg-white'}`}
-                >
-                  <div className="text-2xl mb-1">{opt.icon}</div>
-                  <div className={`text-sm font-bold ${packaging === opt.value ? 'text-cocoa-700' : 'text-gray-700'}`}>{opt.value}</div>
-                  <div className="text-xs text-gray-400 mt-0.5">{opt.desc}</div>
-                </button>
-              ))}
-            </div>
-          </section>
-
           {/* ── กลุ่มตัวเลือกเสริม (สร้าง/ผูกหมวดหมู่จากหน้าจัดการเมนู) ── */}
+          {/* ความหวาน/บรรจุภัณฑ์ ไม่ hardcode ในนี้อีกต่อไป — มาจากกลุ่มตัวเลือกเสริม
+              เหมือนกลุ่มอื่นๆ (ดู sweetness_packaging_optiongroups_migration.sql) */}
           {optionGroups.map(group => {
             const sel      = groupSelections[group.id] ?? {}
             const qtyTotal = groupQtyTotal(group)
@@ -286,7 +222,7 @@ export default function MenuOptionModal({ menu, platform, optionGroups = [], ini
         <div className="px-5 pt-3 pb-6 border-t border-gray-100 shrink-0">
           {!canConfirm && (
             <p className="text-xs text-red-400 text-center mb-2">
-              กรุณาเลือกบรรจุภัณฑ์
+              กรุณาเลือกตัวเลือกที่จำเป็นให้ครบ
             </p>
           )}
           {totalExtra > 0 && (
