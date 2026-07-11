@@ -473,7 +473,10 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
   // กลุ่มตัวเลือกเสริมที่ผูกกับหมวดหมู่ของเมนูที่กำลังเปิด modal อยู่ (โหมดแก้ไข)
   const groupsForOptionTarget = useMemo(() => {
     if (!optionTarget) return []
-    return optionGroups.filter(g => (g.categories ?? []).includes(optionTarget.menu.category))
+    return optionGroups.filter(g =>
+      (g.categories ?? []).includes(optionTarget.menu.category) ||
+      (g.menu_ids ?? []).includes(optionTarget.menu.id)
+    )
   }, [optionGroups, optionTarget])
 
   // ── Handle option confirm from MenuOptionModal ────────────

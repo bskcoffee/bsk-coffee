@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, updateMenuPrice, getSetting } from '../lib/supabase'
 import { formatBaht } from '../utils/calculations'
@@ -695,12 +695,13 @@ function CategoryManagerModal({ categories, menuCountByCategory, onClose, onSave
 // แล้วผูกกับหมวดหมู่เมนู — เมนูในหมวดหมู่นั้นจะเห็นกลุ่มนี้โผล่อัตโนมัติในหน้า POS
 // ─────────────────────────────────────────────────────────────────
 
-function OptionGroupEditor({ group, categories, onClose, onSaved }) {
+function OptionGroupEditor({ group, categories, menus = [], onClose, onSaved }) {
   const [name,          setName]          = useState(group?.name ?? '')
   const [selectionType, setSelectionType] = useState(group?.selection_type ?? 'multi')
   const [maxSelect,     setMaxSelect]     = useState(group?.max_select ?? '')
   const [required,      setRequired]      = useState(group?.required ?? false)
   const [selectedCats,  setSelectedCats]  = useState(group?.categories ?? [])
+  const [selectedMenuIds, setSelectedMenuIds] = useState(group?.menu_ids ?? [])
   const [choices,       setChoices]       = useState(
     group?.menu_option_choices?.length
       ? group.menu_option_choices.map(c => ({ id: c.id, label: c.label, price: c.price }))
@@ -711,8 +712,23 @@ function OptionGroupEditor({ group, categories, onClose, onSaved }) {
 
   const selectableCats = categories
 
+  // เมนูจัดกลุ่มตามหมวดหมู่ ให้เลือกทีละเมนูได้ง่าย (ผูกเฉพาะเมนูนั้นๆ แทนที่จะผูกทั้งหมวด)
+  const menusByCategory = useMemo(() => {
+    const acc = {}
+    for (const m of menus) {
+      const cat = m.category || 'อื่นๆ'
+      if (!acc[cat]) acc[cat] = []
+      acc[cat].push(m)
+    }
+    return acc
+  }, [menus])
+
   const toggleCat = (cat) => {
     setSelectedCats(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])
+  }
+
+  const toggleMenu = (menuId) => {
+    setSelectedMenuIds(prev => prev.includes(menuId) ? prev.filter(id => id !== menuId) : [...prev, menuId])
   }
 
   const addChoice    = () => setChoices(prev => [...prev, { label: '', price: 0 }])
@@ -733,7 +749,9 @@ function OptionGroupEditor({ group, categories, onClose, onSaved }) {
     if (!trimmedName) { setError('กรุณาใส่ชื่อกลุ่มตัวเลือก'); return }
     const validChoices = choices.map(c => ({ ...c, label: c.label.trim() })).filter(c => c.label)
     if (validChoices.length === 0) { setError('กรุณาเพิ่มตัวเลือกอย่างน้อย 1 รายการ'); return }
-    if (selectedCats.length === 0) { setError('กรุณาเลือกอย่างน้อย 1 หมวดหมู่'); return }
+    if (selectedCats.length === 0 && selectedMenuIds.length === 0) {
+      setError('กรุณาเลือกอย่างน้อย 1 หมวดหมู่ หรือ 1 เมนู'); return
+    }
 
     setSaving(true)
     setError('')
@@ -744,6 +762,7 @@ function OptionGroupEditor({ group, categories, onClose, onSaved }) {
         max_select:     selectionType === 'multi' ? (parseInt(maxSelect) || null) : 1,
         required,
         categories:     selectedCats,
+        menu_ids:       selectedMenuIds,
       }
       let groupId = group?.id
       if (groupId) {
@@ -834,7 +853,7 @@ function OptionGroupEditor({ group, categories, onClose, onSaved }) {
           </label>
 
           <div>
-            <label className="label">ผูกกับหมวดหมู่เมนู</label>
+            <label className="label">ผูกกับหมวดหมู่เมนู (ทางเลือก)</label>
             <div className="flex flex-wrap gap-2">
               {selectableCats.map(cat => (
                 <button
@@ -847,7 +866,36 @@ function OptionGroupEditor({ group, categories, onClose, onSaved }) {
                 </button>
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-1.5">เมนูในหมวดหมู่ที่เลือกจะเห็นกลุ่มตัวเลือกนี้ในหน้า POS อัตโนมัติ</p>
+            <p className="text-xs text-gray-400 mt-1.5">ทุกเมนูในหมวดหมู่ที่เลือกจะเห็นกลุ่มตัวเลือกนี้ในหน้า POS — ใช้เมื่ออยากผูกทั้งหมวดหมู่</p>
+          </div>
+
+          <div>
+            <label className="label">หรือผูกกับเมนูเฉพาะรายการ</label>
+            <div className="border border-gray-200 rounded-xl max-h-48 overflow-y-auto divide-y divide-gray-100">
+              {Object.keys(menusByCategory).length === 0 ? (
+                <p className="text-xs text-gray-400 p-3">ยังไม่มีเมนู</p>
+              ) : (
+                Object.entries(menusByCategory).map(([cat, catMenus]) => (
+                  <div key={cat} className="p-2">
+                    <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider px-1 mb-1">{cat}</p>
+                    <div className="space-y-0.5">
+                      {catMenus.map(m => (
+                        <label key={m.id} className="flex items-center gap-2 px-1 py-1 rounded-lg hover:bg-gray-50 cursor-pointer text-sm">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4"
+                            checked={selectedMenuIds.includes(m.id)}
+                            onChange={() => toggleMenu(m.id)}
+                          />
+                          <span className="text-gray-700">{m.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">เฉพาะเมนูที่ติ๊กเท่านั้นจะเห็นกลุ่มตัวเลือกนี้ — ใช้เมื่อไม่อยากให้ทั้งหมวดหมู่เห็นเหมือนกันหมด</p>
           </div>
 
           <div>
@@ -897,7 +945,7 @@ function OptionGroupEditor({ group, categories, onClose, onSaved }) {
   )
 }
 
-function OptionGroupManagerModal({ categories, onClose, onSaved }) {
+function OptionGroupManagerModal({ categories, menus = [], onClose, onSaved }) {
   const [groups,      setGroups]      = useState([])
   const [loading,     setLoading]     = useState(true)
   const [editGroup,   setEditGroup]   = useState(null)
@@ -962,6 +1010,11 @@ function OptionGroupManagerModal({ categories, onClose, onSaved }) {
                       </span>
                       {g.required && <span className="badge bg-amber-100 text-amber-700">บังคับเลือก</span>}
                       {(g.categories ?? []).map(c => <span key={c} className="badge bg-cocoa-50 text-cocoa-700">{c}</span>)}
+                      {(g.menu_ids ?? []).length > 0 && (
+                        <span className="badge bg-blue-50 text-blue-700">
+                          {(g.menu_ids ?? []).length} เมนูเฉพาะ
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-gray-400 mt-1">{(g.menu_option_choices ?? []).length} ตัวเลือก</p>
                   </div>
@@ -993,6 +1046,7 @@ function OptionGroupManagerModal({ categories, onClose, onSaved }) {
         <OptionGroupEditor
           group={editGroup}
           categories={categories}
+          menus={menus}
           onClose={() => { setShowAdd(false); setEditGroup(null) }}
           onSaved={handleSaved}
         />
@@ -1369,6 +1423,7 @@ export default function MenuManagementPage() {
       {showGroupManager && (
         <OptionGroupManagerModal
           categories={categories}
+          menus={menus}
           onClose={() => setShowGroupManager(false)}
           onSaved={() => {}}
         />

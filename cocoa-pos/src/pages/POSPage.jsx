@@ -379,10 +379,14 @@ export default function POSPage({ onDateChange }) {
     setSavingLayout(false)
   }
 
+  // ── Computed: addons/refills ──────────────────────────────
   // กลุ่มตัวเลือกเสริมที่ผูกกับหมวดหมู่ของเมนูที่กำลังเปิด modal อยู่
   const groupsForOptionMenu = useMemo(() => {
     if (!optionMenu) return []
-    return optionGroups.filter(g => (g.categories ?? []).includes(optionMenu.category))
+    return optionGroups.filter(g =>
+      (g.categories ?? []).includes(optionMenu.category) ||
+      (g.menu_ids ?? []).includes(optionMenu.id)
+    )
   }, [optionGroups, optionMenu])
 
   // ── Line item helpers ─────────────────────────────────────
