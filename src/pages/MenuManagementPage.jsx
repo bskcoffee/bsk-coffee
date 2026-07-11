@@ -218,11 +218,12 @@ function MenuModal({ menu, platforms, categories, onAddCategory, onClose, onSave
     try {
       if (menu?.id) {
         // Update — ไม่แตะ gp_cost (จัดการผ่านหน้าต้นทุนเมนู)
-        await supabase.from('menus').update({
+        const { error: updateErr } = await supabase.from('menus').update({
           name:      form.name,
           category:  form.category,
           image_url: form.image_url || null,
         }).eq('id', menu.id)
+        if (updateErr) throw updateErr
 
         // Update prices (close old, open new) + original_price
         for (const plat of platforms) {
@@ -230,33 +231,36 @@ function MenuModal({ menu, platforms, categories, onAddCategory, onClose, onSave
           const newPrice    = form.prices[plat]           ?? 0
           const origPrice   = form.originalPrices[plat]  ?? 0
           if (oldPrice !== newPrice) {
-            await updateMenuPrice(menu.id, plat, newPrice)
+            const { error: priceErr } = await updateMenuPrice(menu.id, plat, newPrice)
+            if (priceErr) throw priceErr
           }
           // อัพเดท original_price บน row ปัจจุบัน (effective_to IS NULL)
-          await supabase.from('menu_prices')
+          const { error: origErr } = await supabase.from('menu_prices')
             .update({ original_price: origPrice })
             .eq('menu_id', menu.id)
             .eq('platform', plat)
             .is('effective_to', null)
+          if (origErr) throw origErr
         }
       } else {
         // Create new
-        const { data: newMenu } = await supabase
+        const { data: newMenu, error: insertErr } = await supabase
           .from('menus')
           .insert({ name: form.name, category: form.category, image_url: form.image_url || null })
           .select()
           .single()
+        if (insertErr) throw insertErr
+        if (!newMenu) throw new Error('บันทึกเมนูไม่สำเร็จ — ไม่ได้รับข้อมูลกลับจากระบบ')
 
-        if (newMenu) {
-          for (const plat of platforms) {
-            await supabase.from('menu_prices').insert({
-              menu_id:        newMenu.id,
-              platform:       plat,
-              price:          form.prices[plat]          ?? 0,
-              original_price: form.originalPrices[plat]  ?? form.prices[plat] ?? 0,
-              effective_from: new Date().toISOString().slice(0, 10),
-            })
-          }
+        for (const plat of platforms) {
+          const { error: priceInsertErr } = await supabase.from('menu_prices').insert({
+            menu_id:        newMenu.id,
+            platform:       plat,
+            price:          form.prices[plat]          ?? 0,
+            original_price: form.originalPrices[plat]  ?? form.prices[plat] ?? 0,
+            effective_from: new Date().toISOString().slice(0, 10),
+          })
+          if (priceInsertErr) throw priceInsertErr
         }
       }
 
