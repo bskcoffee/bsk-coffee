@@ -700,7 +700,7 @@ function OptionGroupEditor({ group, categories, menus = [], onClose, onSaved }) 
   const [selectionType, setSelectionType] = useState(group?.selection_type ?? 'multi')
   const [maxSelect,     setMaxSelect]     = useState(group?.max_select ?? '')
   const [required,      setRequired]      = useState(group?.required ?? false)
-  const [selectedCats,  setSelectedCats]  = useState(group?.categories ?? [])
+  const [selectedCats,  setSelectedCats]  = useState(Array.isArray(group?.categories) ? group.categories : [])
   const [selectedMenuIds, setSelectedMenuIds] = useState(group?.menu_ids ?? [])
   const [choices,       setChoices]       = useState(
     group?.menu_option_choices?.length
@@ -1009,7 +1009,7 @@ function OptionGroupManagerModal({ categories, menus = [], onClose, onSaved }) {
                         {g.selection_type === 'single' ? 'เลือกได้ 1' : `เลือกได้สูงสุด ${g.max_select ?? 'ไม่จำกัด'}`}
                       </span>
                       {g.required && <span className="badge bg-amber-100 text-amber-700">บังคับเลือก</span>}
-                      {(g.categories ?? []).map(c => <span key={c} className="badge bg-cocoa-50 text-cocoa-700">{c}</span>)}
+                      {(Array.isArray(g.categories) ? g.categories : []).map(c => <span key={c} className="badge bg-cocoa-50 text-cocoa-700">{c}</span>)}
                       {(g.menu_ids ?? []).length > 0 && (
                         <span className="badge bg-blue-50 text-blue-700">
                           {(g.menu_ids ?? []).length} เมนูเฉพาะ
