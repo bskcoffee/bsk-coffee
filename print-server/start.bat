@@ -1,8 +1,8 @@
 @echo off
-title Cocoa Print Server
+title BSK coffee Print Server
 echo.
 echo  ==============================
-echo   Cocoa House Print Server
+echo   BSK coffee Print Server
 echo  ==============================
 echo.
 

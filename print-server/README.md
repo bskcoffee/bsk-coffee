@@ -1,6 +1,6 @@
-# Cocoa Print Server
+# BSK coffee Print Server
 
-Local Node.js server รับ print job จาก Cocoa POS → ส่ง ESC/POS ผ่าน TCP ไปยัง ES-9960 WiFi
+Local Node.js server รับ print job จาก BSK POS → ส่ง TSPL ผ่าน TCP ไปยัง ES-9960 WiFi
 
 ## วิธีติดตั้งและเริ่มใช้
 
@@ -27,15 +27,15 @@ npm install
 npm start
 ```
 
-### 3. ตั้งค่าใน Cocoa House
+### 3. ตั้งค่าใน BSK
 
 ไปที่ **ตั้งค่าฉลาก** → ใส่ IP ของ **คอมพิวเตอร์** ที่รัน print server นี้ (ไม่ใช่ IP printer)
 กด **ทดสอบการเชื่อมต่อ** — ควรขึ้น ✓
 
-## หมายเหตุสำหรับ iPad (cocoa-pos.vercel.app)
+## หมายเหตุสำหรับ iPad (bsk-pos.vercel.app)
 
 เนื่องจาก Vercel ใช้ HTTPS แต่ print server เป็น HTTP, iOS Safari จะบล็อก mixed-content
-**วิธีแก้:** เปิด cocoa-pos ผ่าน IP คอมพิวเตอร์บน local network แทน
+**วิธีแก้:** เปิด bsk-pos ผ่าน IP คอมพิวเตอร์บน local network แทน
 เช่น `http://192.168.1.50:5173` (ถ้ารัน dev) หรือ build แล้ว serve ผ่าน local
 
 ## API Endpoints
@@ -53,13 +53,13 @@ npm start
   "platform": "GRAB",
   "items": [
     {
-      "name": "Cocoa Latte",
+      "name": "Dark Latte",
       "qty": 2,
       "item_options": {
-        "milk": "นมสด",
         "sweetness": 50,
-        "refill": null,
-        "note": ""
+        "packaging": null,
+        "note": "",
+        "optionGroups": []
       }
     }
   ],
@@ -69,6 +69,6 @@ npm start
     "copies": 1,
     "textAlign": "center"
   },
-  "storeName": "Cocoa House"
+  "storeName": "BSK coffee"
 }
 ```

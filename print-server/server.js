@@ -334,7 +334,7 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
         return `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`
       }
       case 'index':      return `${labelIdx}/${totalLabels}`
-      case 'store_name': return storeName || 'Cocoa House'
+      case 'store_name': return storeName || 'BSK coffee'
       case 'platform':   return platform || ''
       case 'date': {
         const now = new Date()
@@ -513,7 +513,7 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
   // Store name
   if (s.showStoreName) {
     y += 25
-    const name = storeName || 'Cocoa House'
+    const name = storeName || 'BSK coffee'
     const x = Math.max(0, Math.round(LABEL_W / 2 - name.length * 8 / 2))
     addLine(`TEXT ${x},${y},"2",0,1,1,"${safe(name)}"`)
   }
@@ -654,30 +654,13 @@ app.post('/print', async (req, res) => {
   }
 })
 
-// ─── AI Reporter (ปิดแล้ว — ย้ายไป Vercel cron แทน) ─────────────────────────
-// let aiReporter = null
-// try { aiReporter = require('./ai-reporter') } catch (e) { console.warn('[AI Reporter] Failed to load:', e.message) }
-
-// POST /report/send  — manual trigger จาก cocoa-house web app
-// body: { date: 'YYYY-MM-DD' }
-app.post('/report/send', async (req, res) => {
-  if (!aiReporter) return res.status(503).json({ error: 'AI Reporter not loaded' })
-  const { date } = req.body
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return res.status(400).json({ error: 'date required (YYYY-MM-DD)' })
-  }
-  try {
-    await aiReporter.runReport(date)
-    res.json({ ok: true, date })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
+// หมายเหตุ: BSK ไม่ใช้ AI Reporter ใน print-server (รายงานรันผ่าน Vercel cron แทน)
+// จึงไม่มี route /report/send ในเวอร์ชันนี้ — ต่างจาก Cocoa House เดิม
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(SERVER_PORT, '0.0.0.0', () => {
-  console.log(`\nCocoa Print Server (TSPL mode)`)
+  console.log(`\nBSK coffee Print Server (TSPL mode)`)
   console.log(`  Listening : http://0.0.0.0:${SERVER_PORT}`)
   console.log(`  Printer   : ${PRINTER_IP}:${PRINTER_PORT}`)
-  console.log(`\nรอรับ print job จาก Cocoa POS...\n`)
+  console.log(`\nรอรับ print job จาก BSK POS...\n`)
 })
