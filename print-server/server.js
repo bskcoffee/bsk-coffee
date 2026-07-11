@@ -657,10 +657,37 @@ app.post('/print', async (req, res) => {
 // หมายเหตุ: BSK ไม่ใช้ AI Reporter ใน print-server (รายงานรันผ่าน Vercel cron แทน)
 // จึงไม่มี route /report/send ในเวอร์ชันนี้ — ต่างจาก Cocoa House เดิม
 
+// ─── Keep-alive heartbeat ─────────────────────────────────────────────────────
+// เครื่องพิมพ์ label บางรุ่นมีโหมด power-save/auto-sleep ที่ตัดวงจรเน็ตเวิร์กเมื่อไม่มีการใช้งานนาน
+// heartbeat นี้จะยิง TCP probe เบาๆ (connect แล้วปิดทันที ไม่ส่งข้อมูลพิมพ์) ไปหาเครื่องพิมพ์เป็นระยะ
+// เพื่อ (1) มี traffic สม่ำเสมอ ช่วยลดโอกาสเครื่องพิมพ์เข้าโหมด idle/sleep เอง
+// (2) log สถานะ online/offline ให้เห็นว่าเครื่องพิมพ์หลุดตอนไหน (ไม่ได้การันตี 100% ถ้าเครื่องพิมพ์
+//     ตั้ง auto power off แบบ hard sleep ไว้ — กรณีนั้นต้องปิด/ปรับที่เมนูตัวเครื่องพิมพ์เอง)
+const HEARTBEAT_INTERVAL = 90_000 // 90 วินาที
+let printerWasOnline = null // null = ยังไม่เคย probe
+
+async function heartbeat() {
+  try {
+    await testPrinterTcp(3000)
+    if (printerWasOnline === false) {
+      console.log(`[HEARTBEAT] เครื่องพิมพ์กลับมา online — ${PRINTER_IP}:${PRINTER_PORT}`)
+    }
+    printerWasOnline = true
+  } catch (err) {
+    if (printerWasOnline !== false) {
+      console.warn(`[HEARTBEAT] เครื่องพิมพ์ offline — ${PRINTER_IP}:${PRINTER_PORT} (${err.message})`)
+    }
+    printerWasOnline = false
+  }
+}
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(SERVER_PORT, '0.0.0.0', () => {
   console.log(`\nBSK coffee Print Server (TSPL mode)`)
   console.log(`  Listening : http://0.0.0.0:${SERVER_PORT}`)
   console.log(`  Printer   : ${PRINTER_IP}:${PRINTER_PORT}`)
   console.log(`\nรอรับ print job จาก BSK POS...\n`)
+
+  heartbeat()
+  setInterval(heartbeat, HEARTBEAT_INTERVAL)
 })
