@@ -550,54 +550,18 @@ app.post('/print', async (req, res) => {
 
   const copies = parseInt(labelSettings.copies ?? 1)
 
-  // แปลง refill value เป็น string ชื่อ
-  const toRefillName = (v) => {
-    if (v == null) return ''
-    if (typeof v === 'string') return v
-    if (typeof v === 'object') return v.name || v.label || v.value || ''
-    return String(v)
-  }
-
-  // ดึง refill list จาก item (เสมอ array) — legacy field เก็บไว้เพื่อรองรับออเดอร์เก่า
-  const getRefillList = (item) => {
-    const refills = item.item_options?.refill
-    if (!refills) return []
-    const arr = Array.isArray(refills) ? refills : [refills]
-    return arr.map(toRefillName).filter(Boolean)
-  }
-
-  // ดึงรายชื่อ "ตัวเลือกเสริมแบบเลือกจำนวน" (multi) ที่ต้องพิมพ์แยกฉลาก 1 ใบต่อ 1 หน่วย
-  // (เช่น เพิ่มถุงพรุ่งนี้ x2 → แยก 2 ใบ ไว้ติดคนละถุง/แก้ว) — กลุ่มแบบ single ไม่แยกใบ โชว์เป็นข้อความในฉลากหลักพอ
-  const getMultiLabelList = (item) => {
-    const groups = item.item_options?.optionGroups
-    if (!Array.isArray(groups)) return []
-    const list = []
-    for (const g of groups) {
-      if (g.selectionType !== 'multi') continue
-      for (const c of (g.choices ?? [])) {
-        const qty = c.qty ?? 1
-        for (let i = 0; i < qty; i++) list.push(c.label)
-      }
-    }
-    return list
-  }
-
-  // totalLabels = แต่ละ unit × (1 label ปกติ + N label refill/ตัวเลือกเสริม)
-  const totalLabels = items.reduce((s, item) => {
-    const qty = item.qty ?? 1
-    return s + qty * (1 + getRefillList(item).length + getMultiLabelList(item).length)
-  }, 0)
+  // นโยบายฉลาก: 1 เมนู (1 หน่วย/แก้ว) = 1 ใบเสมอ ไม่ว่าจะติ๊กตัวเลือกเสริมกี่รายการ/กี่จำนวนก็ตาม
+  // (milk, coffee bean, sweetness, add-on ฯลฯ) — ทุกตัวเลือกที่เลือกจะโชว์เป็นข้อความรวมในฉลากใบเดียว
+  // (ดู getContent('options') ใน buildLabelFromLayout/buildLabel ด้านบน ที่รวม optionGroups ทุกกลุ่มเป็น text อยู่แล้ว)
+  const totalLabels = items.reduce((s, item) => s + (item.qty ?? 1) * copies, 0)
 
   const buffers = []
   let labelIdx  = 1
 
   for (const item of items) {
-    const qty        = item.qty ?? 1
-    const refillList = getRefillList(item)
-    const multiList  = getMultiLabelList(item)
+    const qty = item.qty ?? 1
 
     for (let q = 0; q < qty; q++) {
-      // ── Label ปกติ ──
       for (let c = 0; c < copies; c++) {
         const buf = labelSettings.layout
           ? buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
@@ -605,42 +569,6 @@ app.post('/print', async (req, res) => {
         buffers.push(buf)
       }
       labelIdx++
-
-      // ── Label Refill (legacy — 1 ใบต่อ 1 refill ที่เลือก, รองรับออเดอร์เก่า) ──
-      for (const refillName of refillList) {
-        const refillItem = {
-          ...item,
-          name: refillName,
-          item_options: { ...item.item_options, refill: null },
-        }
-        for (let c = 0; c < copies; c++) {
-          const buf = labelSettings.layout
-            ? buildLabelFromLayout(refillItem, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
-            : buildLabel(refillItem, orderId, platform, labelIdx, totalLabels, labelSettings, storeName)
-          buffers.push(buf)
-        }
-        labelIdx++
-      }
-
-      // ── Label ตัวเลือกเสริมแบบ multi (1 ใบต่อ 1 หน่วย) ──
-      for (const choiceLabel of multiList) {
-        const extraItem = {
-          ...item,
-          name: choiceLabel,
-          item_options: {
-            ...item.item_options,
-            // เอาเฉพาะกลุ่มแบบ single ไว้โชว์เป็นบริบทบนฉลากใบนี้ด้วย ส่วนกลุ่ม multi ตัดออก (มีฉลากของตัวเองแล้ว)
-            optionGroups: (item.item_options?.optionGroups ?? []).filter(g => g.selectionType !== 'multi'),
-          },
-        }
-        for (let c = 0; c < copies; c++) {
-          const buf = labelSettings.layout
-            ? buildLabelFromLayout(extraItem, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
-            : buildLabel(extraItem, orderId, platform, labelIdx, totalLabels, labelSettings, storeName)
-          buffers.push(buf)
-        }
-        labelIdx++
-      }
     }
   }
 
