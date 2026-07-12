@@ -389,6 +389,52 @@ export default function POSPage({ onDateChange }) {
     )
   }, [optionGroups, optionMenu])
 
+  // สลับลำดับกลุ่มตัวเลือกเสริมที่โผล่ในเมนูนี้ (ลาก-วาง หรือกดปุ่มลูกศรใน MenuOptionModal)
+  // แก้เฉพาะลำดับของกลุ่มที่เกี่ยวข้องกับเมนูนี้ ไม่กระทบลำดับ/การจับคู่ของกลุ่มอื่น
+  // sort_order เป็นค่ากลาง (global) เดียวกับที่ใช้ในหน้าจัดการเมนู → เปลี่ยนที่นี่แล้วมีผลกับหน้าแอดมินด้วย
+  const reorderOptionGroups = (fromId, toId) => {
+    if (!optionMenu || fromId === toId) return
+    setOptionGroups(prev => {
+      const relevantIds = new Set(
+        prev.filter(g =>
+          (g.categories ?? []).includes(optionMenu.category) ||
+          (g.menu_ids ?? []).includes(optionMenu.id)
+        ).map(g => g.id)
+      )
+      const slots = []
+      prev.forEach((g, i) => { if (relevantIds.has(g.id)) slots.push(i) })
+
+      const subset = slots.map(i => prev[i])
+      const fromIdx = subset.findIndex(g => g.id === fromId)
+      const toIdx   = subset.findIndex(g => g.id === toId)
+      if (fromIdx === -1 || toIdx === -1) return prev
+
+      const reorderedSubset = [...subset]
+      const [moved] = reorderedSubset.splice(fromIdx, 1)
+      reorderedSubset.splice(toIdx, 0, moved)
+
+      const next = [...prev]
+      slots.forEach((slot, i) => { next[slot] = reorderedSubset[i] })
+
+      next.forEach((g, i) => {
+        if (g.sort_order !== i) {
+          supabase.from('menu_option_groups').update({ sort_order: i }).eq('id', g.id)
+            .then(({ error }) => { if (error) console.error('reorder option group save:', error.message) })
+        }
+      })
+
+      return next.map((g, i) => ({ ...g, sort_order: i }))
+    })
+  }
+
+  const moveOptionGroup = (id, delta) => {
+    const list = groupsForOptionMenu
+    const idx = list.findIndex(g => g.id === id)
+    const swapIdx = idx + delta
+    if (idx === -1 || swapIdx < 0 || swapIdx >= list.length) return
+    reorderOptionGroups(id, list[swapIdx].id)
+  }
+
   // ── Line item helpers ─────────────────────────────────────
   const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
 
@@ -1192,6 +1238,8 @@ export default function POSPage({ onDateChange }) {
           initial={null}
           onConfirm={handleOptionConfirm}
           onClose={() => setOptionMenu(null)}
+          onMoveGroup={moveOptionGroup}
+          onReorderGroup={reorderOptionGroups}
         />
       )}
 

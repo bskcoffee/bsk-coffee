@@ -951,6 +951,8 @@ function OptionGroupManagerModal({ categories, menus = [], onClose, onSaved }) {
   const [editGroup,   setEditGroup]   = useState(null)
   const [showAdd,     setShowAdd]     = useState(false)
   const [deleteGroup, setDeleteGroup] = useState(null)
+  const dragGroupId = useRef(null)
+  const dragOverGroupId = useRef(null)
 
   const load = async () => {
     setLoading(true)
@@ -981,6 +983,41 @@ function OptionGroupManagerModal({ categories, menus = [], onClose, onSaved }) {
     load()
   }
 
+  // เรียงลำดับกลุ่มตัวเลือกเสริม — ลำดับนี้จะไปกำหนดลำดับที่โผล่ในหน้า POS ด้วย (ดู sort_order ใน POSPage.jsx)
+  const persistGroupOrder = async (reordered) => {
+    setGroups(reordered)
+    await Promise.all(
+      reordered.map((g, i) =>
+        supabase.from('menu_option_groups').update({ sort_order: i }).eq('id', g.id)
+      )
+    )
+  }
+
+  const moveGroup = (id, delta) => {
+    const idx = groups.findIndex(g => g.id === id)
+    const swapIdx = idx + delta
+    if (idx === -1 || swapIdx < 0 || swapIdx >= groups.length) return
+    const reordered = [...groups]
+    ;[reordered[idx], reordered[swapIdx]] = [reordered[swapIdx], reordered[idx]]
+    persistGroupOrder(reordered)
+  }
+
+  const handleGroupDragStart = (id) => { dragGroupId.current = id }
+  const handleGroupDragOver = (e, id) => { e.preventDefault(); dragOverGroupId.current = id }
+  const handleGroupDrop = () => {
+    const from = dragGroupId.current
+    const to   = dragOverGroupId.current
+    if (!from || !to || from === to) return
+    const reordered = [...groups]
+    const fromIdx = reordered.findIndex(g => g.id === from)
+    const toIdx   = reordered.findIndex(g => g.id === to)
+    const [moved] = reordered.splice(fromIdx, 1)
+    reordered.splice(toIdx, 0, moved)
+    persistGroupOrder(reordered)
+    dragGroupId.current = null
+    dragOverGroupId.current = null
+  }
+
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
@@ -1000,8 +1037,40 @@ function OptionGroupManagerModal({ categories, menus = [], onClose, onSaved }) {
             <p className="text-center text-gray-400 py-8 text-sm">ยังไม่มีกลุ่มตัวเลือกเสริม</p>
           ) : (
             <div className="space-y-2">
-              {groups.map(g => (
-                <div key={g.id} className={`card flex items-start gap-3 ${!g.is_active ? 'opacity-50' : ''}`}>
+              <p className="text-xs text-gray-400">⠿ ลากเพื่อเรียงลำดับ หรือกดปุ่มลูกศร — ลำดับนี้จะใช้แสดงในหน้า POS ด้วย</p>
+              {groups.map((g, i) => (
+                <div
+                  key={g.id}
+                  draggable
+                  onDragStart={() => handleGroupDragStart(g.id)}
+                  onDragOver={(e) => handleGroupDragOver(e, g.id)}
+                  onDrop={handleGroupDrop}
+                  className={`card flex items-start gap-3 cursor-grab active:cursor-grabbing ${!g.is_active ? 'opacity-50' : ''}`}
+                >
+                  <GripVertical size={16} className="mt-1 text-gray-300 shrink-0" aria-hidden="true" />
+                  {/* Keyboard/touch-friendly reorder alternative to drag-and-drop */}
+                  <div className="flex flex-col shrink-0 mt-0.5">
+                    <button
+                      type="button"
+                      draggable={false}
+                      onClick={() => moveGroup(g.id, -1)}
+                      disabled={i === 0}
+                      aria-label={`ย้าย ${g.name} ขึ้น`}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-200 disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      <ChevronUp size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      draggable={false}
+                      onClick={() => moveGroup(g.id, 1)}
+                      disabled={i === groups.length - 1}
+                      aria-label={`ย้าย ${g.name} ลง`}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-200 disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      <ChevronDown size={13} />
+                    </button>
+                  </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-gray-900 text-sm">{g.name}</p>
                     <div className="flex gap-1.5 flex-wrap mt-1">

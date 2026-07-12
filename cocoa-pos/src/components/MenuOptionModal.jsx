@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { X, ChevronRight, Minus, Plus } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { X, ChevronRight, ChevronUp, ChevronDown, Minus, Plus, GripVertical } from 'lucide-react'
 
 const fmt = (n) =>
   n === 0 ? 'ฟรี'
@@ -22,11 +22,12 @@ const initGroupSelections = (initial) => {
 
 // กลุ่มตัวเลือกเสริม (เช่น "ชนิดนม", "Refill") มาจากหน้าจัดการเมนู → จัดการตัวเลือกเสริม
 // ผูกกับหมวดหมู่เมนู ไม่ได้ hardcode ไว้ในโค้ดอีกต่อไป — ผู้ดูแลระบบสร้าง/แก้ไขเองได้ทั้งหมด
-export default function MenuOptionModal({ menu, platform, optionGroups = [], initial, onConfirm, onClose, confirmLabel }) {
+export default function MenuOptionModal({ menu, platform, optionGroups = [], initial, onConfirm, onClose, confirmLabel, onMoveGroup, onReorderGroup }) {
   const basePrice = menu?.prices?.[platform] ?? 0
 
   const [note,       setNote]       = useState(initial?.note       ?? '')
   const [groupSelections, setGroupSelections] = useState(() => initGroupSelections(initial))
+  const dragGroupId = useRef(null)
 
   useEffect(() => {
     if (!initial) {
@@ -125,22 +126,63 @@ export default function MenuOptionModal({ menu, platform, optionGroups = [], ini
           {/* ── กลุ่มตัวเลือกเสริม (สร้าง/ผูกหมวดหมู่จากหน้าจัดการเมนู) ── */}
           {/* ความหวาน/บรรจุภัณฑ์ ไม่ hardcode ในนี้อีกต่อไป — มาจากกลุ่มตัวเลือกเสริม
               เหมือนกลุ่มอื่นๆ (ดู sweetness_packaging_optiongroups_migration.sql) */}
-          {optionGroups.map(group => {
+          {optionGroups.map((group, idx) => {
             const sel      = groupSelections[group.id] ?? {}
             const qtyTotal = groupQtyTotal(group)
             const total    = groupTotal(group)
             return (
-              <section key={group.id}>
-                <p className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2 flex-wrap">
-                  {group.name}
-                  {group.required
-                    ? <RequiredBadge />
-                    : <span className="text-[10px] text-gray-400 font-normal bg-gray-100 px-1.5 py-0.5 rounded">ไม่บังคับ</span>}
-                  <span className="text-[10px] text-gray-400 font-normal">
-                    {group.selection_type === 'single' ? 'เลือกได้ 1' : `เลือกได้สูงสุด ${group.max_select ?? 'ไม่จำกัด'}`}
-                  </span>
-                  {total > 0 && <span className="ml-auto text-xs text-cocoa-600 font-semibold">+{fmt(total)}</span>}
-                </p>
+              <section
+                key={group.id}
+                draggable={!!onReorderGroup}
+                onDragStart={() => { dragGroupId.current = group.id }}
+                onDragOver={(e) => { if (onReorderGroup) e.preventDefault() }}
+                onDrop={() => {
+                  if (onReorderGroup && dragGroupId.current && dragGroupId.current !== group.id) {
+                    onReorderGroup(dragGroupId.current, group.id)
+                  }
+                  dragGroupId.current = null
+                }}
+              >
+                <div className="flex items-center gap-1.5 mb-3">
+                  {onMoveGroup && (
+                    <>
+                      <GripVertical size={14} className="text-gray-300 shrink-0 cursor-grab active:cursor-grabbing" aria-hidden="true" />
+                      {/* ปุ่มลูกศร — ใช้แตะเรียงลำดับได้บนแท็บเล็ต (drag บางเครื่องแตะไม่ติด) */}
+                      <div className="flex flex-col shrink-0 -my-1">
+                        <button
+                          type="button"
+                          draggable={false}
+                          onClick={() => onMoveGroup(group.id, -1)}
+                          disabled={idx === 0}
+                          aria-label={`ย้าย ${group.name} ขึ้น`}
+                          className="p-0.5 rounded text-gray-400 active:bg-gray-100 disabled:opacity-20 disabled:pointer-events-none"
+                        >
+                          <ChevronUp size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          draggable={false}
+                          onClick={() => onMoveGroup(group.id, 1)}
+                          disabled={idx === optionGroups.length - 1}
+                          aria-label={`ย้าย ${group.name} ลง`}
+                          className="p-0.5 rounded text-gray-400 active:bg-gray-100 disabled:opacity-20 disabled:pointer-events-none"
+                        >
+                          <ChevronDown size={12} />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  <p className="text-sm font-bold text-gray-700 flex items-center gap-2 flex-wrap flex-1 min-w-0">
+                    {group.name}
+                    {group.required
+                      ? <RequiredBadge />
+                      : <span className="text-[10px] text-gray-400 font-normal bg-gray-100 px-1.5 py-0.5 rounded">ไม่บังคับ</span>}
+                    <span className="text-[10px] text-gray-400 font-normal">
+                      {group.selection_type === 'single' ? 'เลือกได้ 1' : `เลือกได้สูงสุด ${group.max_select ?? 'ไม่จำกัด'}`}
+                    </span>
+                    {total > 0 && <span className="ml-auto text-xs text-cocoa-600 font-semibold">+{fmt(total)}</span>}
+                  </p>
+                </div>
                 {group.choices.length === 0 ? (
                   <p className="text-sm text-gray-400 bg-gray-50 rounded-xl px-4 py-3">ยังไม่มีตัวเลือกในกลุ่มนี้</p>
                 ) : group.selection_type === 'single' ? (

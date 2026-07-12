@@ -479,6 +479,51 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
     )
   }, [optionGroups, optionTarget])
 
+  // สลับลำดับกลุ่มตัวเลือกเสริมที่โผล่ในเมนูนี้ (ลาก-วาง หรือกดปุ่มลูกศรใน MenuOptionModal)
+  // sort_order เป็นค่ากลาง (global) เดียวกับหน้าจัดการเมนู/POSPage.jsx
+  const reorderOptionGroups = (fromId, toId) => {
+    if (!optionTarget || fromId === toId) return
+    setOptionGroups(prev => {
+      const relevantIds = new Set(
+        prev.filter(g =>
+          (g.categories ?? []).includes(optionTarget.menu.category) ||
+          (g.menu_ids ?? []).includes(optionTarget.menu.id)
+        ).map(g => g.id)
+      )
+      const slots = []
+      prev.forEach((g, i) => { if (relevantIds.has(g.id)) slots.push(i) })
+
+      const subset = slots.map(i => prev[i])
+      const fromIdx = subset.findIndex(g => g.id === fromId)
+      const toIdx   = subset.findIndex(g => g.id === toId)
+      if (fromIdx === -1 || toIdx === -1) return prev
+
+      const reorderedSubset = [...subset]
+      const [moved] = reorderedSubset.splice(fromIdx, 1)
+      reorderedSubset.splice(toIdx, 0, moved)
+
+      const next = [...prev]
+      slots.forEach((slot, i) => { next[slot] = reorderedSubset[i] })
+
+      next.forEach((g, i) => {
+        if (g.sort_order !== i) {
+          supabase.from('menu_option_groups').update({ sort_order: i }).eq('id', g.id)
+            .then(({ error }) => { if (error) console.error('reorder option group save:', error.message) })
+        }
+      })
+
+      return next.map((g, i) => ({ ...g, sort_order: i }))
+    })
+  }
+
+  const moveOptionGroup = (id, delta) => {
+    const list = groupsForOptionTarget
+    const idx = list.findIndex(g => g.id === id)
+    const swapIdx = idx + delta
+    if (idx === -1 || swapIdx < 0 || swapIdx >= list.length) return
+    reorderOptionGroups(id, list[swapIdx].id)
+  }
+
   // ── Handle option confirm from MenuOptionModal ────────────
   const handleEditOptionConfirm = (opts) => {
     if (!optionTarget) return
@@ -1058,6 +1103,8 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
           onConfirm={handleEditOptionConfirm}
           onClose={() => setOptionTarget(null)}
           confirmLabel="เพิ่มในรายการ"
+          onMoveGroup={moveOptionGroup}
+          onReorderGroup={reorderOptionGroups}
         />
       )}
     </div>
