@@ -6,9 +6,9 @@ import { Calculator, X, Save, History, ChevronRight, AlertTriangle, Settings2, I
 import ConfirmModal from '../components/ConfirmModal'
 import { useToast } from '../contexts/ToastContext'
 
-const PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
-const DELIVERY_PLATS = ['GRAB', 'LINE', 'SHOPEE']
-const INSTORE_PLATS  = ['The metro', 'TU']
+// ค่าเริ่มต้น/fallback เมื่อยังไม่มี settings.platform_config หรือดึงไม่สำเร็จ
+// รายชื่อ platform จริง (รวมชื่อที่แอดมินเปลี่ยนเอง เช่น "Workin"/"Direct") โหลดจาก Supabase ใน loadData()
+const DEFAULT_PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU']
 const PLAT_FEE_KEYS = { GRAB: 'grab_fee_pct', LINE: 'line_fee_pct', SHOPEE: 'shopee_fee_pct', 'The metro': 'the_metro_fee_pct', TU: 'tu_fee_pct' }
 // ค่าเริ่มต้น/fallback เมื่อยังไม่มี settings.menu_categories หรือดึงไม่สำเร็จ
 // หมวดหมู่จริงที่ใช้แสดงผลโหลดจาก Supabase (key เดียวกับหน้าจัดการเมนู) ดูใน loadData()
@@ -68,7 +68,7 @@ function ProfitBadge({ pct }) {
 
 // ─── Cost Editor Modal ───────────────────────────────────────
 
-function CostEditorModal({ menu, costSettings, costSchema, platformFees, onClose, onSave }) {
+function CostEditorModal({ menu, costSettings, costSchema, platformFees, platforms, onClose, onSave }) {
   const { addToast } = useToast()
   const [form, setForm] = useState({
     main_ingredient: 0,
@@ -78,7 +78,7 @@ function CostEditorModal({ menu, costSettings, costSchema, platformFees, onClose
     packaging_type:  DEFAULT_PKG_TYPE_BY_CATEGORY[menu.category] ?? 'beverage',
     custom_costs:    [],   // [{ label: '', amount: 0 }]
   })
-  const [platform, setPlatform] = useState('GRAB')
+  const [platform, setPlatform] = useState(platforms.includes('GRAB') ? 'GRAB' : (platforms[0] ?? 'GRAB'))
   const [history, setHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
@@ -216,7 +216,7 @@ function CostEditorModal({ menu, costSettings, costSchema, platformFees, onClose
           <div>
             <label className="label">เลือก Platform เพื่อดู Margin</label>
             <div className="flex gap-2">
-              {PLATFORMS.map(p => (
+              {platforms.map(p => (
                 <button
                   key={p}
                   onClick={() => setPlatform(p)}
@@ -567,6 +567,7 @@ export default function MenuCostPage() {
   const [costSettings, setCostSettings] = useState({})
   const [costSchema, setCostSchema] = useState(null)
   const [platformFees, setPlatformFees] = useState({ GRAB: 30, LINE: 30, SHOPEE: 30, 'The metro': 0, TU: 0 })
+  const [platforms, setPlatforms] = useState(DEFAULT_PLATFORMS)
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES)
   const [loading, setLoading] = useState(true)
   const [filterCategory, setFilterCategory] = useState('all')
@@ -620,10 +621,14 @@ export default function MenuCostPage() {
     // Build platform fees — prefer platform_config JSON, fallback to legacy keys
     const pf = { GRAB: 30, LINE: 30, SHOPEE: 30, 'The metro': 0, TU: 0 }
     const platConfigRow = (settingsRes.data ?? []).find(r => r.key === 'platform_config')
+    let plats = DEFAULT_PLATFORMS
     if (platConfigRow?.value) {
       try {
         const arr = JSON.parse(platConfigRow.value)
-        for (const p of arr) pf[p.name] = p.fee ?? 0
+        if (Array.isArray(arr) && arr.length > 0) {
+          for (const p of arr) pf[p.name] = p.fee ?? 0
+          plats = arr.map(p => p.name).filter(Boolean)
+        }
       } catch { /* ignore */ }
     } else {
       for (const row of settingsRes.data ?? []) {
@@ -635,6 +640,7 @@ export default function MenuCostPage() {
       }
     }
     setPlatformFees(pf)
+    setPlatforms(plats)
 
     // Map menu_costs to menus
     const costMap = {}
@@ -688,6 +694,11 @@ export default function MenuCostPage() {
     if (items.length > 0) acc[cat] = items
     return acc
   }, {})
+
+  // จัดกลุ่ม platform เป็น Delivery/In-store แบบไดนามิกจาก fee (>0% = delivery, 0% = in-store)
+  // แทนการเทียบชื่อ platform ตรงๆ เพราะแอดมินเปลี่ยนชื่อ platform เองได้ (เช่น "The metro"→"Workin", "TU"→"Direct")
+  const deliveryPlats = platforms.filter(p => (platformFees[p] ?? 0) > 0)
+  const instorePlats  = platforms.filter(p => (platformFees[p] ?? 0) === 0)
 
   const noDataCount = menus.filter(m => !m.currentCost).length
 
@@ -813,8 +824,8 @@ export default function MenuCostPage() {
                   return { rows, allSamePrice }
                 }
 
-                const deliveryGroup = buildGroup(DELIVERY_PLATS)
-                const instoreGroup  = buildGroup(INSTORE_PLATS)
+                const deliveryGroup = buildGroup(deliveryPlats)
+                const instoreGroup  = buildGroup(instorePlats)
 
                 return (
                   <button
@@ -935,6 +946,7 @@ export default function MenuCostPage() {
           costSettings={costSettings}
           costSchema={costSchema}
           platformFees={platformFees}
+          platforms={platforms}
           onClose={() => setEditMenu(null)}
           onSave={() => { setEditMenu(null); loadData() }}
         />
