@@ -847,23 +847,36 @@ export default function DashboardPage() {
     }
 
     // Category summary (Beverage / Bread / Refill / Add-on)
-    const BEV_CATS = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot']
+    // Bev/Bread: หมวดหมู่เมนูตอนนี้แอดมินสร้างเองได้อิสระ (ดูหน้าจัดการเมนู) — 'Bun' คือหมวดขนมปังเพียงหมวดเดียว
+    // ที่ยังพิเศษ ที่เหลือ (รวมหมวดใหม่ที่เพิ่งสร้าง เช่น "THAI TEA") ถือเป็นเครื่องดื่มทั้งหมด
+    // Refill/Add-on: ย้ายจาก field เฉพาะ (item_options.refill / item_options.milk) มาเป็นกลุ่มตัวเลือกเสริมทั่วไป
+    // (item_options.optionGroups) แล้ว จึงจับคู่จากชื่อกลุ่มแทน (เก็บ fallback ฟิลด์เก่าไว้ให้ออเดอร์เก่านับได้ถูกต้องด้วย)
+    const REFILL_NAME_RE = /refill|เติม/i
+    const ADDON_NAME_RE  = /add[\s-]?on|เพิ่ม/i
     const categorySummary = { bev: 0, bread: 0, refill: 0, addon: 0 }
     for (const item of filteredItems) {
       const cat = item.menus?.category
       const qty = item.quantity ?? 0
-      if (BEV_CATS.includes(cat))  categorySummary.bev   += qty
-      else if (cat === 'Bun')      categorySummary.bread  += qty
-      // Refill จาก item_options.refill (array หรือ single)
+      if (cat === 'Bun') categorySummary.bread += qty
+      else                categorySummary.bev   += qty
+
+      // Refill/Add-on (ออเดอร์เก่า) — legacy field เก็บไว้เพื่อรองรับออเดอร์ก่อนย้ายระบบ
       const refill = item.item_options?.refill
       if (Array.isArray(refill)) {
         categorySummary.refill += refill.reduce((s, r) => s + (r.qty ?? 1), 0)
       } else if (refill) {
         categorySummary.refill += refill.qty ?? 1
       }
-      // Add-on: milk ที่มีราคา (paid addon)
       const milk = item.item_options?.milk
       if (milk && (milk.price ?? 0) > 0) categorySummary.addon += qty
+
+      // Refill/Add-on (ออเดอร์ใหม่) — จับคู่จากชื่อกลุ่มตัวเลือกเสริม (optionGroups)
+      for (const g of (item.item_options?.optionGroups ?? [])) {
+        const groupQty = (g.choices ?? []).reduce((s, c) => s + (c.qty ?? 1), 0)
+        if (!groupQty) continue
+        if (REFILL_NAME_RE.test(g.groupName ?? '')) categorySummary.refill += groupQty
+        else if (ADDON_NAME_RE.test(g.groupName ?? '')) categorySummary.addon += groupQty
+      }
     }
 
     return {
