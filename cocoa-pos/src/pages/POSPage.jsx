@@ -654,6 +654,14 @@ export default function POSPage({ onDateChange }) {
             labelSettings,
           }),
           signal: AbortSignal.timeout(5000),
+        }).then(async (res) => {
+          // fetch resolve ปกติแม้ print-server ตอบ error (เช่น เครื่องปลิ้นต่อไม่ติด) — ต้องเช็ค res.ok เอง
+          // ไม่งั้นพิมพ์ไม่ออกแบบเงียบๆ ไม่มี warning ขึ้นเตือนเลย (เคยเกิดกับออเดอร์ชาไทย)
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}))
+            console.warn('print-server error:', res.status, body.error)
+            setPrintWarning('พิมพ์ฉลากไม่สำเร็จ — ตรวจสอบเครื่องปลิ้น/print server')
+          }
         }).catch(err => {
           console.warn('print-server unreachable:', err.message)
           setPrintWarning('พิมพ์ฉลากไม่สำเร็จ — ตรวจสอบ print server')
