@@ -31,6 +31,30 @@ const CAT_EMOJI = {
 const todayStr  = () => format(new Date(), 'yyyy-MM-dd')
 const fmt = n => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', minimumFractionDigits: 0 }).format(n)
 
+// พิมพ์พร้อม auto-retry — เผื่อกรณี print server เพิ่งรีสตาร์ทเสร็จใหม่ๆ ไม่กี่วินาที (เช่น หลัง Windows auto-restart)
+// หรือเน็ตสะดุดชั่ววูบ ก่อนจะยอมแพ้แล้วแจ้งเตือนจริง
+async function printWithRetry(url, payload, maxAttempts = 3, delayMs = 2000) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(5000),
+      })
+      if (res.ok) return { success: true }
+      if (attempt === maxAttempts) {
+        const body = await res.json().catch(() => ({}))
+        return { success: false, error: body.error ?? `HTTP ${res.status}` }
+      }
+    } catch (err) {
+      if (attempt === maxAttempts) return { success: false, error: err.message }
+    }
+    await new Promise(r => setTimeout(r, delayMs))
+  }
+  return { success: false, error: 'unknown' }
+}
+
 // ── Drag-sort hook — document-level listeners (iOS safe) ──────
 // ใช้ document listeners แทน pointer capture เพื่อให้ onPointerMove
 // fire ได้ถูกต้องแม้ pointer อยู่บน element อื่น
@@ -136,6 +160,8 @@ export default function POSPage({ onDateChange }) {
   const [platforms,      setPlatforms]      = useState(PLATFORMS) // sync กับ platform_config ใน Supabase
   const [optionGroups,   setOptionGroups]   = useState([]) // กลุ่มตัวเลือกเสริม ผูกกับหมวดหมู่เมนู (จากหน้าจัดการเมนู)
   const [printEnabled,   setPrintEnabled]   = useState(true)   // toggle พิมพ์ฉลาก — ไม่ persist, reset เป็นเปิดทุกครั้งที่รีโหลดหน้า
+  const [printServerDown, setPrintServerDown] = useState(false) // แจ้งเตือนทันทีถ้า print server หลุด (เช็คเป็นระยะ ไม่ต้องรอสั่งออเดอร์ก่อน)
+  const printFailStreak = useRef(0)
 
   // ── Drag hooks ──
   const catDrag  = useDragSort()   // { draggingIdx, startDrag }
@@ -156,6 +182,31 @@ export default function POSPage({ onDateChange }) {
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 30000)
     return () => clearInterval(t)
+  }, [])
+
+  // ── Print server health check — เช็คเป็นระยะ แจ้งเตือนทันทีถ้าหลุด ไม่ต้องรอสั่งออเดอร์ก่อนถึงจะรู้ ──
+  // ต้องพลาดติดกัน 2 ครั้ง (~2 นาที) ก่อนถือว่า "หลุดจริง" กันแจ้งเตือนเก้อจากเน็ตสะดุดชั่ววูบ
+  useEffect(() => {
+    let cancelled = false
+    const check = async () => {
+      try {
+        const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
+        const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
+        const ip   = labelSettings.printerIp ?? '192.168.1.100'
+        const port = labelSettings.printerPort ?? 3001
+        const res  = await fetch(`http://${ip}:${port}/health`, { signal: AbortSignal.timeout(4000) })
+        if (cancelled) return
+        if (res.ok) { printFailStreak.current = 0; setPrintServerDown(false) }
+        else throw new Error(`HTTP ${res.status}`)
+      } catch {
+        if (cancelled) return
+        printFailStreak.current += 1
+        if (printFailStreak.current >= 2) setPrintServerDown(true)
+      }
+    }
+    check()
+    const t = setInterval(check, 60000)
+    return () => { cancelled = true; clearInterval(t) }
   }, [])
 
   // ── Load data ─────────────────────────────────────────────
@@ -630,6 +681,7 @@ export default function POSPage({ onDateChange }) {
       })()
 
       // ── Auto-print: ส่งไป print server (fire-and-forget, ไม่ block UX) ──
+      // มี auto-retry ในตัว (printWithRetry) เผื่อ print server เพิ่งรีสตาร์ทเสร็จไม่กี่วินาที
       if (!printEnabled) {
         // พิมพ์ปิดอยู่ — ข้ามการพิมพ์ทั้งหมด
       } else
@@ -639,33 +691,26 @@ export default function POSPage({ onDateChange }) {
         const printServerIp = labelSettings.printerIp ?? '192.168.1.100'
         const printServerPort = labelSettings.printerPort ?? 3001
 
-        fetch(`http://${printServerIp}:${printServerPort}/print`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            orderId:  notes ?? newOrder.id,
-            platform: selectedPlat,
-            items: orderItemsWithPrice.map(item => ({
-              name:         item.name,
-              qty:          item.qty,
-              item_options: item.options,
-              isCampaign:   item.isCampaign ?? false,
-            })),
-            labelSettings,
-          }),
-          signal: AbortSignal.timeout(5000),
-        }).then(async (res) => {
-          // fetch resolve ปกติแม้ print-server ตอบ error (เช่น เครื่องปลิ้นต่อไม่ติด) — ต้องเช็ค res.ok เอง
-          // ไม่งั้นพิมพ์ไม่ออกแบบเงียบๆ ไม่มี warning ขึ้นเตือนเลย (เคยเกิดกับออเดอร์ชาไทย)
-          if (!res.ok) {
-            const body = await res.json().catch(() => ({}))
-            console.warn('print-server error:', res.status, body.error)
-            setPrintWarning('พิมพ์ฉลากไม่สำเร็จ — ตรวจสอบเครื่องปลิ้น/print server')
+        ;(async () => {
+          const result = await printWithRetry(
+            `http://${printServerIp}:${printServerPort}/print`,
+            {
+              orderId:  notes ?? newOrder.id,
+              platform: selectedPlat,
+              items: orderItemsWithPrice.map(item => ({
+                name:         item.name,
+                qty:          item.qty,
+                item_options: item.options,
+                isCampaign:   item.isCampaign ?? false,
+              })),
+              labelSettings,
+            }
+          )
+          if (!result.success) {
+            console.warn('print failed after retries:', result.error)
+            setPrintWarning('พิมพ์ฉลากไม่สำเร็จ (ลองแล้ว 3 ครั้ง) — ตรวจสอบเครื่องปลิ้น/print server')
           }
-        }).catch(err => {
-          console.warn('print-server unreachable:', err.message)
-          setPrintWarning('พิมพ์ฉลากไม่สำเร็จ — ตรวจสอบ print server')
-        })
+        })()
       } catch (err) {
         console.warn('auto-print setup error:', err.message)
         setPrintWarning('พิมพ์ฉลากไม่สำเร็จ — ตรวจสอบ print server')
@@ -819,6 +864,14 @@ export default function POSPage({ onDateChange }) {
           </button>
         </div>
       </div>
+
+      {/* ── Print server down banner — เห็นทันทีไม่ต้องรอสั่งออเดอร์ก่อน ── */}
+      {printServerDown && printEnabled && (
+        <div className="bg-red-600 text-white px-4 py-2 flex items-center gap-2 text-sm font-semibold shrink-0">
+          <AlertCircle size={16} className="shrink-0" />
+          เชื่อมต่อเครื่องพิมพ์ไม่ได้ (print server หลุด) — ออเดอร์ใหม่จะไม่ปลิ้นลาเบล จนกว่าจะเชื่อมต่อได้อีกครั้ง
+        </div>
+      )}
 
       {/* ── 3-Panel Body ────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
