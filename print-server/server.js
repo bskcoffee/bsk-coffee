@@ -4,6 +4,7 @@ const cors    = require('cors')
 const net     = require('net')
 const iconv   = require('iconv-lite')
 const fs      = require('fs')
+const { exec } = require('child_process')
 
 // ─── Thai bitmap rendering ────────────────────────────────────────────────────
 let nCanvas = null, thaiFont = false
@@ -36,6 +37,21 @@ const path         = require('path')
 let lastDiscoveryAt = 0
 const DISCOVERY_COOLDOWN = 60_000   // ไม่ scan ถี่กว่า 1 นาที
 
+// MAC address ของเครื่องพิมพ์ label ตัวจริง (ตั้งใน .env) — ใช้ยืนยันตัวตนก่อนสลับ IP อัตโนมัติ
+// ป้องกันปัญหา: มีอุปกรณ์อื่น (เช่นเครื่องพิมพ์เอกสาร) เปิดพอร์ตเดียวกันไว้ แล้วระบบสลับไปยิงผิดเครื่อง
+const PRINTER_MAC = (process.env.PRINTER_MAC || '').toLowerCase().replace(/-/g, ':')
+
+// เช็ค MAC address ของ IP ที่เจอ ผ่าน ARP table ของ Windows
+function getMacForIp(ip) {
+  return new Promise((resolve) => {
+    exec(`arp -a ${ip}`, (err, stdout) => {
+      if (err || !stdout) return resolve(null)
+      const match = stdout.match(/([0-9a-f]{2}(-[0-9a-f]{2}){5})/i)
+      resolve(match ? match[1].toLowerCase().replace(/-/g, ':') : null)
+    })
+  })
+}
+
 async function discoverPrinter() {
   const now = Date.now()
   if (now - lastDiscoveryAt < DISCOVERY_COOLDOWN) {
@@ -64,7 +80,22 @@ async function discoverPrinter() {
     console.warn('[DISCOVER] No printer found on subnet')
     return null
   }
-  console.log(`[DISCOVER] Found: ${found.join(', ')} — using ${found[0]}`)
+  console.log(`[DISCOVER] พบอุปกรณ์เปิดพอร์ต ${PRINTER_PORT}: ${found.join(', ')}`)
+
+  // ถ้าตั้ง PRINTER_MAC ไว้ ต้องยืนยัน MAC ตรงกันก่อนสลับ IP เท่านั้น
+  if (PRINTER_MAC) {
+    for (const ip of found) {
+      const mac = await getMacForIp(ip)
+      if (mac === PRINTER_MAC) {
+        console.log(`[DISCOVER] ยืนยัน MAC ตรงกับเครื่องพิมพ์ (${mac}) — ใช้ ${ip}`)
+        return ip
+      }
+    }
+    console.warn(`[DISCOVER] ไม่พบอุปกรณ์ที่ MAC ตรงกับ PRINTER_MAC (${PRINTER_MAC}) ในบรรดา ${found.join(', ')} — ยกเลิกการสลับ IP อัตโนมัติ กรุณาตรวจสอบเครื่องพิมพ์ด้วยตนเอง`)
+    return null
+  }
+
+  console.warn('[DISCOVER] ยังไม่ได้ตั้งค่า PRINTER_MAC ใน .env — ใช้ผลลัพธ์แรกที่เจอโดยไม่ยืนยันตัวตน (เสี่ยงสลับผิดเครื่อง) แนะนำให้ตั้ง PRINTER_MAC เพื่อความปลอดภัย')
   return found[0]
 }
 
@@ -225,6 +256,66 @@ function renderThaiToBitmap(text, xAbs, yAbs, fontSizeHint, align) {
   return { cmd: `BITMAP ${x},${yAbs},${bpr},${th},0,`, data: buf, tw, th }
 }
 
+// ─── Text wrapping helpers ────────────────────────────────────────────────────
+// ป้องกันข้อความยาว (เช่น รวมตัวเลือกเสริมหลายรายการ) ล้นขอบฉลาก — ขึ้นบรรทัดใหม่แทน
+function wrapAsciiLines(content, maxWidthDots, cw) {
+  const maxChars = Math.max(4, Math.floor(maxWidthDots / cw))
+  if (content.length <= maxChars) return [content]
+  const words = content.split(' ')
+  const lines = []
+  let cur = ''
+  for (const w of words) {
+    const candidate = cur ? `${cur} ${w}` : w
+    if (candidate.length > maxChars) {
+      if (cur) lines.push(cur)
+      let rest = w
+      while (rest.length > maxChars) {
+        lines.push(rest.slice(0, maxChars))
+        rest = rest.slice(maxChars)
+      }
+      cur = rest
+    } else {
+      cur = candidate
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines
+}
+
+let _measureCanvas = null
+function measureThaiWidth(text, font) {
+  if (!nCanvas) return text.length * 10
+  if (!_measureCanvas) _measureCanvas = nCanvas.createCanvas(10, 10)
+  const ctx = _measureCanvas.getContext('2d')
+  ctx.font = font
+  return ctx.measureText(text).width
+}
+
+function wrapThaiLines(content, maxWidthDots, font) {
+  if (measureThaiWidth(content, font) <= maxWidthDots) return [content]
+  const words = content.split(' ')
+  const lines = []
+  let cur = ''
+  for (const w of words) {
+    const candidate = cur ? `${cur} ${w}` : w
+    if (measureThaiWidth(candidate, font) > maxWidthDots) {
+      if (cur) lines.push(cur)
+      let rest = w
+      while (rest && measureThaiWidth(rest, font) > maxWidthDots) {
+        let cut = rest.length
+        while (cut > 1 && measureThaiWidth(rest.slice(0, cut), font) > maxWidthDots) cut--
+        lines.push(rest.slice(0, cut))
+        rest = rest.slice(cut)
+      }
+      cur = rest
+    } else {
+      cur = candidate
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines
+}
+
 // ─── Build TSPL label from new layout (drag-editor) ──────────────────────────
 function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, layout, storeName, labelWmm, labelHmm) {
   const wMM = labelWmm || LABEL_W_MM
@@ -256,6 +347,14 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
             opts.push(s || 'Refill')
           }
         }
+        // กลุ่มตัวเลือกเสริม (menu_option_groups) — ที่แอดมินสร้างเองจากหน้าจัดการเมนู
+        if (Array.isArray(o.optionGroups)) {
+          for (const g of o.optionGroups) {
+            for (const c of (g.choices ?? [])) {
+              if (c.label) opts.push(c.qty > 1 ? `${c.label} x${c.qty}` : c.label)
+            }
+          }
+        }
         if (o.note)             { const s = toStr(o.note);  if (s) opts.push(s) }
         return opts.join(' / ')
       }
@@ -266,7 +365,7 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
         return `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`
       }
       case 'index':      return `${labelIdx}/${totalLabels}`
-      case 'store_name': return storeName || 'Cocoa House'
+      case 'store_name': return storeName || 'BSK coffee'
       case 'platform':   return platform || ''
       case 'date': {
         const now = new Date()
@@ -305,30 +404,44 @@ function buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, la
     const content = getContent(field)
     if (!content) continue
 
-    if (hasThai(content)) {
-      const bmp = renderThaiToBitmap(
-        content,
-        Math.round(field.x / 100 * wDot),
-        Math.round(field.y / 100 * hDot),
-        field.fontSize, field.align
-      )
-      if (bmp) {
+    const xBase  = Math.round(field.x / 100 * wDot)
+    const yBase  = Math.round(field.y / 100 * hDot)
+    const margin = 4
+    // ความกว้างที่พิมพ์ได้จริงตามตำแหน่ง/การจัดวาง — ป้องกันข้อความยาวล้นขอบฉลาก (ขึ้นบรรทัดใหม่แทน)
+    const maxWidth = field.align === 'center'
+      ? Math.max(30, 2 * Math.min(xBase, wDot - xBase) - margin)
+      : field.align === 'right'
+        ? Math.max(30, xBase - margin)
+        : Math.max(30, wDot - xBase - margin)
+
+    if (hasThai(content) && nCanvas && thaiFont) {
+      const px    = fontSizeToPx(field.fontSize)
+      const font  = `${px}px Thai`
+      const lines = wrapThaiLines(content, maxWidth, font)
+      let y = yBase
+      for (const line of lines) {
+        const bmp = renderThaiToBitmap(line, xBase, y, field.fontSize, field.align)
+        if (!bmp) break
         chunks.push(enc(bmp.cmd))
         chunks.push(bmp.data)
         chunks.push(Buffer.from('\r\n'))
-        continue
+        y += bmp.th + 3
       }
+      continue
     }
 
     const { font, xm, ym, cw } = getFontParams(field.fontSize)
-    const xBase = Math.round(field.x / 100 * wDot)
-    const y     = Math.round(field.y / 100 * hDot)
-    const textW = content.length * cw
-    let x = xBase
-    if (field.align === 'center') x = Math.max(0, xBase - Math.round(textW / 2))
-    if (field.align === 'right')  x = Math.max(0, xBase - textW)
-
-    addLine(`TEXT ${x},${y},"${font}",0,${xm},${ym},"${safe(content)}"`)
+    const lineH = fontSizeToPx(field.fontSize) + 8
+    const lines = wrapAsciiLines(content, maxWidth, cw)
+    let y = yBase
+    for (const line of lines) {
+      const textW = line.length * cw
+      let x = xBase
+      if (field.align === 'center') x = Math.max(0, xBase - Math.round(textW / 2))
+      if (field.align === 'right')  x = Math.max(0, xBase - textW)
+      addLine(`TEXT ${x},${y},"${font}",0,${xm},${ym},"${safe(line)}"`)
+      y += lineH
+    }
   }
 
   addLine(`PRINT 1,1`)
@@ -380,17 +493,34 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
     if (s.showOptionSweet  && o.sweetness != null) opts.push(`${o.sweetness}%`)
     if (o.packaging)                               opts.push(o.packaging)
     if (s.showOptionRefill && o.refill)            opts.push('Refill')
+    if (Array.isArray(o.optionGroups)) {
+      for (const g of o.optionGroups) {
+        for (const c of (g.choices ?? [])) {
+          if (c.label) opts.push(c.qty > 1 ? `${c.label} x${c.qty}` : c.label)
+        }
+      }
+    }
     if (s.showOptionNote   && o.note)              opts.push(o.note)
   }
   if (opts.length > 0) {
-    const content = opts.join(' / ')
-    if (hasThai(content)) {
-      const bmp = renderThaiToBitmap(content, Math.round(LABEL_W / 2), y, 10, 'center')
-      if (bmp) { addBmp(bmp); y += bmp.th + 4 }
+    const content  = opts.join(' / ')
+    const maxWidth = Math.max(30, LABEL_W - 16) // เว้นขอบซ้ายขวาเล็กน้อย ป้องกันล้นขอบฉลาก
+    if (hasThai(content) && nCanvas && thaiFont) {
+      const px    = fontSizeToPx(10)
+      const font  = `${px}px Thai`
+      const lines = wrapThaiLines(content, maxWidth, font)
+      for (const line of lines) {
+        const bmp = renderThaiToBitmap(line, Math.round(LABEL_W / 2), y, 10, 'center')
+        if (!bmp) break
+        addBmp(bmp); y += bmp.th + 4
+      }
     } else {
-      const x = Math.max(0, Math.round(LABEL_W / 2 - content.length * 8 / 2))
-      addLine(`TEXT ${x},${y},"2",0,1,1,"${safe(content)}"`)
-      y += 25
+      const lines = wrapAsciiLines(content, maxWidth, 8)
+      for (const line of lines) {
+        const x = Math.max(0, Math.round(LABEL_W / 2 - line.length * 8 / 2))
+        addLine(`TEXT ${x},${y},"2",0,1,1,"${safe(line)}"`)
+        y += 25
+      }
     }
   }
 
@@ -414,7 +544,7 @@ function buildLabel(item, orderId, platform, labelIdx, totalLabels, settings, st
   // Store name
   if (s.showStoreName) {
     y += 25
-    const name = storeName || 'Cocoa House'
+    const name = storeName || 'BSK coffee'
     const x = Math.max(0, Math.round(LABEL_W / 2 - name.length * 8 / 2))
     addLine(`TEXT ${x},${y},"2",0,1,1,"${safe(name)}"`)
   }
@@ -451,37 +581,18 @@ app.post('/print', async (req, res) => {
 
   const copies = parseInt(labelSettings.copies ?? 1)
 
-  // แปลง refill value เป็น string ชื่อ
-  const toRefillName = (v) => {
-    if (v == null) return ''
-    if (typeof v === 'string') return v
-    if (typeof v === 'object') return v.name || v.label || v.value || ''
-    return String(v)
-  }
-
-  // ดึง refill list จาก item (เสมอ array)
-  const getRefillList = (item) => {
-    const refills = item.item_options?.refill
-    if (!refills) return []
-    const arr = Array.isArray(refills) ? refills : [refills]
-    return arr.map(toRefillName).filter(Boolean)
-  }
-
-  // totalLabels = แต่ละ unit × (1 label ปกติ + N label refill)
-  const totalLabels = items.reduce((s, item) => {
-    const qty = item.qty ?? 1
-    return s + qty * (1 + getRefillList(item).length)
-  }, 0)
+  // นโยบายฉลาก: 1 เมนู (1 หน่วย/แก้ว) = 1 ใบเสมอ ไม่ว่าจะติ๊กตัวเลือกเสริมกี่รายการ/กี่จำนวนก็ตาม
+  // (milk, coffee bean, sweetness, add-on ฯลฯ) — ทุกตัวเลือกที่เลือกจะโชว์เป็นข้อความรวมในฉลากใบเดียว
+  // (ดู getContent('options') ใน buildLabelFromLayout/buildLabel ด้านบน ที่รวม optionGroups ทุกกลุ่มเป็น text อยู่แล้ว)
+  const totalLabels = items.reduce((s, item) => s + (item.qty ?? 1) * copies, 0)
 
   const buffers = []
   let labelIdx  = 1
 
   for (const item of items) {
-    const qty        = item.qty ?? 1
-    const refillList = getRefillList(item)
+    const qty = item.qty ?? 1
 
     for (let q = 0; q < qty; q++) {
-      // ── Label ปกติ ──
       for (let c = 0; c < copies; c++) {
         const buf = labelSettings.layout
           ? buildLabelFromLayout(item, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
@@ -489,22 +600,6 @@ app.post('/print', async (req, res) => {
         buffers.push(buf)
       }
       labelIdx++
-
-      // ── Label Refill (1 ใบต่อ 1 refill ที่เลือก) ──
-      for (const refillName of refillList) {
-        const refillItem = {
-          ...item,
-          name: refillName,
-          item_options: { ...item.item_options, refill: null },
-        }
-        for (let c = 0; c < copies; c++) {
-          const buf = labelSettings.layout
-            ? buildLabelFromLayout(refillItem, orderId, platform, labelIdx, totalLabels, labelSettings.layout, storeName, labelSettings.labelW, labelSettings.labelH)
-            : buildLabel(refillItem, orderId, platform, labelIdx, totalLabels, labelSettings, storeName)
-          buffers.push(buf)
-        }
-        labelIdx++
-      }
     }
   }
 
@@ -518,30 +613,40 @@ app.post('/print', async (req, res) => {
   }
 })
 
-// ─── AI Reporter (ปิดแล้ว — ย้ายไป Vercel cron แทน) ─────────────────────────
-// let aiReporter = null
-// try { aiReporter = require('./ai-reporter') } catch (e) { console.warn('[AI Reporter] Failed to load:', e.message) }
+// หมายเหตุ: BSK ไม่ใช้ AI Reporter ใน print-server (รายงานรันผ่าน Vercel cron แทน)
+// จึงไม่มี route /report/send ในเวอร์ชันนี้ — ต่างจาก Cocoa House เดิม
 
-// POST /report/send  — manual trigger จาก cocoa-house web app
-// body: { date: 'YYYY-MM-DD' }
-app.post('/report/send', async (req, res) => {
-  if (!aiReporter) return res.status(503).json({ error: 'AI Reporter not loaded' })
-  const { date } = req.body
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return res.status(400).json({ error: 'date required (YYYY-MM-DD)' })
-  }
+// ─── Keep-alive heartbeat ─────────────────────────────────────────────────────
+// เครื่องพิมพ์ label บางรุ่นมีโหมด power-save/auto-sleep ที่ตัดวงจรเน็ตเวิร์กเมื่อไม่มีการใช้งานนาน
+// heartbeat นี้จะยิง TCP probe เบาๆ (connect แล้วปิดทันที ไม่ส่งข้อมูลพิมพ์) ไปหาเครื่องพิมพ์เป็นระยะ
+// เพื่อ (1) มี traffic สม่ำเสมอ ช่วยลดโอกาสเครื่องพิมพ์เข้าโหมด idle/sleep เอง
+// (2) log สถานะ online/offline ให้เห็นว่าเครื่องพิมพ์หลุดตอนไหน (ไม่ได้การันตี 100% ถ้าเครื่องพิมพ์
+//     ตั้ง auto power off แบบ hard sleep ไว้ — กรณีนั้นต้องปิด/ปรับที่เมนูตัวเครื่องพิมพ์เอง)
+const HEARTBEAT_INTERVAL = 90_000 // 90 วินาที
+let printerWasOnline = null // null = ยังไม่เคย probe
+
+async function heartbeat() {
   try {
-    await aiReporter.runReport(date)
-    res.json({ ok: true, date })
+    await testPrinterTcp(3000)
+    if (printerWasOnline === false) {
+      console.log(`[HEARTBEAT] เครื่องพิมพ์กลับมา online — ${PRINTER_IP}:${PRINTER_PORT}`)
+    }
+    printerWasOnline = true
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    if (printerWasOnline !== false) {
+      console.warn(`[HEARTBEAT] เครื่องพิมพ์ offline — ${PRINTER_IP}:${PRINTER_PORT} (${err.message})`)
+    }
+    printerWasOnline = false
   }
-})
+}
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(SERVER_PORT, '0.0.0.0', () => {
-  console.log(`\nCocoa Print Server (TSPL mode)`)
+  console.log(`\nBSK coffee Print Server (TSPL mode)`)
   console.log(`  Listening : http://0.0.0.0:${SERVER_PORT}`)
   console.log(`  Printer   : ${PRINTER_IP}:${PRINTER_PORT}`)
-  console.log(`\nรอรับ print job จาก Cocoa POS...\n`)
+  console.log(`\nรอรับ print job จาก BSK POS...\n`)
+
+  heartbeat()
+  setInterval(heartbeat, HEARTBEAT_INTERVAL)
 })
