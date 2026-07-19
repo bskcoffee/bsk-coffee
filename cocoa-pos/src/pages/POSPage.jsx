@@ -31,6 +31,30 @@ const CAT_EMOJI = {
 const todayStr  = () => format(new Date(), 'yyyy-MM-dd')
 const fmt = n => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', minimumFractionDigits: 0 }).format(n)
 
+// พิมพ์พร้อม auto-retry — เผื่อกรณี print server เพิ่งรีสตาร์ทเสร็จใหม่ๆ ไม่กี่วินาที (เช่น หลัง Windows auto-restart)
+// หรือเน็ตสะดุดชั่ววูบ ก่อนจะยอมแพ้แล้วแจ้งเตือนจริง
+async function printWithRetry(url, payload, maxAttempts = 3, delayMs = 2000) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(5000),
+      })
+      if (res.ok) return { success: true }
+      if (attempt === maxAttempts) {
+        const body = await res.json().catch(() => ({}))
+        return { success: false, error: body.error ?? `HTTP ${res.status}` }
+      }
+    } catch (err) {
+      if (attempt === maxAttempts) return { success: false, error: err.message }
+    }
+    await new Promise(r => setTimeout(r, delayMs))
+  }
+  return { success: false, error: 'unknown' }
+}
+
 // ── Drag-sort hook — document-level listeners (iOS safe) ──────
 // ใช้ document listeners แทน pointer capture เพื่อให้ onPointerMove
 // fire ได้ถูกต้องแม้ pointer อยู่บน element อื่น
@@ -76,13 +100,24 @@ function useDragSort() {
 
 // ══════════════════════════════════════════════════════════════
 export default function POSPage({ onDateChange }) {
-  const { signOut } = useAuth()
+  const { signOut, role, accessExpiresAt, session } = useAuth()
   const { addToast } = useToast()
+
+  const ROLE_LABEL = { super_admin: 'ผู้ดูแลระบบสูงสุด', admin: 'ผู้ดูแลระบบ', staff: 'พนักงาน' }
+
+  // แสดงวันใช้งานคงเหลือของตัวเอง (เฉพาะ admin/staff ที่ super_admin ตั้งวันหมดอายุไว้)
+  const expiryInfo = (() => {
+    if (role === 'super_admin' || !accessExpiresAt) return null
+    const daysLeft = Math.ceil((new Date(accessExpiresAt) - new Date()) / 86400000)
+    const dateStr = new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+    return {
+      text: daysLeft < 0 ? `หมดอายุแล้ว (${dateStr})` : `ใช้งานได้ถึง ${dateStr} (เหลือ ${daysLeft} วัน)`,
+      warn: daysLeft <= 7,
+    }
+  })()
 
   // ── Remote data ──
   const [menus,        setMenus]        = useState([])
-  const [addonMenus,   setAddonMenus]   = useState([])
-  const [refillMenus,  setRefillMenus]  = useState([])
   const [platFees,     setPlatFees]     = useState({})
   const [loading,      setLoading]      = useState(true)
 
@@ -123,6 +158,10 @@ export default function POSPage({ onDateChange }) {
   const [deletingId,     setDeletingId]     = useState(null)
   const [time,           setTime]           = useState(new Date())
   const [platforms,      setPlatforms]      = useState(PLATFORMS) // sync กับ platform_config ใน Supabase
+  const [optionGroups,   setOptionGroups]   = useState([]) // กลุ่มตัวเลือกเสริม ผูกกับหมวดหมู่เมนู (จากหน้าจัดการเมนู)
+  const [printEnabled,   setPrintEnabled]   = useState(true)   // toggle พิมพ์ฉลาก — ไม่ persist, reset เป็นเปิดทุกครั้งที่รีโหลดหน้า
+  const [printServerDown, setPrintServerDown] = useState(false) // แจ้งเตือนทันทีถ้า print server หลุด (เช็คเป็นระยะ ไม่ต้องรอสั่งออเดอร์ก่อน)
+  const printFailStreak = useRef(0)
 
   // ── Drag hooks ──
   const catDrag  = useDragSort()   // { draggingIdx, startDrag }
@@ -145,22 +184,56 @@ export default function POSPage({ onDateChange }) {
     return () => clearInterval(t)
   }, [])
 
+  // ── Print server health check — เช็คเป็นระยะ แจ้งเตือนทันทีถ้าหลุด ไม่ต้องรอสั่งออเดอร์ก่อนถึงจะรู้ ──
+  // ต้องพลาดติดกัน 2 ครั้ง (~2 นาที) ก่อนถือว่า "หลุดจริง" กันแจ้งเตือนเก้อจากเน็ตสะดุดชั่ววูบ
+  useEffect(() => {
+    let cancelled = false
+    const check = async () => {
+      try {
+        const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
+        const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
+        const ip   = labelSettings.printerIp ?? '192.168.1.100'
+        const port = labelSettings.printerPort ?? 3001
+        const res  = await fetch(`http://${ip}:${port}/health`, { signal: AbortSignal.timeout(4000) })
+        if (cancelled) return
+        if (res.ok) { printFailStreak.current = 0; setPrintServerDown(false) }
+        else throw new Error(`HTTP ${res.status}`)
+      } catch {
+        if (cancelled) return
+        printFailStreak.current += 1
+        if (printFailStreak.current >= 2) setPrintServerDown(true)
+      }
+    }
+    check()
+    const t = setInterval(check, 60000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [])
+
   // ── Load data ─────────────────────────────────────────────
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const ADDON_CATS  = ['Addon', 'addon', 'ADDON']
-      const REFILL_CATS = ['Refill', 'refill', 'REFILL']
-      const HIDDEN_CATS = [...ADDON_CATS, ...REFILL_CATS]
-
-      const [menusRes, settingsRes] = await Promise.all([
+      const [menusRes, settingsRes, optionGroupsRes] = await Promise.all([
         supabase.from('menus')
           .select('id, name, category, sort_order, image_url, menu_prices(platform, price, effective_to)')
           .eq('is_active', true)
           .order('sort_order', { ascending: true })
           .order('name'),
         supabase.from('settings').select('key, value'),
+        supabase.from('menu_option_groups')
+          .select('*, menu_option_choices(*)')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true }),
       ])
+
+      // กลุ่มตัวเลือกเสริม (ผูกกับหมวดหมู่เมนู) — โผล่อัตโนมัติเมื่อเลือกเมนูในหมวดหมู่นั้น
+      const loadedGroups = (optionGroupsRes.data ?? []).map(g => ({
+        ...g,
+        choices: (g.menu_option_choices ?? [])
+          .filter(c => c.is_active)
+          .sort((a, b) => a.sort_order - b.sort_order),
+      }))
+      setOptionGroups(loadedGroups)
 
       const allMenuList = (menusRes.data ?? []).map(m => {
         const prices = {}
@@ -171,7 +244,7 @@ export default function POSPage({ onDateChange }) {
         return { ...m, prices }
       })
 
-      const mainMenus = allMenuList.filter(m => !HIDDEN_CATS.includes(m.category))
+      const mainMenus = allMenuList
 
       // Apply saved menu order from localStorage (fallback เมื่อ Supabase sort_order ไม่ได้รับสิทธิ์ write)
       const localMenuOrderStr = (() => { try { return localStorage.getItem('pos_menu_order_local') } catch { return null } })()
@@ -184,8 +257,6 @@ export default function POSPage({ onDateChange }) {
       }
 
       setMenus(mainMenus)
-      setAddonMenus(allMenuList.filter(m => ADDON_CATS.includes(m.category)))
-      setRefillMenus(allMenuList.filter(m => REFILL_CATS.includes(m.category)))
 
       // Load custom category order
       const settings = settingsRes.data ?? []
@@ -360,8 +431,60 @@ export default function POSPage({ onDateChange }) {
   }
 
   // ── Computed: addons/refills ──────────────────────────────
-  const addonsForModal  = useMemo(() => addonMenus.map(m => ({ id: m.id, name: m.name, prices: m.prices })), [addonMenus])
-  const refillsForModal = useMemo(() => refillMenus.map(m => ({ id: m.id, name: m.name, prices: m.prices })), [refillMenus])
+  // กลุ่มตัวเลือกเสริมที่ผูกกับหมวดหมู่ของเมนูที่กำลังเปิด modal อยู่
+  const groupsForOptionMenu = useMemo(() => {
+    if (!optionMenu) return []
+    return optionGroups.filter(g =>
+      (g.categories ?? []).includes(optionMenu.category) ||
+      (g.menu_ids ?? []).includes(optionMenu.id)
+    )
+  }, [optionGroups, optionMenu])
+
+  // สลับลำดับกลุ่มตัวเลือกเสริมที่โผล่ในเมนูนี้ (ลาก-วาง หรือกดปุ่มลูกศรใน MenuOptionModal)
+  // แก้เฉพาะลำดับของกลุ่มที่เกี่ยวข้องกับเมนูนี้ ไม่กระทบลำดับ/การจับคู่ของกลุ่มอื่น
+  // sort_order เป็นค่ากลาง (global) เดียวกับที่ใช้ในหน้าจัดการเมนู → เปลี่ยนที่นี่แล้วมีผลกับหน้าแอดมินด้วย
+  const reorderOptionGroups = (fromId, toId) => {
+    if (!optionMenu || fromId === toId) return
+    setOptionGroups(prev => {
+      const relevantIds = new Set(
+        prev.filter(g =>
+          (g.categories ?? []).includes(optionMenu.category) ||
+          (g.menu_ids ?? []).includes(optionMenu.id)
+        ).map(g => g.id)
+      )
+      const slots = []
+      prev.forEach((g, i) => { if (relevantIds.has(g.id)) slots.push(i) })
+
+      const subset = slots.map(i => prev[i])
+      const fromIdx = subset.findIndex(g => g.id === fromId)
+      const toIdx   = subset.findIndex(g => g.id === toId)
+      if (fromIdx === -1 || toIdx === -1) return prev
+
+      const reorderedSubset = [...subset]
+      const [moved] = reorderedSubset.splice(fromIdx, 1)
+      reorderedSubset.splice(toIdx, 0, moved)
+
+      const next = [...prev]
+      slots.forEach((slot, i) => { next[slot] = reorderedSubset[i] })
+
+      next.forEach((g, i) => {
+        if (g.sort_order !== i) {
+          supabase.from('menu_option_groups').update({ sort_order: i }).eq('id', g.id)
+            .then(({ error }) => { if (error) console.error('reorder option group save:', error.message) })
+        }
+      })
+
+      return next.map((g, i) => ({ ...g, sort_order: i }))
+    })
+  }
+
+  const moveOptionGroup = (id, delta) => {
+    const list = groupsForOptionMenu
+    const idx = list.findIndex(g => g.id === id)
+    const swapIdx = idx + delta
+    if (idx === -1 || swapIdx < 0 || swapIdx >= list.length) return
+    reorderOptionGroups(id, list[swapIdx].id)
+  }
 
   // ── Line item helpers ─────────────────────────────────────
   const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
@@ -377,12 +500,10 @@ export default function POSPage({ onDateChange }) {
         const menu = menus.find(m => m.id === l.menuId)
         const opts = l.options ?? {}
         const basePrice   = Object.values(menu?.prices ?? {})[0] ?? 0
-        const milkPrice   = opts.milk?.price ?? 0
-        const refillPrice = Array.isArray(opts.refill)
-          ? opts.refill.reduce((sum, r) => sum + (r.price ?? 0) * (r.qty ?? 1), 0)
-          : (opts.refill?.price ?? 0)
+        const optionGroupsPrice = (opts.optionGroups ?? []).reduce((sum, g) =>
+          sum + (g.choices ?? []).reduce((s, c) => s + (c.price ?? 0), 0), 0)
         return { lineId: l.lineId, menuId: l.menuId, qty: l.qty, name: menu?.name ?? '',
-          image_url: menu?.image_url ?? null, basePrice, extras: milkPrice + refillPrice,
+          image_url: menu?.image_url ?? null, basePrice, extras: optionGroupsPrice,
           isCampaign: l.isCampaign, options: opts, menu }
       }),
   [lineItems, menus])
@@ -393,13 +514,11 @@ export default function POSPage({ onDateChange }) {
     if (!selectedPlat) return orderItems
     return orderItems.map(item => {
       const basePrice   = item.menu?.prices[selectedPlat] ?? 0
-      const milkPrice   = item.options.milk?.prices?.[selectedPlat] ?? item.options.milk?.price ?? 0
-      const refillPrice = Array.isArray(item.options.refill)
-        ? item.options.refill.reduce((sum, r) => sum + (r.prices?.[selectedPlat] ?? r.price ?? 0) * (r.qty ?? 1), 0)
-        : (item.options.refill?.prices?.[selectedPlat] ?? item.options.refill?.price ?? 0)
-      const unitPrice   = basePrice + milkPrice + refillPrice
+      const optionGroupsPrice = (item.options.optionGroups ?? []).reduce((sum, g) =>
+        sum + (g.choices ?? []).reduce((s, c) => s + (c.price ?? 0), 0), 0)
+      const unitPrice   = basePrice + optionGroupsPrice
       const feePct      = item.isCampaign ? CAMPAIGN_GP_PCT : (platFees[selectedPlat] ?? 0)
-      return { ...item, basePrice, extras: milkPrice + refillPrice,
+      return { ...item, basePrice, extras: optionGroupsPrice,
         unitPrice, subtotal: item.qty * unitPrice, unitGpCost: basePrice * feePct / 100 }
     })
   }, [orderItems, selectedPlat, platFees])
@@ -437,16 +556,7 @@ export default function POSPage({ onDateChange }) {
     if (menuEditMode || catEditMode) return
     const totalQty = totalQtyForMenu(menu.id)
     if (totalQty === 0) {
-      if (menu.category === 'Bun') {
-        // ขนมปัง — เพิ่มตรงได้เลย ไม่ต้องเลือก options
-        setLineItems(prev => [...prev, {
-          lineId: genId(), menuId: menu.id, qty: 1,
-          options: { milk: null, sweetness: 100, refill: null, note: '', packaging: null },
-          isCampaign: false,
-        }])
-      } else {
-        setOptionMenu(menu) // เปิด modal ตัวเลือก
-      }
+      setOptionMenu(menu) // เปิด modal ตัวเลือก — ทุกหมวดหมู่เปิดเหมือนกันหมด (ไม่มี logic พิเศษเฉพาะหมวดอีกต่อไป)
     } else {
       // มีในรายการแล้ว → popup เลือก
       setPendingMenu(menu)
@@ -523,11 +633,10 @@ export default function POSPage({ onDateChange }) {
           unit_gp_cost:  item.unitGpCost   ?? 0,
           is_campaign:   item.isCampaign   ?? false,
           item_options: {
-            milk:      item.options.milk      ?? null,
-            sweetness: item.options.sweetness ?? 100,
-            refill:    item.options.refill    ?? null,
-            note:      item.options.note      ?? '',
-            packaging: item.options.packaging ?? null,
+            sweetness:    item.options.sweetness    ?? 100,
+            note:         item.options.note         ?? '',
+            packaging:    item.options.packaging    ?? null,
+            optionGroups: item.options.optionGroups ?? null,
           },
         }))
       )
@@ -572,31 +681,36 @@ export default function POSPage({ onDateChange }) {
       })()
 
       // ── Auto-print: ส่งไป print server (fire-and-forget, ไม่ block UX) ──
+      // มี auto-retry ในตัว (printWithRetry) เผื่อ print server เพิ่งรีสตาร์ทเสร็จไม่กี่วินาที
+      if (!printEnabled) {
+        // พิมพ์ปิดอยู่ — ข้ามการพิมพ์ทั้งหมด
+      } else
       try {
         const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
         const labelSettings = labelRes.data?.value ? JSON.parse(labelRes.data.value) : {}
         const printServerIp = labelSettings.printerIp ?? '192.168.1.100'
         const printServerPort = labelSettings.printerPort ?? 3001
 
-        fetch(`http://${printServerIp}:${printServerPort}/print`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            orderId:  notes ?? newOrder.id,
-            platform: selectedPlat,
-            items: orderItemsWithPrice.map(item => ({
-              name:         item.name,
-              qty:          item.qty,
-              item_options: item.options,
-              isCampaign:   item.isCampaign ?? false,
-            })),
-            labelSettings,
-          }),
-          signal: AbortSignal.timeout(5000),
-        }).catch(err => {
-          console.warn('print-server unreachable:', err.message)
-          setPrintWarning('พิมพ์ฉลากไม่สำเร็จ — ตรวจสอบ print server')
-        })
+        ;(async () => {
+          const result = await printWithRetry(
+            `http://${printServerIp}:${printServerPort}/print`,
+            {
+              orderId:  notes ?? newOrder.id,
+              platform: selectedPlat,
+              items: orderItemsWithPrice.map(item => ({
+                name:         item.name,
+                qty:          item.qty,
+                item_options: item.options,
+                isCampaign:   item.isCampaign ?? false,
+              })),
+              labelSettings,
+            }
+          )
+          if (!result.success) {
+            console.warn('print failed after retries:', result.error)
+            setPrintWarning('พิมพ์ฉลากไม่สำเร็จ (ลองแล้ว 3 ครั้ง) — ตรวจสอบเครื่องปลิ้น/print server')
+          }
+        })()
       } catch (err) {
         console.warn('auto-print setup error:', err.message)
         setPrintWarning('พิมพ์ฉลากไม่สำเร็จ — ตรวจสอบ print server')
@@ -665,6 +779,16 @@ export default function POSPage({ onDateChange }) {
           <div>
             <p className="font-bold text-sm leading-tight">BSK coffee&bakery POS</p>
             <p className="text-cocoa-300 text-[11px]">{format(time, 'EEEE d MMM yyyy', { locale: th })}</p>
+            {session?.user?.email && (
+              <p className="text-cocoa-300 text-[11px]">
+                {session.user.email}{role && ` · ${ROLE_LABEL[role] ?? role}`}
+              </p>
+            )}
+            {expiryInfo && (
+              <p className={`text-[11px] ${expiryInfo.warn ? 'text-amber-300 font-semibold' : 'text-cocoa-300'}`}>
+                {expiryInfo.text}
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -718,6 +842,18 @@ export default function POSPage({ onDateChange }) {
               </>
             )}
           </div>
+          <button
+            onClick={() => setPrintEnabled(p => !p)}
+            aria-label={printEnabled ? 'ปิดการพิมพ์ฉลาก' : 'เปิดการพิมพ์ฉลาก'}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors border
+              ${printEnabled
+                ? 'bg-green-600/20 border-green-500/40 text-green-300 hover:bg-green-600/30'
+                : 'bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30'
+              }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${printEnabled ? 'bg-green-400' : 'bg-red-400'}`} />
+            {printEnabled ? '🖨️ พิมพ์ฉลาก' : '🖨️ ปิดพิมพ์'}
+          </button>
           <button onClick={() => setShowOrders(true)}
             className="flex items-center gap-1.5 bg-cocoa-700 hover:bg-cocoa-600 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">
             <ClipboardList size={14} />
@@ -728,6 +864,14 @@ export default function POSPage({ onDateChange }) {
           </button>
         </div>
       </div>
+
+      {/* ── Print server down banner — เห็นทันทีไม่ต้องรอสั่งออเดอร์ก่อน ── */}
+      {printServerDown && printEnabled && (
+        <div className="bg-red-600 text-white px-4 py-2 flex items-center gap-2 text-sm font-semibold shrink-0">
+          <AlertCircle size={16} className="shrink-0" />
+          เชื่อมต่อเครื่องพิมพ์ไม่ได้ (print server หลุด) — ออเดอร์ใหม่จะไม่ปลิ้นลาเบล จนกว่าจะเชื่อมต่อได้อีกครั้ง
+        </div>
+      )}
 
       {/* ── 3-Panel Body ────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
@@ -985,11 +1129,6 @@ export default function POSPage({ onDateChange }) {
                               </span>
                             ) : (
                               <>
-                                {opts.milk && <span className="text-[9px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">{opts.milk.name}</span>}
-                                {Array.isArray(opts.refill)
-                                  ? opts.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
-                                  : opts.refill && <span className="text-[9px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">🔄{opts.refill.name}</span>
-                                }
                                 {opts.sweetness != null && opts.sweetness !== 100 && (
                                   <span className="text-[9px] bg-amber-50 text-amber-600 px-1 py-0.5 rounded">{opts.sweetness}%</span>
                                 )}
@@ -1073,16 +1212,14 @@ export default function POSPage({ onDateChange }) {
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-gray-900 leading-tight truncate">{item.name}</p>
                     <div className="flex flex-wrap gap-1 mt-0.5">
-                      {item.options.milk && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">🥛 {item.options.milk.name}</span>}
                       {item.options.packaging === 'พร้อมดื่ม' && <span className="text-[9px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">🧋 พร้อมดื่ม</span>}
-                      {Array.isArray(item.options.refill)
-                        ? item.options.refill.map(r => <span key={r.id} className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
-                        : item.options.refill && <span className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">🔄{item.options.refill.name}</span>
-                      }
                       {item.options.sweetness != null && item.options.sweetness !== 100 && (
                         <span className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">{item.options.sweetness}%</span>
                       )}
                       {item.options.note && <span className="text-[9px] bg-gray-200 text-gray-600 px-1 py-0.5 rounded truncate max-w-[80px]">📝{item.options.note}</span>}
+                      {(item.options.optionGroups ?? []).flatMap(g => g.choices ?? []).map(c => (
+                        <span key={c.id} className="text-[9px] bg-pink-100 text-pink-700 px-1 py-0.5 rounded">✦{c.label}</span>
+                      ))}
                     </div>
                   </div>
                   <button onClick={() => removeLine(item.lineId)} className="text-gray-300 hover:text-red-400 p-0.5">
@@ -1158,11 +1295,12 @@ export default function POSPage({ onDateChange }) {
         <MenuOptionModal
           menu={optionMenu}
           platform={selectedPlat ?? platforms[0]}
-          addons={addonsForModal.map(a => ({ ...a, price: a.prices?.[selectedPlat ?? platforms[0]] ?? 0 }))}
-          refills={refillsForModal.map(r => ({ ...r, price: r.prices?.[selectedPlat ?? platforms[0]] ?? 0 }))}
+          optionGroups={groupsForOptionMenu}
           initial={null}
           onConfirm={handleOptionConfirm}
           onClose={() => setOptionMenu(null)}
+          onMoveGroup={moveOptionGroup}
+          onReorderGroup={reorderOptionGroups}
         />
       )}
 
@@ -1245,11 +1383,9 @@ export default function POSPage({ onDateChange }) {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
                           <div className="flex gap-1 flex-wrap mt-0.5">
-                            {item.options.milk && <span className="text-[10px] text-blue-600">{item.options.milk.name}</span>}
-                            {Array.isArray(item.options.refill)
-                              ? item.options.refill.map(r => <span key={r.id} className="text-[10px] text-purple-600">🔄{r.name}{r.qty > 1 ? ` ×${r.qty}` : ''}</span>)
-                              : item.options.refill && <span className="text-[10px] text-purple-600">🔄{item.options.refill.name}</span>
-                            }
+                            {(item.options.optionGroups ?? []).flatMap(g => g.choices ?? []).map(c => (
+                              <span key={c.id} className="text-[10px] text-pink-600">✦{c.label}</span>
+                            ))}
                             {item.isCampaign && <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 rounded">⚡ 60/40</span>}
                           </div>
                         </div>
@@ -1327,6 +1463,12 @@ export default function POSPage({ onDateChange }) {
                     <span className="text-sm text-gray-600 font-medium">ยอดสุทธิ</span>
                     <span className="text-xl font-bold text-cocoa-700">{fmt(finalTotal)}</span>
                   </div>
+                </div>
+              )}
+              {!printEnabled && (
+                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 mb-3">
+                  <span className="text-base shrink-0">🖨️</span>
+                  <p className="text-sm text-red-700 font-medium">พิมพ์ฉลากปิดอยู่ — บันทึกโดยไม่พิมพ์</p>
                 </div>
               )}
               {saveError && (

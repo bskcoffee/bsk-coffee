@@ -4,13 +4,14 @@ import {
   LayoutDashboard, ShoppingCart, ClipboardList, BarChart3,
   Settings, UtensilsCrossed, Calculator, Users, LogOut,
   MoreHorizontal, X, FileUp, Wallet, Tablet, Lock,
+  Printer, Brain, Network,
 } from 'lucide-react'
 
-const PASSKEY = '18879'
-const POS_URL = 'https://cocoa-pos.vercel.app'
+const DEFAULT_PASSKEY = '18879'
+const POS_URL = 'https://bsk-pos.vercel.app'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions, canAccessAdminPage } from '../contexts/PermissionsContext'
-import { supabase } from '../lib/supabase'
+import { supabase, getSetting } from '../lib/supabase'
 import ConfirmModal from './ConfirmModal'
 
 const ALL_ITEMS = [
@@ -24,6 +25,9 @@ const ALL_ITEMS = [
   { to: '/users',    icon: Users,           label: 'จัดการผู้ใช้',          special: true },
   { to: '/import',    icon: FileUp,          label: 'นำเข้าข้อมูล',          special: true },
   { to: '/cashflow',  icon: Wallet,          label: 'รายรับรายจ่าย',         adminOnly: false },
+  { to: '/label-settings', icon: Printer,    label: 'ตั้งค่าฉลาก',           special: true },
+  { to: '/ai',        icon: Brain,           label: 'AI Memory',             special: true },
+  { to: '/system',    icon: Network,         label: 'System Architecture',   special: true },
 ]
 
 // Operational pages gated by staff_page_access for the 'staff' role only.
@@ -42,7 +46,7 @@ function applyOrder(order) {
 }
 
 export default function BottomNav() {
-  const { role, signOut } = useAuth()
+  const { role, signOut, accessExpiresAt } = useAuth()
   const { staffPageAccess, adminPageAccess } = usePermissions()
   const navigate = useNavigate()
   const [items, setItems]           = useState(ALL_ITEMS)
@@ -51,6 +55,7 @@ export default function BottomNav() {
   const [showPasskey, setShowPasskey]   = useState(false)
   const [passkeyVal, setPasskeyVal]     = useState('')
   const [passkeyError, setPasskeyError] = useState(false)
+  const [navPasskey, setNavPasskey]     = useState(DEFAULT_PASSKEY)
 
   useEffect(() => {
     supabase
@@ -65,6 +70,11 @@ export default function BottomNav() {
       })
   }, [])
 
+  // Passkey for the BSK POS button — configurable from User Management (admin/super_admin only)
+  useEffect(() => {
+    getSetting('nav_passkey').then(v => { if (v) setNavPasskey(v) })
+  }, [])
+
   // Escape-to-close for the hand-rolled sheet + passkey modal
   useEffect(() => {
     if (!sheetOpen && !showPasskey) return
@@ -76,6 +86,17 @@ export default function BottomNav() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [sheetOpen, showPasskey])
+
+  // แสดงวันใช้งานคงเหลือของตัวเอง (เฉพาะ admin/staff ที่ super_admin ตั้งวันหมดอายุไว้)
+  const expiryInfo = (() => {
+    if (role === 'super_admin' || !accessExpiresAt) return null
+    const daysLeft = Math.ceil((new Date(accessExpiresAt) - new Date()) / 86400000)
+    const dateStr = new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+    return {
+      text: daysLeft < 0 ? `หมดอายุแล้ว (${dateStr})` : `ใช้งานได้ถึง ${dateStr} (เหลือ ${daysLeft} วัน)`,
+      warn: daysLeft <= 7,
+    }
+  })()
 
   // Items without access are still shown (not filtered out) — just greyed
   // out and non-navigable — so users can see what exists without entering it.
@@ -205,6 +226,12 @@ export default function BottomNav() {
               })}
             </div>
 
+            {expiryInfo && (
+              <p className={`text-xs text-center pb-2 ${expiryInfo.warn ? 'text-amber-600 font-medium' : 'text-gray-400'}`}>
+                {expiryInfo.text}
+              </p>
+            )}
+
             <div className="border-t border-gray-100 pt-3 space-y-1">
               {/* Go to BSK POS */}
               <button
@@ -245,7 +272,7 @@ export default function BottomNav() {
                 onChange={e => { setPasskeyVal(e.target.value); setPasskeyError(false) }}
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
-                    if (passkeyVal === PASSKEY) { setShowPasskey(false); setPasskeyVal(''); window.open(POS_URL, '_blank') }
+                    if (passkeyVal === navPasskey) { setShowPasskey(false); setPasskeyVal(''); window.open(POS_URL, '_blank') }
                     else { setPasskeyError(true); setPasskeyVal('') }
                   }
                 }}
@@ -263,7 +290,7 @@ export default function BottomNav() {
               >ยกเลิก</button>
               <button
                 onClick={() => {
-                  if (passkeyVal === PASSKEY) { setShowPasskey(false); setPasskeyVal(''); window.open(POS_URL, '_blank') }
+                  if (passkeyVal === navPasskey) { setShowPasskey(false); setPasskeyVal(''); window.open(POS_URL, '_blank') }
                   else { setPasskeyError(true); setPasskeyVal('') }
                 }}
                 className="flex-1 py-2.5 rounded-xl bg-cocoa-700 text-white text-sm font-bold"

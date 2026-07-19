@@ -1,18 +1,15 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, updateMenuPrice, getSetting } from '../lib/supabase'
 import { formatBaht } from '../utils/calculations'
-import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban, ImagePlus, Loader2, Tags, Trash2, ChevronUp, ChevronDown, Lock } from 'lucide-react'
+import { Plus, Pencil, Eye, EyeOff, X, History, GripVertical, Calculator, Ban, ImagePlus, Loader2, Tags, Trash2, ChevronUp, ChevronDown, ListChecks } from 'lucide-react'
 import ConfirmModal from '../components/ConfirmModal'
 
 // Fallback เมื่อยังไม่มีการตั้งค่า platform ใน Supabase (ต้องตรงกับ LEGACY_PLATFORMS ใน SettingsPage.jsx)
 const DEFAULT_PLATFORMS = ['GRAB', 'LINE', 'SHOPEE', 'The metro', 'TU', 'Other']
 // ค่าเริ่มต้นเมื่อยังไม่มี settings.menu_categories — ตรงกับ list เดิมที่เคย hardcode ไว้
-const DEFAULT_CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun', 'Refill', 'Addon']
+const DEFAULT_CATEGORIES = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot', 'Bun']
 const CATEGORIES_KEY = 'menu_categories'
-// หมวดหมู่ที่ฝั่ง POS (cocoa-pos/src/pages/POSPage.jsx) ผูก logic พิเศษไว้ตรงชื่อ —
-// ห้ามเปลี่ยนชื่อ/ลบจากหน้านี้ เพื่อไม่ให้พฤติกรรม POS พัง
-const RESERVED_CATEGORIES = new Set(['Bun', 'Refill', 'Addon'])
 const NEW_CATEGORY_VALUE = '__new_category__'
 
 const PLAT_BADGE = {
@@ -221,11 +218,12 @@ function MenuModal({ menu, platforms, categories, onAddCategory, onClose, onSave
     try {
       if (menu?.id) {
         // Update — ไม่แตะ gp_cost (จัดการผ่านหน้าต้นทุนเมนู)
-        await supabase.from('menus').update({
+        const { error: updateErr } = await supabase.from('menus').update({
           name:      form.name,
           category:  form.category,
           image_url: form.image_url || null,
         }).eq('id', menu.id)
+        if (updateErr) throw updateErr
 
         // Update prices (close old, open new) + original_price
         for (const plat of platforms) {
@@ -233,33 +231,36 @@ function MenuModal({ menu, platforms, categories, onAddCategory, onClose, onSave
           const newPrice    = form.prices[plat]           ?? 0
           const origPrice   = form.originalPrices[plat]  ?? 0
           if (oldPrice !== newPrice) {
-            await updateMenuPrice(menu.id, plat, newPrice)
+            const { error: priceErr } = await updateMenuPrice(menu.id, plat, newPrice)
+            if (priceErr) throw priceErr
           }
           // อัพเดท original_price บน row ปัจจุบัน (effective_to IS NULL)
-          await supabase.from('menu_prices')
+          const { error: origErr } = await supabase.from('menu_prices')
             .update({ original_price: origPrice })
             .eq('menu_id', menu.id)
             .eq('platform', plat)
             .is('effective_to', null)
+          if (origErr) throw origErr
         }
       } else {
         // Create new
-        const { data: newMenu } = await supabase
+        const { data: newMenu, error: insertErr } = await supabase
           .from('menus')
           .insert({ name: form.name, category: form.category, image_url: form.image_url || null })
           .select()
           .single()
+        if (insertErr) throw insertErr
+        if (!newMenu) throw new Error('บันทึกเมนูไม่สำเร็จ — ไม่ได้รับข้อมูลกลับจากระบบ')
 
-        if (newMenu) {
-          for (const plat of platforms) {
-            await supabase.from('menu_prices').insert({
-              menu_id:        newMenu.id,
-              platform:       plat,
-              price:          form.prices[plat]          ?? 0,
-              original_price: form.originalPrices[plat]  ?? form.prices[plat] ?? 0,
-              effective_from: new Date().toISOString().slice(0, 10),
-            })
-          }
+        for (const plat of platforms) {
+          const { error: priceInsertErr } = await supabase.from('menu_prices').insert({
+            menu_id:        newMenu.id,
+            platform:       plat,
+            price:          form.prices[plat]          ?? 0,
+            original_price: form.originalPrices[plat]  ?? form.prices[plat] ?? 0,
+            effective_from: new Date().toISOString().slice(0, 10),
+          })
+          if (priceInsertErr) throw priceInsertErr
         }
       }
 
@@ -612,12 +613,11 @@ function CategoryManagerModal({ categories, menuCountByCategory, onClose, onSave
 
         <div className="p-5 space-y-4">
           <p className="text-xs text-gray-500">
-            เพิ่ม เปลี่ยนชื่อ ลบ หรือเรียงลำดับหมวดหมู่สินค้า — หมวดหมู่ที่มี <Lock size={11} className="inline -mt-0.5" /> ถูกใช้งานพิเศษในหน้า POS แก้ไข/ลบไม่ได้
+            เพิ่ม เปลี่ยนชื่อ ลบ หรือเรียงลำดับหมวดหมู่สินค้า
           </p>
 
           <div className="space-y-1.5">
             {rows.map((row, idx) => {
-              const reserved = RESERVED_CATEGORIES.has(row.original)
               const count    = countFor(row)
               return (
                 <div key={idx} className="flex items-center gap-1.5 bg-gray-50 rounded-lg px-2 py-1.5">
@@ -634,25 +634,18 @@ function CategoryManagerModal({ categories, menuCountByCategory, onClose, onSave
                     </button>
                   </div>
                   <input
-                    className="input flex-1 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+                    className="input flex-1 text-sm"
                     value={row.name}
-                    disabled={reserved}
                     onChange={e => renameRow(idx, e.target.value)}
                   />
                   {count > 0 && (
                     <span className="text-[11px] text-gray-400 shrink-0">{count} เมนู</span>
                   )}
-                  {reserved ? (
-                    <span title="หมวดหมู่นี้มีพฤติกรรมพิเศษใน POS แก้ไข/ลบไม่ได้" className="p-2 text-gray-300 shrink-0">
-                      <Lock size={15} />
-                    </span>
-                  ) : (
-                    <button type="button" onClick={() => requestDelete(idx)}
-                      title="ลบหมวดหมู่"
-                      className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 shrink-0">
-                      <Trash2 size={15} />
-                    </button>
-                  )}
+                  <button type="button" onClick={() => requestDelete(idx)}
+                    title="ลบหมวดหมู่"
+                    className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 shrink-0">
+                    <Trash2 size={15} />
+                  </button>
                 </div>
               )
             })}
@@ -696,6 +689,452 @@ function CategoryManagerModal({ categories, menuCountByCategory, onClose, onSave
   )
 }
 
+// ─────────────────────────────────────────────────────────────────
+// กลุ่มตัวเลือกเสริม (menu_option_groups + menu_option_choices)
+// แอดมินสร้างกลุ่มตัวเลือกเอง (เช่น "เพิ่มอีกถุงไว้ดื่มพรุ่งนี้ ลดเพิ่ม 20%")
+// แล้วผูกกับหมวดหมู่เมนู — เมนูในหมวดหมู่นั้นจะเห็นกลุ่มนี้โผล่อัตโนมัติในหน้า POS
+// ─────────────────────────────────────────────────────────────────
+
+function OptionGroupEditor({ group, categories, menus = [], onClose, onSaved }) {
+  const [name,          setName]          = useState(group?.name ?? '')
+  const [selectionType, setSelectionType] = useState(group?.selection_type ?? 'multi')
+  const [maxSelect,     setMaxSelect]     = useState(group?.max_select ?? '')
+  const [required,      setRequired]      = useState(group?.required ?? false)
+  const [selectedCats,  setSelectedCats]  = useState(Array.isArray(group?.categories) ? group.categories : [])
+  const [selectedMenuIds, setSelectedMenuIds] = useState(group?.menu_ids ?? [])
+  const [choices,       setChoices]       = useState(
+    group?.menu_option_choices?.length
+      ? group.menu_option_choices.map(c => ({ id: c.id, label: c.label, price: c.price }))
+      : [{ label: '', price: 0 }]
+  )
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  const selectableCats = categories
+
+  // เมนูจัดกลุ่มตามหมวดหมู่ ให้เลือกทีละเมนูได้ง่าย (ผูกเฉพาะเมนูนั้นๆ แทนที่จะผูกทั้งหมวด)
+  const menusByCategory = useMemo(() => {
+    const acc = {}
+    for (const m of menus) {
+      const cat = m.category || 'อื่นๆ'
+      if (!acc[cat]) acc[cat] = []
+      acc[cat].push(m)
+    }
+    return acc
+  }, [menus])
+
+  const toggleCat = (cat) => {
+    setSelectedCats(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat])
+  }
+
+  const toggleMenu = (menuId) => {
+    setSelectedMenuIds(prev => prev.includes(menuId) ? prev.filter(id => id !== menuId) : [...prev, menuId])
+  }
+
+  const addChoice    = () => setChoices(prev => [...prev, { label: '', price: 0 }])
+  const removeChoice = (idx) => setChoices(prev => prev.filter((_, i) => i !== idx))
+  const updateChoice = (idx, field, value) => setChoices(prev => prev.map((c, i) => i === idx ? { ...c, [field]: value } : c))
+  const moveChoice = (idx, dir) => {
+    const target = idx + dir
+    if (target < 0 || target >= choices.length) return
+    setChoices(prev => {
+      const next = [...prev]
+      ;[next[idx], next[target]] = [next[target], next[idx]]
+      return next
+    })
+  }
+
+  const handleSave = async () => {
+    const trimmedName = name.trim()
+    if (!trimmedName) { setError('กรุณาใส่ชื่อกลุ่มตัวเลือก'); return }
+    const validChoices = choices.map(c => ({ ...c, label: c.label.trim() })).filter(c => c.label)
+    if (validChoices.length === 0) { setError('กรุณาเพิ่มตัวเลือกอย่างน้อย 1 รายการ'); return }
+    if (selectedCats.length === 0 && selectedMenuIds.length === 0) {
+      setError('กรุณาเลือกอย่างน้อย 1 หมวดหมู่ หรือ 1 เมนู'); return
+    }
+
+    setSaving(true)
+    setError('')
+    try {
+      const payload = {
+        name:           trimmedName,
+        selection_type: selectionType,
+        max_select:     selectionType === 'multi' ? (parseInt(maxSelect) || null) : 1,
+        required,
+        categories:     selectedCats,
+        menu_ids:       selectedMenuIds,
+      }
+      let groupId = group?.id
+      if (groupId) {
+        const { error: upErr } = await supabase.from('menu_option_groups').update(payload).eq('id', groupId)
+        if (upErr) throw upErr
+      } else {
+        const { data: newGroup, error: insErr } = await supabase.from('menu_option_groups')
+          .insert({ ...payload, sort_order: 0 }).select().single()
+        if (insErr) throw insErr
+        groupId = newGroup.id
+      }
+
+      // sync ตัวเลือก: ลบอันที่ถูกเอาออก, อัพเดท/เพิ่มที่เหลือ
+      const existingIds = (group?.menu_option_choices ?? []).map(c => c.id)
+      const keptIds      = validChoices.filter(c => c.id).map(c => c.id)
+      const toDelete     = existingIds.filter(id => !keptIds.includes(id))
+      if (toDelete.length > 0) {
+        await supabase.from('menu_option_choices').delete().in('id', toDelete)
+      }
+      for (let i = 0; i < validChoices.length; i++) {
+        const c = validChoices[i]
+        if (c.id) {
+          await supabase.from('menu_option_choices').update({
+            label: c.label, price: parseFloat(c.price) || 0, sort_order: i,
+          }).eq('id', c.id)
+        } else {
+          await supabase.from('menu_option_choices').insert({
+            group_id: groupId, label: c.label, price: parseFloat(c.price) || 0, sort_order: i,
+          })
+        }
+      }
+
+      onSaved()
+      onClose()
+    } catch (err) {
+      setError('บันทึกไม่สำเร็จ: ' + err.message)
+    }
+    setSaving(false)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b">
+          <h2 className="font-bold text-lg">{group ? 'แก้ไขกลุ่มตัวเลือก' : 'สร้างกลุ่มตัวเลือกใหม่'}</h2>
+          <button onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="label">ชื่อกลุ่มตัวเลือก</label>
+            <input
+              className="input"
+              placeholder='เช่น "เพิ่มอีกถุงไว้ดื่มพรุ่งนี้ ลดเพิ่ม 20%"'
+              value={name}
+              onChange={e => setName(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="label">รูปแบบการเลือก</label>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setSelectionType('single')}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 ${selectionType === 'single' ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 text-gray-500'}`}>
+                เลือกได้ 1 (radio)
+              </button>
+              <button type="button" onClick={() => setSelectionType('multi')}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 ${selectionType === 'multi' ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 text-gray-500'}`}>
+                เลือกได้หลายอัน (checkbox)
+              </button>
+            </div>
+          </div>
+
+          {selectionType === 'multi' && (
+            <div>
+              <label className="label">เลือกได้สูงสุดกี่อัน</label>
+              <input
+                type="number" min="1" className="input" placeholder="ไม่จำกัด"
+                value={maxSelect}
+                onChange={e => setMaxSelect(e.target.value)}
+              />
+            </div>
+          )}
+
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={required} onChange={e => setRequired(e.target.checked)} className="w-4 h-4" />
+            บังคับให้ลูกค้าต้องเลือก
+          </label>
+
+          <div>
+            <label className="label">ผูกกับหมวดหมู่เมนู (ทางเลือก)</label>
+            <div className="flex flex-wrap gap-2">
+              {selectableCats.map(cat => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => toggleCat(cat)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium border-2 ${selectedCats.includes(cat) ? 'border-cocoa-500 bg-cocoa-50 text-cocoa-700' : 'border-gray-200 text-gray-500'}`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">ทุกเมนูในหมวดหมู่ที่เลือกจะเห็นกลุ่มตัวเลือกนี้ในหน้า POS — ใช้เมื่ออยากผูกทั้งหมวดหมู่</p>
+          </div>
+
+          <div>
+            <label className="label">หรือผูกกับเมนูเฉพาะรายการ</label>
+            <div className="border border-gray-200 rounded-xl max-h-48 overflow-y-auto divide-y divide-gray-100">
+              {Object.keys(menusByCategory).length === 0 ? (
+                <p className="text-xs text-gray-400 p-3">ยังไม่มีเมนู</p>
+              ) : (
+                Object.entries(menusByCategory).map(([cat, catMenus]) => (
+                  <div key={cat} className="p-2">
+                    <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider px-1 mb-1">{cat}</p>
+                    <div className="space-y-0.5">
+                      {catMenus.map(m => (
+                        <label key={m.id} className="flex items-center gap-2 px-1 py-1 rounded-lg hover:bg-gray-50 cursor-pointer text-sm">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4"
+                            checked={selectedMenuIds.includes(m.id)}
+                            onChange={() => toggleMenu(m.id)}
+                          />
+                          <span className="text-gray-700">{m.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">เฉพาะเมนูที่ติ๊กเท่านั้นจะเห็นกลุ่มตัวเลือกนี้ — ใช้เมื่อไม่อยากให้ทั้งหมวดหมู่เห็นเหมือนกันหมด</p>
+          </div>
+
+          <div>
+            <label className="label">ตัวเลือก + ราคา</label>
+            <div className="space-y-2">
+              {choices.map((c, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                  <div className="flex flex-col -my-1 shrink-0">
+                    <button type="button" onClick={() => moveChoice(idx, -1)} disabled={idx === 0}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 disabled:opacity-30 disabled:pointer-events-none"><ChevronUp size={13} /></button>
+                    <button type="button" onClick={() => moveChoice(idx, 1)} disabled={idx === choices.length - 1}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 disabled:opacity-30 disabled:pointer-events-none"><ChevronDown size={13} /></button>
+                  </div>
+                  <input
+                    className="input flex-1 text-sm"
+                    placeholder="ชื่อตัวเลือก เช่น Classic No.1 (แนะนำ)"
+                    value={c.label}
+                    onChange={e => updateChoice(idx, 'label', e.target.value)}
+                  />
+                  <input
+                    type="number" min="0" className="input w-24 text-sm text-right"
+                    placeholder="ราคา"
+                    value={c.price}
+                    onChange={e => updateChoice(idx, 'price', e.target.value)}
+                  />
+                  <button type="button" onClick={() => removeChoice(idx)}
+                    className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 shrink-0"><Trash2 size={15} /></button>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={addChoice} className="btn-secondary mt-2 text-sm flex items-center gap-1">
+              <Plus size={14} /> เพิ่มตัวเลือก
+            </button>
+          </div>
+
+          {error && <p className="text-xs text-red-500">{error}</p>}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">ยกเลิก</button>
+            <button type="button" onClick={handleSave} disabled={saving} className="btn-primary flex-1">
+              {saving ? 'กำลังบันทึก...' : 'บันทึก'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OptionGroupManagerModal({ categories, menus = [], onClose, onSaved }) {
+  const [groups,      setGroups]      = useState([])
+  const [loading,     setLoading]     = useState(true)
+  const [editGroup,   setEditGroup]   = useState(null)
+  const [showAdd,     setShowAdd]     = useState(false)
+  const [deleteGroup, setDeleteGroup] = useState(null)
+  const dragGroupId = useRef(null)
+  const dragOverGroupId = useRef(null)
+
+  const load = async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('menu_option_groups')
+      .select('*, menu_option_choices(*)')
+      .order('sort_order', { ascending: true })
+    setGroups((data ?? []).map(g => ({
+      ...g,
+      menu_option_choices: (g.menu_option_choices ?? []).sort((a, b) => a.sort_order - b.sort_order),
+    })))
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  const handleSaved = () => { load(); onSaved() }
+
+  const confirmDelete = async () => {
+    if (!deleteGroup) return
+    await supabase.from('menu_option_groups').delete().eq('id', deleteGroup.id)
+    setDeleteGroup(null)
+    handleSaved()
+  }
+
+  const toggleActive = async (group) => {
+    await supabase.from('menu_option_groups').update({ is_active: !group.is_active }).eq('id', group.id)
+    load()
+  }
+
+  // เรียงลำดับกลุ่มตัวเลือกเสริม — ลำดับนี้จะไปกำหนดลำดับที่โผล่ในหน้า POS ด้วย (ดู sort_order ใน POSPage.jsx)
+  const persistGroupOrder = async (reordered) => {
+    setGroups(reordered)
+    await Promise.all(
+      reordered.map((g, i) =>
+        supabase.from('menu_option_groups').update({ sort_order: i }).eq('id', g.id)
+      )
+    )
+  }
+
+  const moveGroup = (id, delta) => {
+    const idx = groups.findIndex(g => g.id === id)
+    const swapIdx = idx + delta
+    if (idx === -1 || swapIdx < 0 || swapIdx >= groups.length) return
+    const reordered = [...groups]
+    ;[reordered[idx], reordered[swapIdx]] = [reordered[swapIdx], reordered[idx]]
+    persistGroupOrder(reordered)
+  }
+
+  const handleGroupDragStart = (id) => { dragGroupId.current = id }
+  const handleGroupDragOver = (e, id) => { e.preventDefault(); dragOverGroupId.current = id }
+  const handleGroupDrop = () => {
+    const from = dragGroupId.current
+    const to   = dragOverGroupId.current
+    if (!from || !to || from === to) return
+    const reordered = [...groups]
+    const fromIdx = reordered.findIndex(g => g.id === from)
+    const toIdx   = reordered.findIndex(g => g.id === to)
+    const [moved] = reordered.splice(fromIdx, 1)
+    reordered.splice(toIdx, 0, moved)
+    persistGroupOrder(reordered)
+    dragGroupId.current = null
+    dragOverGroupId.current = null
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b">
+          <h2 className="font-bold text-lg flex items-center gap-2"><ListChecks size={18} /> จัดการตัวเลือกเสริม</h2>
+          <button onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <div className="p-5 space-y-3">
+          <p className="text-xs text-gray-500">
+            สร้างกลุ่มตัวเลือกเสริม (เช่น แพ็คคละแบรนด์) แล้วผูกกับหมวดหมู่เมนู — เมนูในหมวดหมู่นั้นจะโผล่กลุ่มนี้ในหน้า POS อัตโนมัติ
+          </p>
+
+          {loading ? (
+            <p className="text-center text-gray-400 py-8">กำลังโหลด...</p>
+          ) : groups.length === 0 ? (
+            <p className="text-center text-gray-400 py-8 text-sm">ยังไม่มีกลุ่มตัวเลือกเสริม</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-gray-400">⠿ ลากเพื่อเรียงลำดับ หรือกดปุ่มลูกศร — ลำดับนี้จะใช้แสดงในหน้า POS ด้วย</p>
+              {groups.map((g, i) => (
+                <div
+                  key={g.id}
+                  draggable
+                  onDragStart={() => handleGroupDragStart(g.id)}
+                  onDragOver={(e) => handleGroupDragOver(e, g.id)}
+                  onDrop={handleGroupDrop}
+                  className={`card flex items-start gap-3 cursor-grab active:cursor-grabbing ${!g.is_active ? 'opacity-50' : ''}`}
+                >
+                  <GripVertical size={16} className="mt-1 text-gray-300 shrink-0" aria-hidden="true" />
+                  {/* Keyboard/touch-friendly reorder alternative to drag-and-drop */}
+                  <div className="flex flex-col shrink-0 mt-0.5">
+                    <button
+                      type="button"
+                      draggable={false}
+                      onClick={() => moveGroup(g.id, -1)}
+                      disabled={i === 0}
+                      aria-label={`ย้าย ${g.name} ขึ้น`}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-200 disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      <ChevronUp size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      draggable={false}
+                      onClick={() => moveGroup(g.id, 1)}
+                      disabled={i === groups.length - 1}
+                      aria-label={`ย้าย ${g.name} ลง`}
+                      className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-200 disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      <ChevronDown size={13} />
+                    </button>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 text-sm">{g.name}</p>
+                    <div className="flex gap-1.5 flex-wrap mt-1">
+                      <span className="badge bg-gray-100 text-gray-600">
+                        {g.selection_type === 'single' ? 'เลือกได้ 1' : `เลือกได้สูงสุด ${g.max_select ?? 'ไม่จำกัด'}`}
+                      </span>
+                      {g.required && <span className="badge bg-amber-100 text-amber-700">บังคับเลือก</span>}
+                      {(Array.isArray(g.categories) ? g.categories : []).map(c => <span key={c} className="badge bg-cocoa-50 text-cocoa-700">{c}</span>)}
+                      {(g.menu_ids ?? []).length > 0 && (
+                        <span className="badge bg-blue-50 text-blue-700">
+                          {(g.menu_ids ?? []).length} เมนูเฉพาะ
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">{(g.menu_option_choices ?? []).length} ตัวเลือก</p>
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => toggleActive(g)}
+                      className={`p-2 rounded-lg ${g.is_active ? 'text-gray-400 hover:bg-gray-100 hover:text-red-500' : 'text-green-500 hover:bg-green-50'}`}
+                      title={g.is_active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}>
+                      {g.is_active ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                    <button onClick={() => setEditGroup(g)} className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-cocoa-700" title="แก้ไข">
+                      <Pencil size={16} />
+                    </button>
+                    <button onClick={() => setDeleteGroup(g)} className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600" title="ลบ">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button onClick={() => setShowAdd(true)} className="btn-primary w-full flex items-center justify-center gap-2">
+            <Plus size={16} /> สร้างกลุ่มตัวเลือกใหม่
+          </button>
+        </div>
+      </div>
+
+      {(showAdd || editGroup) && (
+        <OptionGroupEditor
+          group={editGroup}
+          categories={categories}
+          menus={menus}
+          onClose={() => { setShowAdd(false); setEditGroup(null) }}
+          onSaved={handleSaved}
+        />
+      )}
+
+      <ConfirmModal
+        open={!!deleteGroup}
+        title={`ลบกลุ่มตัวเลือก "${deleteGroup?.name}"?`}
+        message="ตัวเลือกทั้งหมดในกลุ่มนี้จะถูกลบไปด้วย"
+        confirmLabel="ลบ"
+        danger
+        icon={Trash2}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteGroup(null)}
+      />
+    </div>
+  )
+}
+
 export default function MenuManagementPage() {
   const navigate = useNavigate()
   const [menus, setMenus] = useState([])
@@ -709,6 +1148,7 @@ export default function MenuManagementPage() {
   const [platforms, setPlatforms] = useState(DEFAULT_PLATFORMS)
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES)
   const [showCatManager, setShowCatManager] = useState(false)
+  const [showGroupManager, setShowGroupManager] = useState(false)
   const dragId = useRef(null)
   const dragOverId = useRef(null)
 
@@ -860,6 +1300,9 @@ export default function MenuManagementPage() {
           )}
           <button onClick={() => setShowCatManager(true)} className="btn-secondary flex items-center gap-2">
             <Tags size={16} /> จัดการหมวดหมู่
+          </button>
+          <button onClick={() => setShowGroupManager(true)} className="btn-secondary flex items-center gap-2">
+            <ListChecks size={16} /> จัดการตัวเลือกเสริม
           </button>
           <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2">
             <Plus size={16} /> เพิ่มเมนู
@@ -1044,6 +1487,14 @@ export default function MenuManagementPage() {
           menuCountByCategory={menuCountByCategory}
           onClose={() => setShowCatManager(false)}
           onSaved={(list) => { setCategories(list); loadMenus() }}
+        />
+      )}
+      {showGroupManager && (
+        <OptionGroupManagerModal
+          categories={categories}
+          menus={menus}
+          onClose={() => setShowGroupManager(false)}
+          onSaved={() => {}}
         />
       )}
     </div>

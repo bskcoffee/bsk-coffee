@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { format } from 'date-fns'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ToastProvider } from './contexts/ToastContext'
@@ -6,12 +6,30 @@ import LoginPage       from './pages/LoginPage'
 import POSPage         from './pages/POSPage'
 import OrderManagePage from './pages/OrderManagePage'
 import MenuOptionModal from './components/MenuOptionModal'
-import { supabase } from './lib/supabase'
-import { ShoppingCart, ClipboardList, LayoutDashboard, X, Package, Printer, Search, Loader2, ChevronRight, ScrollText } from 'lucide-react'
+import { supabase, getSetting } from './lib/supabase'
+import { ShoppingCart, ClipboardList, LayoutDashboard, X, Printer, Search, Loader2, ChevronRight, ScrollText, Lock, LogOut } from 'lucide-react'
 
-const ADDON_CATS  = ['Addon', 'addon', 'ADDON']
-const REFILL_CATS = ['Refill', 'refill', 'REFILL']
-const HIDDEN_CATS = [...ADDON_CATS, ...REFILL_CATS]
+// เมื่อ admin/staff หมดอายุการใช้งาน — บล็อกเข้าทั้งระบบ (super_admin ไม่ถูกเช็ค)
+function AccessExpiredScreen({ accessExpiresAt, onSignOut }) {
+  const dateStr = accessExpiresAt
+    ? new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-cocoa-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-sm w-full text-center space-y-4">
+        <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto">
+          <Lock size={26} className="text-red-600" />
+        </div>
+        <div>
+          <h1 className="text-lg font-bold text-gray-900">หมดอายุการใช้งาน</h1>
+          {dateStr && <p className="text-sm text-gray-500 mt-1">บัญชีนี้ใช้งานได้ถึงวันที่ {dateStr}</p>}
+        </div>
+        <p className="text-sm text-gray-600">กรุณาติดต่อผู้ดูแลระบบสูงสุดเพื่อต่ออายุการใช้งาน</p>
+        <button onClick={onSignOut} className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">ออกจากระบบ</button>
+      </div>
+    </div>
+  )
+}
 
 async function sendLabelPrint(menu, options) {
   const labelRes = await supabase.from('settings').select('value').eq('key', 'label_settings').maybeSingle()
@@ -34,15 +52,17 @@ async function sendLabelPrint(menu, options) {
 
 function buildOptionsSummary(options) {
   const parts = []
-  if (options?.milk?.name)       parts.push(options.milk.name)
   if (options?.sweetness != null) parts.push(`หวาน ${options.sweetness}%`)
   if (options?.packaging)        parts.push(options.packaging)
-  if (options?.refill?.length)   parts.push(`Refill ×${options.refill.reduce((s, r) => s + r.qty, 0)}`)
+  ;(options?.optionGroups ?? []).forEach(g => {
+    (g.choices ?? []).forEach(c => parts.push(`${c.label}${c.qty > 1 ? ` ×${c.qty}` : ''}`))
+  })
   return parts.join(' · ') || '—'
 }
 
 function PrintLabelModal({ onClose, onAddLog }) {
-  const [menus,       setMenus]       = useState([])
+  const [menus,        setMenus]        = useState([])
+  const [optionGroups, setOptionGroups] = useState([])
   const [loadingM,    setLoadingM]    = useState(true)
   const [search,      setSearch]      = useState('')
   const [selected,    setSelected]    = useState(null)
@@ -51,18 +71,33 @@ function PrintLabelModal({ onClose, onAddLog }) {
   const [printStatus,  setPrintStatus]  = useState(null)  // null | 'success' | 'error'
 
   useEffect(() => {
-    supabase
-      .from('menus')
-      .select('id, name, category, image_url, menu_prices(platform, price)')
-      .eq('is_active', true)
-      .order('sort_order')
-      .then(({ data }) => { setMenus(data ?? []); setLoadingM(false) })
+    Promise.all([
+      supabase
+        .from('menus')
+        .select('id, name, category, image_url, menu_prices(platform, price)')
+        .eq('is_active', true)
+        .order('sort_order'),
+      supabase.from('menu_option_groups')
+        .select('*, menu_option_choices(*)')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true }),
+    ]).then(([menusRes, optionGroupsRes]) => {
+      setMenus(menusRes.data ?? [])
+      setOptionGroups((optionGroupsRes.data ?? []).map(g => ({
+        ...g,
+        choices: (g.menu_option_choices ?? [])
+          .filter(c => c.is_active)
+          .sort((a, b) => a.sort_order - b.sort_order),
+      })))
+      setLoadingM(false)
+    })
   }, [])
 
-  const mainMenus   = menus.filter(m => !HIDDEN_CATS.includes(m.category))
-  const addonMenus  = menus.filter(m => ADDON_CATS.includes(m.category))
-  const refillMenus = menus.filter(m => REFILL_CATS.includes(m.category))
-  const filtered    = mainMenus.filter(m => m.name.toLowerCase().includes(search.toLowerCase()))
+  const filtered = menus.filter(m => m.name.toLowerCase().includes(search.toLowerCase()))
+  const groupsForSelected = useMemo(() => {
+    if (!selected) return []
+    return optionGroups.filter(g => (g.categories ?? []).includes(selected.category))
+  }, [optionGroups, selected])
 
   const handlePrint = async (options) => {
     setPrinting(true)
@@ -95,8 +130,7 @@ function PrintLabelModal({ onClose, onAddLog }) {
       <MenuOptionModal
         menu={selected}
         platform="GRAB"
-        addons={addonMenus}
-        refills={refillMenus}
+        optionGroups={groupsForSelected}
         onConfirm={handlePrint}
         onClose={() => setShowOptions(false)}
         confirmLabel={printing ? 'กำลังพิมพ์...' : '🖨 พิมพ์ฉลาก'}
@@ -292,17 +326,16 @@ const TABS = [
   { key: 'orders', label: 'ออเดอร์',   icon: ClipboardList },
 ]
 
-const PASSKEY   = '18879'
-const HOUSE_URL = 'https://cocoa-house.vercel.app'
-const LIFF_URL  = 'https://cocoa-liff.vercel.app'
+const DEFAULT_PASSKEY = '18879'
+const HOUSE_URL = 'https://bsk-coffee.vercel.app'
 
-function PasskeyModal({ title, onConfirm, onClose }) {
+function PasskeyModal({ title, expectedPasskey, onConfirm, onClose }) {
   const [val, setVal]     = useState('')
   const [error, setError] = useState(false)
   const inputRef          = useRef(null)
 
   const handleSubmit = () => {
-    if (val === PASSKEY) {
+    if (val === (expectedPasskey || DEFAULT_PASSKEY)) {
       onConfirm()
     } else {
       setError(true)
@@ -353,12 +386,17 @@ function PasskeyModal({ title, onConfirm, onClose }) {
 }
 
 function AppInner() {
-  const { session, loading } = useAuth()
+  const { session, loading, isAccessExpired, accessExpiresAt, signOut } = useAuth()
   const [showPasskey,    setShowPasskey]    = useState(false)
-  const [showLiff,       setShowLiff]       = useState(false)
   const [showPrintModal, setShowPrintModal] = useState(false)
   const [showLogModal,   setShowLogModal]   = useState(false)
   const [printLog,       setPrintLog]       = useState([])
+  const [navPasskey,     setNavPasskey]     = useState(DEFAULT_PASSKEY)
+
+  // Passkey for cross-app nav button — configurable from User Management (admin/super_admin only)
+  useEffect(() => {
+    getSetting('nav_passkey').then(v => { if (v) setNavPasskey(v) })
+  }, [])
 
   const addPrintLog    = (entry)       => setPrintLog(prev => [entry, ...prev])
   const updatePrintLog = (id, status)  => setPrintLog(prev => prev.map(e => e.id === id ? { ...e, status } : e))
@@ -384,6 +422,7 @@ function AppInner() {
   }
 
   if (!session) return <LoginPage />
+  if (isAccessExpired) return <AccessExpiredScreen accessExpiresAt={accessExpiresAt} onSignOut={signOut} />
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -445,14 +484,16 @@ function AppInner() {
           <LayoutDashboard size={16} />
           <span>BSK coffee&bakery</span>
         </button>
-        {/* Go to BSK LIFF */}
+
+        {/* ออกจากระบบ — อยู่แถบบนสุดให้กดได้ทุกแท็บ (เดิมมีแค่ในหน้า POS ไม่มีในหน้าออเดอร์) */}
         <button
-          onClick={() => setShowLiff(true)}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-700 text-white hover:bg-green-600 transition-all text-sm font-semibold border border-green-500/40"
-          title="ไปที่ BSK"
+          onClick={signOut}
+          aria-label="ออกจากระบบ"
+          title="ออกจากระบบ"
+          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600 text-white hover:bg-red-500 transition-all text-sm font-semibold border border-red-400"
         >
-          <Package size={16} />
-          <span>BSK</span>
+          <LogOut size={16} />
+          <span>ออกจากระบบ</span>
         </button>
       </div>
 
@@ -466,15 +507,9 @@ function AppInner() {
       {showPasskey && (
         <PasskeyModal
           title="ไปที่ BSK coffee&bakery"
+          expectedPasskey={navPasskey}
           onConfirm={() => { setShowPasskey(false); window.open(HOUSE_URL, '_blank') }}
           onClose={() => setShowPasskey(false)}
-        />
-      )}
-      {showLiff && (
-        <PasskeyModal
-          title="ไปที่ BSK"
-          onConfirm={() => { setShowLiff(false); window.open(LIFF_URL, '_blank') }}
-          onClose={() => setShowLiff(false)}
         />
       )}
       {showPrintModal && (

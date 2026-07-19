@@ -8,6 +8,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend
 } from 'recharts'
 import { TrendingUp, TrendingDown, AlertTriangle, Calendar, ChevronDown, ChevronUp, Star, Pencil, Target, GripVertical } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 import { format, subDays, startOfMonth, endOfMonth, subMonths, startOfYear, endOfYear, subYears, parseISO, startOfISOWeek, endOfISOWeek, subWeeks, getISOWeek, getISOWeekYear } from 'date-fns'
 import { th } from 'date-fns/locale'
 
@@ -236,6 +237,7 @@ function KpiCard({ title, value, sub, change, positive, dragProps }) {
 }
 
 export default function DashboardPage() {
+  const { role, accessExpiresAt } = useAuth()
   const [range, setRange] = useState('month')
   const [customStart, setCustomStart] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [customEnd, setCustomEnd] = useState(format(new Date(), 'yyyy-MM-dd'))
@@ -845,23 +847,36 @@ export default function DashboardPage() {
     }
 
     // Category summary (Beverage / Bread / Refill / Add-on)
-    const BEV_CATS = ['Cocoa', 'Coffee', 'Matcha', 'Classic', 'Hot']
+    // Bev/Bread: หมวดหมู่เมนูตอนนี้แอดมินสร้างเองได้อิสระ (ดูหน้าจัดการเมนู) — 'Bun' คือหมวดขนมปังเพียงหมวดเดียว
+    // ที่ยังพิเศษ ที่เหลือ (รวมหมวดใหม่ที่เพิ่งสร้าง เช่น "THAI TEA") ถือเป็นเครื่องดื่มทั้งหมด
+    // Refill/Add-on: ย้ายจาก field เฉพาะ (item_options.refill / item_options.milk) มาเป็นกลุ่มตัวเลือกเสริมทั่วไป
+    // (item_options.optionGroups) แล้ว จึงจับคู่จากชื่อกลุ่มแทน (เก็บ fallback ฟิลด์เก่าไว้ให้ออเดอร์เก่านับได้ถูกต้องด้วย)
+    const REFILL_NAME_RE = /refill|เติม/i
+    const ADDON_NAME_RE  = /add[\s-]?on|เพิ่ม/i
     const categorySummary = { bev: 0, bread: 0, refill: 0, addon: 0 }
     for (const item of filteredItems) {
       const cat = item.menus?.category
       const qty = item.quantity ?? 0
-      if (BEV_CATS.includes(cat))  categorySummary.bev   += qty
-      else if (cat === 'Bun')      categorySummary.bread  += qty
-      // Refill จาก item_options.refill (array หรือ single)
+      if (cat === 'Bun') categorySummary.bread += qty
+      else                categorySummary.bev   += qty
+
+      // Refill/Add-on (ออเดอร์เก่า) — legacy field เก็บไว้เพื่อรองรับออเดอร์ก่อนย้ายระบบ
       const refill = item.item_options?.refill
       if (Array.isArray(refill)) {
         categorySummary.refill += refill.reduce((s, r) => s + (r.qty ?? 1), 0)
       } else if (refill) {
         categorySummary.refill += refill.qty ?? 1
       }
-      // Add-on: milk ที่มีราคา (paid addon)
       const milk = item.item_options?.milk
       if (milk && (milk.price ?? 0) > 0) categorySummary.addon += qty
+
+      // Refill/Add-on (ออเดอร์ใหม่) — จับคู่จากชื่อกลุ่มตัวเลือกเสริม (optionGroups)
+      for (const g of (item.item_options?.optionGroups ?? [])) {
+        const groupQty = (g.choices ?? []).reduce((s, c) => s + (c.qty ?? 1), 0)
+        if (!groupQty) continue
+        if (REFILL_NAME_RE.test(g.groupName ?? '')) categorySummary.refill += groupQty
+        else if (ADDON_NAME_RE.test(g.groupName ?? '')) categorySummary.addon += groupQty
+      }
     }
 
     return {
@@ -896,8 +911,27 @@ export default function DashboardPage() {
     return r
   })()
 
+  // เตือนใกล้หมดอายุการใช้งาน (≤7 วัน) — เฉพาะ admin/staff ที่ super_admin ตั้งวันหมดอายุไว้
+  // super_admin ไม่ถูกจำกัดวันใช้งานเลย จึงไม่เห็นแบนเนอร์นี้
+  const expiryWarning = (() => {
+    if (role === 'super_admin' || !accessExpiresAt) return null
+    const daysLeft = Math.ceil((new Date(accessExpiresAt) - new Date()) / 86400000)
+    if (daysLeft > 7) return null
+    const dateStr = new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })
+    return daysLeft < 0
+      ? `บัญชีนี้หมดอายุการใช้งานแล้วเมื่อวันที่ ${dateStr} — กรุณาติดต่อผู้ดูแลระบบสูงสุดเพื่อต่ออายุ`
+      : `เหลือเวลาใช้งานอีก ${daysLeft} วัน (ถึงวันที่ ${dateStr}) — กรุณาติดต่อผู้ดูแลระบบสูงสุดเพื่อต่ออายุ`
+  })()
+
   return (
     <div className="space-y-4">
+      {expiryWarning && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5">
+          <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+          <p className="text-sm text-amber-700 font-medium">{expiryWarning}</p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>

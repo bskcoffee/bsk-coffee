@@ -1,16 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Package, Network, Brain, ChevronUp, ChevronDown, Lock } from 'lucide-react'
+import { LayoutDashboard, ShoppingCart, ClipboardList, UtensilsCrossed, Calculator, BarChart3, Settings, Users, GripVertical, LogOut, FileUp, Wallet, Tablet, X, Printer, Network, Brain, ChevronUp, ChevronDown, Lock } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions, canAccessAdminPage } from '../contexts/PermissionsContext'
-import { supabase } from '../lib/supabase'
+import { supabase, getSetting } from '../lib/supabase'
 import ConfirmModal from './ConfirmModal'
 
-const PASSKEY   = '18879'
-const POS_URL  = 'https://cocoa-pos.vercel.app'
-const LIFF_URL = 'https://cocoa-liff.vercel.app'
+const DEFAULT_PASSKEY = '18879'
+const POS_URL  = 'https://bsk-pos.vercel.app'
 
-function PasskeyModal({ title = 'ไปที่ BSK POS', onConfirm, onClose }) {
+function PasskeyModal({ title = 'ไปที่ BSK POS', expectedPasskey, onConfirm, onClose }) {
   const [val, setVal]     = useState('')
   const [error, setError] = useState(false)
 
@@ -21,7 +20,7 @@ function PasskeyModal({ title = 'ไปที่ BSK POS', onConfirm, onClose })
   }, [onClose])
 
   const handleSubmit = () => {
-    if (val === PASSKEY) { onConfirm() }
+    if (val === (expectedPasskey || DEFAULT_PASSKEY)) { onConfirm() }
     else { setError(true); setVal('') }
   }
 
@@ -100,7 +99,7 @@ function loadLocalOrder() {
 }
 
 export default function Sidebar() {
-  const { signOut, role } = useAuth()
+  const { signOut, role, accessExpiresAt } = useAuth()
   const { staffPageAccess, adminPageAccess } = usePermissions()
   const [items, setItems] = useState(() => applyOrder(loadLocalOrder()))
   const dragIdx   = useRef(null)
@@ -109,7 +108,7 @@ export default function Sidebar() {
   const [dragOver, setDragOver] = useState(null)
   const [showSignOutModal, setShowSignOutModal] = useState(false)
   const [showPasskey, setShowPasskey]           = useState(false)
-  const [showLiff, setShowLiff]                 = useState(false)
+  const [navPasskey, setNavPasskey]             = useState(DEFAULT_PASSKEY)
 
   // Fetch nav order from Supabase on mount — syncs across all devices
   useEffect(() => {
@@ -129,6 +128,22 @@ export default function Sidebar() {
         }
       })
   }, [])
+
+  // Passkey for cross-app nav buttons — configurable from User Management (admin/super_admin only)
+  useEffect(() => {
+    getSetting('nav_passkey').then(v => { if (v) setNavPasskey(v) })
+  }, [])
+
+  // แสดงวันใช้งานคงเหลือของตัวเอง (เฉพาะ admin/staff ที่ super_admin ตั้งวันหมดอายุไว้)
+  const expiryInfo = (() => {
+    if (role === 'super_admin' || !accessExpiresAt) return null
+    const daysLeft = Math.ceil((new Date(accessExpiresAt) - new Date()) / 86400000)
+    const dateStr = new Date(accessExpiresAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+    return {
+      text: daysLeft < 0 ? `หมดอายุแล้ว (${dateStr})` : `ใช้งานได้ถึง ${dateStr} (เหลือ ${daysLeft} วัน)`,
+      warn: daysLeft <= 7,
+    }
+  })()
 
   // 3-tier access: special pages follow admin_page_access (super_admin
   // always in, admin only if granted); ops pages follow staff_page_access
@@ -318,19 +333,17 @@ export default function Sidebar() {
         >
           <Tablet size={15} /> BSK POS
         </button>
-        {/* Go to BSK LIFF */}
-        <button
-          onClick={() => setShowLiff(true)}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-green-700 hover:bg-green-600 text-white text-sm font-medium transition-colors"
-        >
-          <Package size={15} /> BSK
-        </button>
         <button
           onClick={() => setShowSignOutModal(true)}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
         >
           <LogOut size={15} /> ออกจากระบบ
         </button>
+        {expiryInfo && (
+          <p className={`text-xs text-center ${expiryInfo.warn ? 'text-amber-400 font-medium' : 'text-cocoa-400'}`}>
+            {expiryInfo.text}
+          </p>
+        )}
         <p className="text-cocoa-400 text-xs text-center">v1.2.0</p>
       </div>
 
@@ -340,15 +353,9 @@ export default function Sidebar() {
     {showPasskey && (
       <PasskeyModal
         title="ไปที่ BSK POS"
+        expectedPasskey={navPasskey}
         onConfirm={() => { setShowPasskey(false); window.open(POS_URL, '_blank') }}
         onClose={() => setShowPasskey(false)}
-      />
-    )}
-    {showLiff && (
-      <PasskeyModal
-        title="ไปที่ BSK"
-        onConfirm={() => { setShowLiff(false); window.open(LIFF_URL, '_blank') }}
-        onClose={() => setShowLiff(false)}
       />
     )}
 

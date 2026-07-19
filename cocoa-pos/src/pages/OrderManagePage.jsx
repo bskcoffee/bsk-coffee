@@ -60,6 +60,7 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
   const [date,         setDate]         = useState(initialDate ?? today())
   const [orders,       setOrders]       = useState([])
   const [menus,        setMenus]        = useState([])
+  const [optionGroups, setOptionGroups] = useState([]) // กลุ่มตัวเลือกเสริม ผูกกับหมวดหมู่เมนู
   const [loading,      setLoading]      = useState(true)
   const [refreshing,   setRefreshing]   = useState(false)
   const [expandedId,   setExpandedId]   = useState(null)
@@ -93,6 +94,16 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
         .order('sort_order', { ascending: true })
         .order('name')
       setMenus(data ?? [])
+
+      const { data: groupsData } = await supabase
+        .from('menu_option_groups')
+        .select('*, menu_option_choices(*)')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
+      setOptionGroups((groupsData ?? []).map(g => ({
+        ...g,
+        choices: (g.menu_option_choices ?? []).filter(c => c.is_active).sort((a, b) => a.sort_order - b.sort_order),
+      })))
     }
     load()
   }, [])
@@ -449,16 +460,9 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
     orders.filter(o => o.status === 'delivered').reduce((s, o) => s + o.total, 0),
   [orders])
 
-  // ── Addon / Refill menus (for MenuOptionModal) ──────────
-  const ADDON_CATS  = ['Addon', 'addon', 'ADDON']
-  const REFILL_CATS = ['Refill', 'refill', 'REFILL']
-  const addonMenus  = useMemo(() => menus.filter(m => ADDON_CATS.includes(m.category)),  [menus])
-  const refillMenus = useMemo(() => menus.filter(m => REFILL_CATS.includes(m.category)), [menus])
-
   // ── Menu for editing (filtered) ──────────────────────────
   const editableMenus = useMemo(() => {
-    const HIDDEN = [...ADDON_CATS, ...REFILL_CATS]
-    let list = menus.filter(m => !HIDDEN.includes(m.category))
+    let list = menus
     if (menuSearch.trim()) {
       const q = menuSearch.toLowerCase()
       list = list.filter(m => m.name.toLowerCase().includes(q))
@@ -466,18 +470,72 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
     return list
   }, [menus, menuSearch])
 
+  // กลุ่มตัวเลือกเสริมที่ผูกกับหมวดหมู่ของเมนูที่กำลังเปิด modal อยู่ (โหมดแก้ไข)
+  const groupsForOptionTarget = useMemo(() => {
+    if (!optionTarget) return []
+    return optionGroups.filter(g =>
+      (g.categories ?? []).includes(optionTarget.menu.category) ||
+      (g.menu_ids ?? []).includes(optionTarget.menu.id)
+    )
+  }, [optionGroups, optionTarget])
+
+  // สลับลำดับกลุ่มตัวเลือกเสริมที่โผล่ในเมนูนี้ (ลาก-วาง หรือกดปุ่มลูกศรใน MenuOptionModal)
+  // sort_order เป็นค่ากลาง (global) เดียวกับหน้าจัดการเมนู/POSPage.jsx
+  const reorderOptionGroups = (fromId, toId) => {
+    if (!optionTarget || fromId === toId) return
+    setOptionGroups(prev => {
+      const relevantIds = new Set(
+        prev.filter(g =>
+          (g.categories ?? []).includes(optionTarget.menu.category) ||
+          (g.menu_ids ?? []).includes(optionTarget.menu.id)
+        ).map(g => g.id)
+      )
+      const slots = []
+      prev.forEach((g, i) => { if (relevantIds.has(g.id)) slots.push(i) })
+
+      const subset = slots.map(i => prev[i])
+      const fromIdx = subset.findIndex(g => g.id === fromId)
+      const toIdx   = subset.findIndex(g => g.id === toId)
+      if (fromIdx === -1 || toIdx === -1) return prev
+
+      const reorderedSubset = [...subset]
+      const [moved] = reorderedSubset.splice(fromIdx, 1)
+      reorderedSubset.splice(toIdx, 0, moved)
+
+      const next = [...prev]
+      slots.forEach((slot, i) => { next[slot] = reorderedSubset[i] })
+
+      next.forEach((g, i) => {
+        if (g.sort_order !== i) {
+          supabase.from('menu_option_groups').update({ sort_order: i }).eq('id', g.id)
+            .then(({ error }) => { if (error) console.error('reorder option group save:', error.message) })
+        }
+      })
+
+      return next.map((g, i) => ({ ...g, sort_order: i }))
+    })
+  }
+
+  const moveOptionGroup = (id, delta) => {
+    const list = groupsForOptionTarget
+    const idx = list.findIndex(g => g.id === id)
+    const swapIdx = idx + delta
+    if (idx === -1 || swapIdx < 0 || swapIdx >= list.length) return
+    reorderOptionGroups(id, list[swapIdx].id)
+  }
+
   // ── Handle option confirm from MenuOptionModal ────────────
   const handleEditOptionConfirm = (opts) => {
     if (!optionTarget) return
     const { menu, order } = optionTarget
     const basePrice = menu.menu_prices?.find(p => p.platform === order.platform)?.price ?? 0
-    const milkPrice   = opts.milk?.price   ?? 0
-    const refillPrice = opts.refill?.price ?? 0
+    const optionGroupsPrice = (opts.optionGroups ?? []).reduce((sum, g) =>
+      sum + (g.choices ?? []).reduce((s, c) => s + (c.price ?? 0), 0), 0)
     setEditItems(prev => ({ ...prev, [menu.id]: prev[menu.id] ?? 1 }))
     setEditItemMeta(prev => ({
       ...prev,
       [menu.id]: {
-        unit_price:  basePrice + milkPrice + refillPrice,
+        unit_price:  basePrice + optionGroupsPrice,
         is_campaign: false,
         item_options: opts,
       },
@@ -725,6 +783,9 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
                               {item.item_options?.note && (
                                 <span className="text-[9px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded">📝 {item.item_options.note}</span>
                               )}
+                              {(item.item_options?.optionGroups ?? []).flatMap(g => g.choices ?? []).map(c => (
+                                <span key={c.id} className="text-[9px] bg-pink-100 text-pink-700 px-1 py-0.5 rounded">✦ {c.label}</span>
+                              ))}
                             </div>
                           </div>
                           <div className="text-right shrink-0">
@@ -857,7 +918,7 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
                                 onClick={() => {
                                   const qty = editItems[menu.id] ?? 0
                                   if (qty === 0) {
-                                    // เมนูใหม่ — เปิด MenuOptionModal เพื่อเลือกนม/Refill/ความหวาน
+                                    // เมนูใหม่ — เปิด MenuOptionModal เพื่อเลือกตัวเลือกเสริม/ความหวาน
                                     setOptionTarget({ menu, order })
                                   } else {
                                     // มีอยู่แล้ว — เพิ่มจำนวนได้เลย
@@ -1037,12 +1098,13 @@ export default function OrderManagePage({ initialDate = null, highlightRef = nul
         <MenuOptionModal
           menu={optionTarget.menu}
           platform={optionTarget.order.platform}
-          addons={addonMenus}
-          refills={refillMenus}
+          optionGroups={groupsForOptionTarget}
           initial={editItemMeta[optionTarget.menu.id]?.item_options ?? null}
           onConfirm={handleEditOptionConfirm}
           onClose={() => setOptionTarget(null)}
           confirmLabel="เพิ่มในรายการ"
+          onMoveGroup={moveOptionGroup}
+          onReorderGroup={reorderOptionGroups}
         />
       )}
     </div>

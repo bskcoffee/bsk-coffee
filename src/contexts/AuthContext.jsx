@@ -7,6 +7,7 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(undefined) // undefined = still loading
   const [loading, setLoading]  = useState(true)
   const [role, setRole]        = useState(null)      // 'admin' | 'staff' | null
+  const [accessExpiresAt, setAccessExpiresAt] = useState(null) // null = ไม่จำกัดวันใช้งาน
 
   // ── Initial session + auth listener ─────────────────────────────
   useEffect(() => {
@@ -22,19 +23,28 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  // ── Fetch role from profiles whenever session changes ────────────
+  // ── Fetch role + access expiry from profiles whenever session changes ────
   useEffect(() => {
     if (!session) {
       setRole(null)
+      setAccessExpiresAt(null)
       return
     }
     supabase
       .from('profiles')
-      .select('role')
+      .select('role, access_expires_at')
       .eq('id', session.user.id)
       .single()
-      .then(({ data }) => setRole(data?.role ?? 'staff'))
+      .then(({ data }) => {
+        setRole(data?.role ?? 'staff')
+        setAccessExpiresAt(data?.access_expires_at ?? null)
+      })
   }, [session])
+
+  // super_admin ไม่ถูกจำกัดวันใช้งานเลย ไม่ว่ากรณีใด
+  const isAccessExpired =
+    role !== null && role !== 'super_admin' &&
+    !!accessExpiresAt && new Date(accessExpiresAt) < new Date()
 
   // ── Auth helpers ─────────────────────────────────────────────────
   const signIn = async (email, password) => {
@@ -55,7 +65,10 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ session, loading, role, signIn, signOut, updatePassword, updateEmail }}>
+    <AuthContext.Provider value={{
+      session, loading, role, signIn, signOut, updatePassword, updateEmail,
+      accessExpiresAt, isAccessExpired,
+    }}>
       {children}
     </AuthContext.Provider>
   )
