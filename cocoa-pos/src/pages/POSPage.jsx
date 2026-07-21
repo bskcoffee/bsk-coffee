@@ -610,6 +610,39 @@ export default function POSPage({ onDateChange }) {
   const resetOrder = () => { setLineItems([]); setSaveError(null); setPrintWarning(null); setSelectedPlat(null); setDiscountRaw(''); setDiscountType('amt') }
   const openConfirm = () => { setSelectedPlat(null); setSaveError(null); setShowConfirm(true) }
 
+  // ── Walk In: Running No. อัตโนมัติ ─────────────────────────
+  // หาเลขที่น้อยที่สุดที่ยังไม่ถูกใช้ในวันนี้ (ของ platform Walk In เท่านั้น)
+  // ถ้ามีการลบออเดอร์เลขก่อนหน้าไป เลขนั้นจะว่างและถูกเลือกใช้ซ้ำโดยอัตโนมัติ
+  // (นับเฉพาะ notes ที่เป็นตัวเลขล้วนๆ — ถ้าพนักงานพิมพ์ชื่อลูกค้าแทนเลข จะไม่ถูกนับ)
+  const getNextWalkInNumber = async () => {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('notes')
+      .eq('platform', 'Walk In')
+      .eq('date', orderDate)
+    if (error) { console.error('getNextWalkInNumber:', error.message); return 1 }
+    const used = new Set(
+      (data ?? [])
+        .map(o => o.notes)
+        .filter(n => /^\d+$/.test(n ?? ''))
+        .map(n => parseInt(n, 10))
+        .filter(n => n > 0)
+    )
+    let n = 1
+    while (used.has(n)) n++
+    return n
+  }
+
+  const selectPlatform = async (p) => {
+    setSelectedPlat(p)
+    if (p === 'Walk In') {
+      const n = await getNextWalkInNumber()
+      setOrderRef(String(n))
+    } else {
+      setOrderRef('')
+    }
+  }
+
   // ── Save order ────────────────────────────────────────────
   const saveOrder_fn = async () => {
     if (!selectedPlat || orderItemsWithPrice.length === 0) return
@@ -1327,7 +1360,7 @@ export default function POSPage({ onDateChange }) {
                 <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">เลือก Platform</p>
                 <div className="grid grid-cols-3 gap-2">
                   {platforms.map(p => (
-                    <button key={p} onClick={() => { setSelectedPlat(p); setOrderRef('') }}
+                    <button key={p} onClick={() => selectPlatform(p)}
                       className={`py-3 rounded-xl text-sm font-bold transition-all active:scale-95
                         ${selectedPlat === p ? (PLAT_STYLE[p] ?? 'bg-cocoa-600 text-white') : PLAT_INACTIVE}`}>
                       {p}
