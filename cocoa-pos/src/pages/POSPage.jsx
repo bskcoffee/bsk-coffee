@@ -610,17 +610,19 @@ export default function POSPage({ onDateChange }) {
   const resetOrder = () => { setLineItems([]); setSaveError(null); setPrintWarning(null); setSelectedPlat(null); setDiscountRaw(''); setDiscountType('amt') }
   const openConfirm = () => { setSelectedPlat(null); setSaveError(null); setShowConfirm(true) }
 
-  // ── Walk In: Running No. อัตโนมัติ ─────────────────────────
-  // หาเลขที่น้อยที่สุดที่ยังไม่ถูกใช้ในวันนี้ (ของ platform Walk In เท่านั้น)
+  // ── Walk In / Direct: Running No. อัตโนมัติ ────────────────
+  // หาเลขที่น้อยที่สุดที่ยังไม่ถูกใช้ในวันนี้ (แยกนับต่อ platform เช่น Walk In กับ Direct คนละชุดกัน)
   // ถ้ามีการลบออเดอร์เลขก่อนหน้าไป เลขนั้นจะว่างและถูกเลือกใช้ซ้ำโดยอัตโนมัติ
   // (นับเฉพาะ notes ที่เป็นตัวเลขล้วนๆ — ถ้าพนักงานพิมพ์ชื่อลูกค้าแทนเลข จะไม่ถูกนับ)
-  const getNextWalkInNumber = async () => {
+  const AUTO_RUNNING_NO_PLATFORMS = ['Walk In', 'Direct']
+
+  const getNextRunningNumber = async (platform) => {
     const { data, error } = await supabase
       .from('orders')
       .select('notes')
-      .eq('platform', 'Walk In')
+      .eq('platform', platform)
       .eq('date', orderDate)
-    if (error) { console.error('getNextWalkInNumber:', error.message); return 1 }
+    if (error) { console.error('getNextRunningNumber:', error.message); return 1 }
     const used = new Set(
       (data ?? [])
         .map(o => o.notes)
@@ -635,8 +637,8 @@ export default function POSPage({ onDateChange }) {
 
   const selectPlatform = async (p) => {
     setSelectedPlat(p)
-    if (p === 'Walk In') {
-      const n = await getNextWalkInNumber()
+    if (AUTO_RUNNING_NO_PLATFORMS.includes(p)) {
+      const n = await getNextRunningNumber(p)
       setOrderRef(String(n))
     } else {
       setOrderRef('')
